@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/headercat/airbrew/internal/audit"
+	"github.com/headercat/airbrew/internal/auth/oauth"
 	"github.com/headercat/airbrew/internal/auth/session"
 	"github.com/headercat/airbrew/internal/auth/user"
 	"github.com/headercat/airbrew/internal/modules"
@@ -25,12 +26,15 @@ func New(db *sql.DB) *Module {
 	state := modules.NewState(db)
 	userRepo := user.NewRepository(db)
 	userSvc := user.NewService(userRepo)
+	oauthRepo := oauth.NewClientRepository(db)
+	oauthSvc := oauth.NewClientService(oauthRepo)
 	auditSvc := audit.NewService(db)
 	h := &Handler{
 		db:       db,
 		state:    state,
 		userRepo: userRepo,
 		userSvc:  userSvc,
+		oauthSvc: oauthSvc,
 		audit:    auditSvc,
 	}
 	return &Module{state: state, userRepo: userRepo, userSvc: userSvc, audit: auditSvc, handler: h}
@@ -60,6 +64,11 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("PATCH /api/admin/users/{id}", m.handler.patchUser)
 	admin.HandleFunc("POST /api/admin/users/{id}/reset-password", m.handler.resetPassword)
 	admin.HandleFunc("GET /api/admin/audit", m.handler.listAudit)
+	admin.HandleFunc("GET /api/admin/oauth/clients", m.handler.listOAuthClients)
+	admin.HandleFunc("POST /api/admin/oauth/clients", m.handler.createOAuthClient)
+	admin.HandleFunc("GET /api/admin/oauth/clients/{id}", m.handler.getOAuthClient)
+	admin.HandleFunc("PATCH /api/admin/oauth/clients/{id}", m.handler.updateOAuthClient)
+	admin.HandleFunc("DELETE /api/admin/oauth/clients/{id}", m.handler.deleteOAuthClient)
 	admin.HandleFunc("GET /api/admin/sessions", m.handler.listSessions)
 	admin.HandleFunc("DELETE /api/admin/sessions/{id}", m.handler.revokeSession)
 	admin.HandleFunc("GET /api/admin/branding", m.handler.getBranding)

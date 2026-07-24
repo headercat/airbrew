@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/headercat/airbrew/internal/audit"
+	"github.com/headercat/airbrew/internal/auth/oauth"
 	"github.com/headercat/airbrew/internal/auth/user"
 	"github.com/headercat/airbrew/internal/httpserver/response"
 	"github.com/headercat/airbrew/internal/modules"
@@ -28,6 +29,7 @@ type Handler struct {
 	state    *modules.State
 	userRepo *user.Repository
 	userSvc  *user.Service
+	oauthSvc *oauth.ClientService
 	audit    *audit.Service
 }
 
@@ -48,11 +50,11 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 // ---- Dashboard ----
 
 type dashboardResp struct {
-	Users          int            `json:"users"`
-	Admins         int            `json:"admins"`
-	ActiveSessions int            `json:"active_sessions"`
-	ModulesTotal   int            `json:"modules_total"`
-	ModulesEnabled int            `json:"modules_enabled"`
+	Users          int              `json:"users"`
+	Admins         int              `json:"admins"`
+	ActiveSessions int              `json:"active_sessions"`
+	ModulesTotal   int              `json:"modules_total"`
+	ModulesEnabled int              `json:"modules_enabled"`
 	RecentEvents   []audit.LogEntry `json:"recent_events"`
 }
 
@@ -285,7 +287,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 			EventType: "user.role_changed", ActorUserID: callerID,
 			TargetType: "user", TargetID: id,
 			IPAddress: clientIP(r), UserAgent: r.UserAgent(),
-			Metadata:  map[string]any{"from": string(target.Role), "to": string(newRole)},
+			Metadata: map[string]any{"from": string(target.Role), "to": string(newRole)},
 		})
 	}
 
@@ -318,7 +320,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 			EventType: "user.status_changed", ActorUserID: callerID,
 			TargetType: "user", TargetID: id,
 			IPAddress: clientIP(r), UserAgent: r.UserAgent(),
-			Metadata:  map[string]any{"from": string(target.Status), "to": string(newStatus)},
+			Metadata: map[string]any{"from": string(target.Status), "to": string(newStatus)},
 		})
 	}
 
@@ -397,8 +399,196 @@ func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	response.JSON(w, http.StatusOK, map[string]any{
 		"entries": entries, "total": total,
-		"limit":   f.Limit, "offset": f.Offset,
+		"limit": f.Limit, "offset": f.Offset,
 	})
+}
+
+// ---- OAuth Clients ----
+
+type oauthClientDTO struct {
+	ID                      string    `json:"id"`
+	ClientID                string    `json:"client_id"`
+	Name                    string    `json:"name"`
+	ClientType              string    `json:"client_type"`
+	TokenEndpointAuthMethod string    `json:"token_endpoint_auth_method"`
+	AllowedScopes           []string  `json:"allowed_scopes"`
+	RedirectURIs            []string  `json:"redirect_uris"`
+	PostLogoutRedirectURIs  []string  `json:"post_logout_redirect_uris"`
+	IsFirstParty            bool      `json:"is_first_party"`
+	RequireConsent          bool      `json:"require_consent"`
+	IsActive                bool      `json:"is_active"`
+	CreatedAt               time.Time `json:"created_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
+}
+
+type createOAuthClientReq struct {
+	Name                    string   `json:"name"`
+	ClientType              string   `json:"client_type"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
+	AllowedScopes           []string `json:"allowed_scopes,omitempty"`
+	RedirectURIs            []string `json:"redirect_uris"`
+	PostLogoutRedirectURIs  []string `json:"post_logout_redirect_uris,omitempty"`
+	IsFirstParty            bool     `json:"is_first_party,omitempty"`
+	RequireConsent          bool     `json:"require_consent,omitempty"`
+}
+
+type updateOAuthClientReq struct {
+	Name                    string   `json:"name"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
+	AllowedScopes           []string `json:"allowed_scopes,omitempty"`
+	RedirectURIs            []string `json:"redirect_uris"`
+	PostLogoutRedirectURIs  []string `json:"post_logout_redirect_uris,omitempty"`
+	IsFirstParty            bool     `json:"is_first_party,omitempty"`
+	RequireConsent          bool     `json:"require_consent,omitempty"`
+	IsActive                bool     `json:"is_active"`
+}
+
+func toOAuthClientDTO(c *oauth.Client) oauthClientDTO {
+	return oauthClientDTO{
+		ID:                      c.ID,
+		ClientID:                c.ClientID,
+		Name:                    c.Name,
+		ClientType:              string(c.ClientType),
+		TokenEndpointAuthMethod: string(c.TokenEndpointAuthMethod),
+		AllowedScopes:           c.AllowedScopes,
+		RedirectURIs:            c.RedirectURIs,
+		PostLogoutRedirectURIs:  c.PostLogoutRedirectURIs,
+		IsFirstParty:            c.IsFirstParty,
+		RequireConsent:          c.RequireConsent,
+		IsActive:                c.IsActive,
+		CreatedAt:               c.CreatedAt,
+		UpdatedAt:               c.UpdatedAt,
+	}
+}
+
+func (h *Handler) listOAuthClients(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	clients, total, err := h.oauthSvc.List(r.Context(), limit, offset)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	out := make([]oauthClientDTO, 0, len(clients))
+	for _, c := range clients {
+		out = append(out, toOAuthClientDTO(c))
+	}
+	response.JSON(w, http.StatusOK, map[string]any{
+		"clients": out, "total": total, "limit": limit, "offset": offset,
+	})
+}
+
+func (h *Handler) createOAuthClient(w http.ResponseWriter, r *http.Request) {
+	var req createOAuthClientReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	res, err := h.oauthSvc.Create(r.Context(), oauth.ClientCreate{
+		Name:                    req.Name,
+		ClientType:              oauth.ClientType(req.ClientType),
+		TokenEndpointAuthMethod: oauth.TokenEndpointAuthMethod(req.TokenEndpointAuthMethod),
+		AllowedScopes:           req.AllowedScopes,
+		RedirectURIs:            req.RedirectURIs,
+		PostLogoutRedirectURIs:  req.PostLogoutRedirectURIs,
+		IsFirstParty:            req.IsFirstParty,
+		RequireConsent:          req.RequireConsent,
+	})
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "oauth.client_created", ActorUserID: callerUserID(r),
+		TargetType: "oauth_client", TargetID: res.Client.ID,
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{
+			"client_id":   res.Client.ClientID,
+			"client_type": string(res.Client.ClientType),
+			"name":        res.Client.Name,
+		},
+	})
+	resp := map[string]any{"client": toOAuthClientDTO(res.Client)}
+	if res.ClientSecret != "" {
+		resp["client_secret"] = res.ClientSecret
+	}
+	response.JSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) getOAuthClient(w http.ResponseWriter, r *http.Request) {
+	c, err := h.oauthSvc.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, oauth.ErrClientNotFound) {
+			response.Error(w, http.StatusNotFound, "not_found", "OAuth client not found")
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	response.JSON(w, http.StatusOK, toOAuthClientDTO(c))
+}
+
+func (h *Handler) updateOAuthClient(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req updateOAuthClientReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	c, err := h.oauthSvc.Update(r.Context(), id, oauth.ClientUpdate{
+		Name:                    req.Name,
+		TokenEndpointAuthMethod: oauth.TokenEndpointAuthMethod(req.TokenEndpointAuthMethod),
+		AllowedScopes:           req.AllowedScopes,
+		RedirectURIs:            req.RedirectURIs,
+		PostLogoutRedirectURIs:  req.PostLogoutRedirectURIs,
+		IsFirstParty:            req.IsFirstParty,
+		RequireConsent:          req.RequireConsent,
+		IsActive:                req.IsActive,
+	})
+	if err != nil {
+		if errors.Is(err, oauth.ErrClientNotFound) {
+			response.Error(w, http.StatusNotFound, "not_found", "OAuth client not found")
+			return
+		}
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "oauth.client_updated", ActorUserID: callerUserID(r),
+		TargetType: "oauth_client", TargetID: c.ID,
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"client_id": c.ClientID, "name": c.Name, "is_active": c.IsActive},
+	})
+	response.JSON(w, http.StatusOK, toOAuthClientDTO(c))
+}
+
+func (h *Handler) deleteOAuthClient(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	c, err := h.oauthSvc.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, oauth.ErrClientNotFound) {
+			response.Error(w, http.StatusNotFound, "not_found", "OAuth client not found")
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	if err := h.oauthSvc.Delete(r.Context(), id); err != nil {
+		if errors.Is(err, oauth.ErrClientNotFound) {
+			response.Error(w, http.StatusNotFound, "not_found", "OAuth client not found")
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "oauth.client_deleted", ActorUserID: callerUserID(r),
+		TargetType: "oauth_client", TargetID: id,
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"client_id": c.ClientID, "name": c.Name},
+	})
+	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // ---- helpers ----

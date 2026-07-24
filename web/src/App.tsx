@@ -45,6 +45,8 @@ export default function App() {
           <Route path="security" element={<AdminSecurity />} />
           <Route path="branding" element={<AdminBranding />} />
           <Route path="oauth" element={<AdminOAuth />} />
+          <Route path="oauth/new" element={<AdminOAuth />} />
+          <Route path="oauth/:clientId" element={<AdminOAuth />} />
           <Route path="system" element={<AdminSystem />} />
         </Route>
 

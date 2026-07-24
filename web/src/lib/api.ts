@@ -77,6 +77,22 @@ export type AdminSession = {
   expires_at: string;
 };
 
+export type OAuthClient = {
+  id: string;
+  client_id: string;
+  name: string;
+  client_type: "public" | "confidential";
+  token_endpoint_auth_method: "none" | "client_secret_basic" | "client_secret_post";
+  allowed_scopes: string[];
+  redirect_uris: string[];
+  post_logout_redirect_uris: string[];
+  is_first_party: boolean;
+  require_consent: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Branding = {
   workspace_name: string;
   logo_url: string;

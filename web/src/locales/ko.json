@@ -1,0 +1,332 @@
+{
+  "common": {
+    "back": "뒤로",
+    "save": "저장",
+    "loading": "로딩 중…",
+    "open": "열기",
+    "search": "검색",
+    "error": "문제가 발생했습니다"
+  },
+  "sidebar": {
+    "workspace": "워크스페이스",
+    "account": "계정"
+  },
+  "nav": {
+    "home": "홈",
+    "profile": "프로필",
+    "admin": "관리 콘솔",
+    "mail": {
+      "inbox": "받은편지함",
+      "sent": "보낸편지함",
+      "drafts": "임시보관함"
+    },
+    "drive": {
+      "myFiles": "내 파일",
+      "shared": "공유받은 항목",
+      "starred": "별표"
+    },
+    "contacts": {
+      "all": "모든 연락처",
+      "groups": "그룹"
+    },
+    "chat": {
+      "channels": "채널",
+      "direct": "다이렉트 메시지"
+    },
+    "ai": {
+      "agents": "에이전트",
+      "history": "기록"
+    },
+    "workflow": {
+      "flows": "워크플로",
+      "runs": "실행 내역"
+    },
+    "admin": {
+      "dashboard": "개요",
+      "users": "사용자",
+      "modules": "모듈",
+      "audit": "감사 로그",
+      "security": "보안",
+      "branding": "브랜딩",
+      "oauth": "OAuth",
+      "system": "시스템"
+    }
+  },
+  "app": {
+    "name": "Airbrew",
+    "tagline": "하나의 바이너리, 모든 워크스페이스",
+    "subtitle": "OAuth, 메일, 드라이브, 주소록, 채팅, AI 에이전트, 자동화가 하나의 실행 파일로 여러분의 하드웨어에서 작동합니다."
+  },
+  "auth": {
+    "login": {
+      "title": "다시 오신 것을 환영합니다",
+      "subtitle": "워크스페이스에 로그인하세요",
+      "email": "이메일",
+      "password": "비밀번호",
+      "submit": "로그인",
+      "needAccount": "계정이 필요하신가요?",
+      "createOne": "만들기"
+    },
+    "register": {
+      "title": "계정 만들기",
+      "subtitle": "Airbrew 워크스페이스를 설정하세요",
+      "email": "이메일",
+      "password": "비밀번호",
+      "passwordHint": "최소 8자 이상",
+      "confirm": "비밀번호 확인",
+      "confirmPlaceholder": "비밀번호 재입력",
+      "submit": "계정 만들기",
+      "haveAccount": "이미 계정이 있으신가요?",
+      "signIn": "로그인",
+      "passwordsDoNotMatch": "비밀번호가 일치하지 않습니다"
+    }
+  },
+  "dashboard": {
+    "title": "대시보드",
+    "signedInAs": "로그인:",
+    "overview": "워크스페이스 개요",
+    "modulesTitle": "모듈",
+    "checking": "확인 중",
+    "planned": "예정",
+    "online": "온라인",
+    "error": "오류",
+    "disabled": "비활성화됨",
+    "modules": {
+      "admin": {
+        "label": "관리",
+        "description": "워크스페이스 관리: 모듈, 사용자, 권한."
+      },
+      "mail": {
+        "label": "메일",
+        "description": "IMAP/SMTP 스타일 메일박스, 인/아웃바운드 메시지 저장."
+      },
+      "drive": {
+        "label": "드라이브",
+        "description": "콘텐츠 주소 기반 파일 저장소, 공유 링크 지원."
+      },
+      "contacts": {
+        "label": "주소록",
+        "description": "vCard 4.0 주소록, CardDAV 동기화."
+      },
+      "chat": {
+        "label": "채팅",
+        "description": "1:1 및 그룹 대화, 실시간 전달."
+      },
+      "ai": {
+        "label": "AI 에이전트",
+        "description": "도구 사용 LLM 에이전트, 스트리밍 응답."
+      },
+      "workflow": {
+        "label": "워크플로",
+        "description": "트리거/액션 그래프 자동화 엔진."
+      }
+    }
+  },
+  "moduleStub": {
+    "underConstruction": "공사 중",
+    "description": "이 모듈은 예약되어 있지만 아직 구현되지 않았습니다. 백엔드에서 상태 엔드포인트를 노출하여 SPA가 모듈 연결을 확인할 수 있습니다.",
+    "unknownTitle": "알 수 없는 모듈",
+    "unknownDescription": "모듈 \"{{module}}\"이(가) 등록되어 있지 않습니다.",
+    "planned": "예정"
+  },
+  "profile": {
+    "title": "프로필",
+    "subtitle": "프로필, 비밀번호 및 사용자 정의 필드를 관리하세요.",
+    "avatar": {
+      "title": "프로필 사진",
+      "description": "PNG, JPEG, WebP 또는 GIF. 최대 4MiB.",
+      "upload": "새 사진 업로드",
+      "uploadFailed": "업로드 실패"
+    },
+    "form": {
+      "title": "프로필",
+      "description": "워크스페이스 전체에 표시되는 공개 정보입니다.",
+      "email": "이메일",
+      "emailNote": "현재 이메일 변경은 지원되지 않습니다.",
+      "displayName": "표시 이름",
+      "descriptionLabel": "소개",
+      "descriptionPlaceholder": "간단한 자기소개",
+      "birthday": "생일",
+      "phone": "전화번호",
+      "phonePlaceholder": "+82 10 1234 5678",
+      "customFields": "사용자 정의 필드",
+      "customFieldsHint": "임의의 키/값 쌍 (최대 50개). 본인만 볼 수 있습니다.",
+      "addField": "필드 추가",
+      "noFields": "사용자 정의 필드가 없습니다. \"필드 추가\"를 눌러 만들어 보세요.",
+      "keyPlaceholder": "키",
+      "valuePlaceholder": "값",
+      "remove": "필드 제거",
+      "saved": "저장됨.",
+      "saveProfile": "프로필 저장"
+    },
+    "password": {
+      "title": "비밀번호",
+      "description": "최소 8자 이상. 다른 기기에서는 다시 로그인해야 합니다.",
+      "current": "현재 비밀번호",
+      "new": "새 비밀번호",
+      "confirm": "새 비밀번호 확인",
+      "submit": "비밀번호 변경",
+      "changed": "비밀번호가 변경되었습니다."
+    }
+  },
+  "header": {
+    "welcome": "환영합니다, {{email}}",
+    "profile": "프로필",
+    "signOut": "로그아웃"
+  },
+  "theme": {
+    "title": "컬러 모드",
+    "light": "밝게",
+    "dark": "어둡게",
+    "system": "시스템"
+  },
+  "language": {
+    "label": "언어"
+  },
+  "notFound": {
+    "title": "404",
+    "description": "찾으시는 페이지가 존재하지 않습니다.",
+    "goHome": "홈으로"
+  },
+  "admin": {
+    "title": "관리 콘솔",
+    "subtitle": "워크스페이스의 모듈, 사용자 및 권한을 관리합니다.",
+    "groups": {
+      "general": "일반",
+      "modules": "모듈",
+      "developers": "개발자"
+    },
+    "moduleSettings": {
+      "enabled": "활성화",
+      "enabledDesc": "모든 사용자에 대해 이 모듈을 켜거나 끕니다.",
+      "status": "상태",
+      "statusDesc": "현재 모듈 상태입니다.",
+      "adminOnly": "접근 권한",
+      "adminOnlyDesc": "이 모듈을 사용할 수 있는 사용자 범위입니다.",
+      "quota": "저장 용량",
+      "quotaDesc": "이 모듈의 사용자당 최대 저장 용량입니다.",
+      "access": "접근 제어",
+      "accessDesc": "이 모듈을 사용할 수 있는 사용자 또는 그룹을 제한합니다.",
+      "notConfigured": "모듈별 설정은 준비 중입니다",
+      "notConfiguredDesc": "이 모듈은 예약되어 있지만 아직 구성 가능한 설정이 없습니다."
+    },
+    "tabs": {
+      "dashboard": "대시보드",
+      "modules": "모듈",
+      "users": "사용자",
+      "audit": "감사 로그",
+      "permissions": "권한"
+    },
+    "dashboard": {
+      "users": "사용자",
+      "admins": "관리자",
+      "activeSessions": "활성 세션",
+      "modules": "모듈",
+      "recentActivity": "최근 활동",
+      "noActivity": "최근 활동이 없습니다."
+    },
+    "modules": {
+      "title": "모듈",
+      "description": "워크스페이스 모듈을 활성화/비활성화합니다. 시스템 모듈은 항상 켜져 있습니다.",
+      "system": "시스템",
+      "adminOnly": "관리자 전용",
+      "toggleEnabled": "활성화 토글"
+    },
+    "users": {
+      "title": "사용자",
+      "description": "계정, 역할 및 상태를 관리합니다.",
+      "colEmail": "이메일",
+      "colRole": "역할",
+      "colStatus": "상태",
+      "colCreated": "가입일",
+      "roleUser": "사용자",
+      "roleAdmin": "관리자",
+      "statusActive": "활성",
+      "statusSuspended": "정지",
+      "searchPlaceholder": "이메일 또는 이름으로 검색…",
+      "resetPassword": "비밀번호 재설정",
+      "confirmReset": "{{email}}의 비밀번호를 재설정하시겠습니까? 임시 비밀번호가 생성됩니다.",
+      "tempPassword": "임시 비밀번호: {{pw}}\n\n지금 복사하세요 — 다시 표시되지 않습니다."
+    },
+    "audit": {
+      "title": "감사 로그",
+      "description": "관리 작업과 인증 이벤트의 추가 전용 기록입니다.",
+      "filterPlaceholder": "이벤트 유형으로 필터 (예: user.created)…",
+      "noEntries": "감사 항목이 없습니다.",
+      "colEvent": "이벤트",
+      "colActor": "실행자",
+      "colTarget": "대상",
+      "colIP": "IP",
+      "colTime": "시간"
+    },
+    "permissions": {
+      "title": "권한",
+      "description": "역할 정의와 해당 권한입니다.",
+      "roleAdmin": "관리자",
+      "roleUser": "사용자",
+      "adminDesc": "모든 모듈, 사용자 관리 및 워크스페이스 설정에 대한 전체 접근 권한.",
+      "userDesc": "활성화된 생산성 모듈에 접근 가능. 관리 패널에 접근할 수 없습니다.",
+      "futureNote": "사용자 정의 역할 및 세분화된 권한은 향후 릴리스에 계획되어 있습니다."
+    },
+    "overview": {
+      "title": "개요",
+      "description": "워크스페이스 상태, 사용자 활동 및 모듈 현황을 한눈에 확인합니다."
+    },
+    "security": {
+      "title": "보안",
+      "description": "세션, 비밀번호 정책 및 접근 제어를 관리합니다.",
+      "sessions": "활성 세션",
+      "sessionsDesc": "모든 기기에서 현재 로그인한 사용자.",
+      "activeSessions": "활성 세션",
+      "noSessions": "활성 세션이 없습니다.",
+      "colUser": "사용자",
+      "colCreated": "시작",
+      "colExpires": "만료",
+      "passwordPolicy": "비밀번호 정책",
+      "passwordPolicyDesc": "사용자 비밀번호 요구사항.",
+      "minLength": "최소 길이",
+      "minLengthDesc": "비밀번호에 허용되는 최소 문자 수.",
+      "requireUppercase": "대문자 필수",
+      "sessionTimeout": "세션 만료",
+      "ipAllowlist": "IP 허용 목록",
+      "comingSoon": "향후 릴리스에서 구성 가능합니다."
+    },
+    "branding": {
+      "title": "브랜딩",
+      "description": "워크스페이스 이름, 로고 및 색상을 사용자 정의합니다.",
+      "saved": "저장되었습니다.",
+      "workspaceName": "워크스페이스 이름",
+      "workspaceNameDesc": "사이드바와 브라우저 타이틀에 표시됩니다.",
+      "logo": "로고",
+      "logoDesc": "PNG 또는 SVG, 최대 256×256px.",
+      "upload": "업로드",
+      "primaryColor": "주 색상",
+      "primaryColorDesc": "버튼, 링크 및 활성 상태에 사용됩니다.",
+      "customDomain": "커스텀 도메인",
+      "note": "브랜딩 API 구현 후 사용자 정의가 가능합니다."
+    },
+    "oauth": {
+      "title": "OAuth 클라이언트",
+      "description": "이 워크스페이스에 대해 인증할 수 있는 OAuth 2.1 / OIDC 클라이언트를 등록하고 관리합니다.",
+      "noClients": "등록된 OAuth 클라이언트가 없습니다",
+      "register": "클라이언트 등록"
+    },
+    "system": {
+      "title": "시스템",
+      "description": "버전 정보, 데이터 경로 및 유지보수 도구.",
+      "runtime": "런타임",
+      "cores": "사용 가능한 CPU 코어",
+      "version": "버전",
+      "users": "전체 사용자",
+      "modules": "활성화된 모듈",
+      "dbPath": "데이터베이스",
+      "dbPathDesc": "SQLite 데이터베이스 파일.",
+      "dbSize": "데이터베이스 크기",
+      "dbSizeDesc": "SQLite 파일의 현재 디스크 크기.",
+      "backup": "데이터베이스 백업",
+      "backupDesc": "SQLite 데이터베이스 스냅샷을 다운로드합니다.",
+      "export": "내보내기",
+      "featureFlags": "기능 플래그"
+    }
+  }
+}

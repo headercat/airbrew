@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Build output
+/bin/
+/dist/
+/airbrew
+/airbrew.db
+
+# Runtime data
+/data/
+/.airbrew-data/
+/logs/
+
+# Environment
+.env
+.env.local
+!.env.example
+
+# Go
+*.test
+*.out
+
+# Web
+/web/node_modules/
+/web/dist/
+!/web/dist/.gitkeep
+/web/tsconfig*.tsbuildinfo
+/web/vite.config.js
+/web/vite.config.d.ts
+
+# Editor
+.vscode/
+.idea/
+*.swp

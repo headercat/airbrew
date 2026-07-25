@@ -86,6 +86,31 @@ func TestClientServiceListDoesNotBlockSingleSQLiteConnection(t *testing.T) {
 	}
 }
 
+func TestClientServiceGetDoesNotBlockSingleSQLiteConnection(t *testing.T) {
+	svc := testClientService(t)
+	res, err := svc.Create(context.Background(), ClientCreate{
+		Name:          "Example App",
+		ClientType:    ClientTypePublic,
+		AllowedScopes: []string{"openid"},
+		RedirectURIs:  []string{"https://example.com/callback"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	client, err := svc.Get(ctx, res.Client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.ID != res.Client.ID {
+		t.Fatalf("expected client %q, got %q", res.Client.ID, client.ID)
+	}
+	if len(client.RedirectURIs) != 1 || client.RedirectURIs[0] != "https://example.com/callback" {
+		t.Fatalf("unexpected redirect URIs: %#v", client.RedirectURIs)
+	}
+}
+
 func TestClientServiceUpdateAndDelete(t *testing.T) {
 	svc := testClientService(t)
 	res, err := svc.Create(context.Background(), ClientCreate{

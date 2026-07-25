@@ -124,8 +124,28 @@ func (r *ClientRepository) Count(ctx context.Context) (int, error) {
 
 // GetByID returns one non-deleted client by internal ID.
 func (r *ClientRepository) GetByID(ctx context.Context, id string) (*Client, error) {
-	c, err := r.queryOne(ctx, "SELECT "+clientColumns+" FROM oauth_clients WHERE id = ? AND deleted_at IS NULL", id)
+	rows, err := r.db.QueryContext(ctx, "SELECT "+clientColumns+" FROM oauth_clients WHERE id = ? AND deleted_at IS NULL", id)
 	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, ErrClientNotFound
+	}
+	c, err := scanClient(rows)
+	if err != nil {
+		return nil, err
+	}
+	if rows.Next() {
+		return nil, fmt.Errorf("oauth client: multiple rows for id %q", id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
 		return nil, err
 	}
 	if err := r.loadURIs(ctx, c); err != nil {

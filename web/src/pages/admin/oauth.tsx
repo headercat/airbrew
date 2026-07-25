@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Copy, KeyRound, Lock, Plus, Save, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, Copy, KeyRound, Lock, Plus, Save, Trash2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +19,7 @@ type OAuthForm = {
   name: string;
   client_type: "public" | "confidential";
   token_endpoint_auth_method: "none" | "client_secret_basic" | "client_secret_post";
-  allowed_scopes: string;
+  allowed_scopes: string[];
   redirect_uris: string;
   post_logout_redirect_uris: string;
   is_first_party: boolean;
@@ -32,11 +32,26 @@ type CreatedSecret = {
   client_secret: string;
 };
 
+const scopeOptions = [
+  "openid",
+  "profile",
+  "email",
+  "offline_access",
+  "address",
+  "phone",
+  "mail",
+  "drive",
+  "contacts",
+  "chat",
+  "ai",
+  "workflow",
+] as const;
+
 const blankForm: OAuthForm = {
   name: "",
   client_type: "public",
   token_endpoint_auth_method: "none",
-  allowed_scopes: "openid\nprofile\nemail",
+  allowed_scopes: ["openid", "profile", "email"],
   redirect_uris: "",
   post_logout_redirect_uris: "",
   is_first_party: false,
@@ -54,7 +69,7 @@ function formFromClient(c: OAuthClient): OAuthForm {
     name: c.name,
     client_type: c.client_type,
     token_endpoint_auth_method: c.token_endpoint_auth_method,
-    allowed_scopes: c.allowed_scopes.join("\n"),
+    allowed_scopes: c.allowed_scopes,
     redirect_uris: c.redirect_uris.join("\n"),
     post_logout_redirect_uris: c.post_logout_redirect_uris.join("\n"),
     is_first_party: c.is_first_party,
@@ -170,6 +185,7 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
   const [loading, setLoading] = useState(Boolean(clientId));
   const [saving, setSaving] = useState(false);
   const [createdSecret, setCreatedSecret] = useState<CreatedSecret | null>(null);
+  const [customScope, setCustomScope] = useState("");
 
   useEffect(() => {
     if (!clientId) return;
@@ -202,7 +218,7 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
     const payload = {
       name: form.name,
       token_endpoint_auth_method: form.token_endpoint_auth_method,
-      allowed_scopes: lines(form.allowed_scopes),
+      allowed_scopes: form.allowed_scopes,
       redirect_uris: lines(form.redirect_uris),
       post_logout_redirect_uris: lines(form.post_logout_redirect_uris),
       is_first_party: form.is_first_party,
@@ -244,6 +260,27 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
   async function copy(value: string) {
     await navigator.clipboard?.writeText(value);
   }
+
+  function toggleScope(scope: string) {
+    setForm((prev) => {
+      const selected = prev.allowed_scopes.includes(scope);
+      return {
+        ...prev,
+        allowed_scopes: selected
+          ? prev.allowed_scopes.filter((s) => s !== scope)
+          : [...prev.allowed_scopes, scope],
+      };
+    });
+  }
+
+  function addCustomScope() {
+    const scope = customScope.trim();
+    if (!scope || form.allowed_scopes.includes(scope)) return;
+    setForm((prev) => ({ ...prev, allowed_scopes: [...prev.allowed_scopes, scope] }));
+    setCustomScope("");
+  }
+
+  const customScopes = form.allowed_scopes.filter((scope) => !scopeOptions.includes(scope as typeof scopeOptions[number]));
 
   return (
     <>
@@ -352,10 +389,66 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
                   <HelpText>{t("admin.oauth.accessSectionDesc")}</HelpText>
                 </div>
                 <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="oauth-scopes">{t("admin.oauth.scopes")}</Label>
-                    <Textarea id="oauth-scopes" className="min-h-[104px] font-mono text-xs" value={form.allowed_scopes}
-                      onChange={(e) => setForm({ ...form, allowed_scopes: e.target.value })} />
+                  <div className="space-y-3">
+                    <Label>{t("admin.oauth.scopes")}</Label>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {scopeOptions.map((scope) => {
+                        const selected = form.allowed_scopes.includes(scope);
+                        return (
+                          <button
+                            key={scope}
+                            type="button"
+                            className={`flex min-h-[74px] items-start gap-3 rounded-md border p-3 text-left transition-colors ${
+                              selected ? "border-primary bg-primary/5" : "border-border hover:bg-accent"
+                            }`}
+                            onClick={() => toggleScope(scope)}
+                          >
+                            <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                              selected ? "border-primary bg-primary text-primary-foreground" : "border-input"
+                            }`}>
+                              {selected && <Check className="h-3 w-3" />}
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block font-mono text-xs font-medium">{scope}</span>
+                              <span className="mt-1 block text-xs leading-5 text-muted-foreground">{t(`admin.oauth.scopeDescriptions.${scope}`)}</span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        value={customScope}
+                        onChange={(e) => setCustomScope(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addCustomScope();
+                          }
+                        }}
+                        placeholder={t("admin.oauth.customScopePlaceholder")}
+                        className="font-mono text-xs"
+                      />
+                      <Button type="button" variant="outline" onClick={addCustomScope}>
+                        <Plus className="h-4 w-4" />
+                        {t("admin.oauth.addScope")}
+                      </Button>
+                    </div>
+                    {customScopes.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {customScopes.map((scope) => (
+                          <button
+                            key={scope}
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 font-mono text-xs text-muted-foreground hover:bg-accent"
+                            onClick={() => toggleScope(scope)}
+                          >
+                            {scope}
+                            <X className="h-3 w-3" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <HelpText>{t("admin.oauth.scopesDesc")}</HelpText>
                   </div>
                   <div className="space-y-3 rounded-md border border-border p-3">

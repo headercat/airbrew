@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Check, Copy, KeyRound, Lock, Plus, Save, Trash2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -30,6 +30,10 @@ type OAuthForm = {
 type CreatedSecret = {
   client_id: string;
   client_secret: string;
+};
+
+type OAuthLocationState = {
+  createdSecret?: CreatedSecret;
 };
 
 const scopeOptions = [
@@ -78,6 +82,30 @@ function formFromClient(c: OAuthClient): OAuthForm {
 
 function HelpText({ children }: { children: React.ReactNode }) {
   return <p className="text-xs leading-5 text-muted-foreground">{children}</p>;
+}
+
+function IntegrationValue({
+  label,
+  value,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  onCopy: (value: string) => void;
+}) {
+  return (
+    <div className="min-w-0 rounded-md border border-border p-3">
+      <div className="mb-1 text-xs font-medium text-muted-foreground">{label}</div>
+      <div className="flex items-center gap-2">
+        <code className="min-w-0 flex-1 truncate text-xs">{value || "-"}</code>
+        {value && (
+          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => onCopy(value)}>
+            <Copy className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function AdminOAuth() {
@@ -177,13 +205,22 @@ function OAuthClientList() {
 function OAuthClientSettings({ clientId }: { clientId?: string }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
+  const locationState = location.state as OAuthLocationState | null;
   const isEditing = Boolean(clientId);
+  const [client, setClient] = useState<OAuthClient | null>(null);
   const [form, setForm] = useState<OAuthForm>(blankForm);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(clientId));
   const [saving, setSaving] = useState(false);
-  const [createdSecret, setCreatedSecret] = useState<CreatedSecret | null>(null);
+  const [createdSecret, setCreatedSecret] = useState<CreatedSecret | null>(() => locationState?.createdSecret ?? null);
   const [customScope, setCustomScope] = useState("");
+
+  useEffect(() => {
+    if (locationState?.createdSecret) {
+      setCreatedSecret(locationState.createdSecret);
+    }
+  }, [locationState?.createdSecret]);
 
   useEffect(() => {
     if (!clientId) return;
@@ -191,7 +228,10 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
     setLoading(true);
     api.get<OAuthClient>(`/api/admin/oauth/clients/${clientId}`)
       .then((client) => {
-        if (!cancelled) setForm(formFromClient(client));
+        if (!cancelled) {
+          setClient(client);
+          setForm(formFromClient(client));
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(isApiError(err) ? err.error_description ?? err.error : "error");
@@ -234,11 +274,11 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
           ...payload,
           client_type: form.client_type,
         });
-        if (res.client_secret) {
-          setCreatedSecret({ client_id: res.client.client_id, client_secret: res.client_secret });
-        } else {
-          navigate("/admin/oauth");
-        }
+        navigate(`/admin/oauth/${res.client.id}`, {
+          state: res.client_secret
+            ? { createdSecret: { client_id: res.client.client_id, client_secret: res.client_secret } }
+            : undefined,
+        });
       }
     } catch (err) {
       setError(isApiError(err) ? err.error_description ?? err.error : "error");
@@ -281,6 +321,10 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
   }
 
   const customScopes = form.allowed_scopes.filter((scope) => !scopeOptions.includes(scope as typeof scopeOptions[number]));
+  const issuer = window.location.origin;
+  const authorizationEndpoint = `${issuer}/oauth/authorize`;
+  const tokenEndpoint = `${issuer}/oauth/token`;
+  const scopeValue = form.allowed_scopes.join(" ");
 
   return (
     <>
@@ -309,7 +353,15 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
                 <Copy className="mr-2 h-3.5 w-3.5" />
                 {t("admin.oauth.copySecret")}
               </Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/admin/oauth")}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => {
+                  setCreatedSecret(null);
+                  navigate(location.pathname, { replace: true, state: null });
+                }}
+              >
                 <X className="h-4 w-4" />
               </Button>
             </div>
@@ -322,6 +374,36 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
             <p className="text-sm text-muted-foreground">{t("admin.oauth.loading")}</p>
           ) : (
             <>
+              {isEditing && client && (
+                <section className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+                  <div>
+                    <h2 className="text-sm font-medium">{t("admin.oauth.integrationSection")}</h2>
+                    <HelpText>{t("admin.oauth.integrationSectionDesc")}</HelpText>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <IntegrationValue label={t("admin.oauth.clientId")} value={client.client_id} onCopy={copy} />
+                      <IntegrationValue label={t("admin.oauth.issuer")} value={issuer} onCopy={copy} />
+                      <IntegrationValue label={t("admin.oauth.authorizationEndpoint")} value={authorizationEndpoint} onCopy={copy} />
+                      <IntegrationValue label={t("admin.oauth.tokenEndpoint")} value={tokenEndpoint} onCopy={copy} />
+                      <IntegrationValue label={t("admin.oauth.scopes")} value={scopeValue} onCopy={copy} />
+                      <IntegrationValue label={t("admin.oauth.authMethod")} value={client.token_endpoint_auth_method} onCopy={copy} />
+                    </div>
+                    {createdSecret && (
+                      <IntegrationValue label={t("admin.oauth.clientSecret")} value={createdSecret.client_secret} onCopy={copy} />
+                    )}
+                    <div className="rounded-md border border-border p-3">
+                      <p className="text-sm font-medium">{t("admin.oauth.quickStartTitle")}</p>
+                      <ol className="mt-2 space-y-1 pl-4 text-xs leading-5 text-muted-foreground">
+                        <li>{t("admin.oauth.quickStartStep1")}</li>
+                        <li>{t("admin.oauth.quickStartStep2")}</li>
+                        <li>{t("admin.oauth.quickStartStep3")}</li>
+                      </ol>
+                    </div>
+                  </div>
+                </section>
+              )}
+
               <section className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
                 <div>
                   <h2 className="text-sm font-medium">{t("admin.oauth.identitySection")}</h2>

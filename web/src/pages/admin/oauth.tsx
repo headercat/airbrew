@@ -221,11 +221,13 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
       post_logout_redirect_uris: lines(form.post_logout_redirect_uris),
       is_first_party: form.is_first_party,
       require_consent: form.require_consent,
-      is_active: form.is_active,
     };
     try {
       if (clientId) {
-        await api.patch(`/api/admin/oauth/clients/${clientId}`, payload);
+        await api.patch(`/api/admin/oauth/clients/${clientId}`, {
+          ...payload,
+          is_active: form.is_active,
+        });
         navigate("/admin/oauth");
       } else {
         const res = await api.post<{ client: OAuthClient; client_secret?: string }>("/api/admin/oauth/clients", {

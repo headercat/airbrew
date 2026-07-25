@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/headercat/airbrew/internal/db"
 )
@@ -57,6 +58,31 @@ func TestClientServiceRejectsInvalidRedirectURI(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestClientServiceListDoesNotBlockSingleSQLiteConnection(t *testing.T) {
+	svc := testClientService(t)
+	_, err := svc.Create(context.Background(), ClientCreate{
+		Name:          "Example App",
+		ClientType:    ClientTypePublic,
+		AllowedScopes: []string{"openid"},
+		RedirectURIs:  []string{"https://example.com/callback"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	clients, total, err := svc.List(ctx, 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(clients) != 1 {
+		t.Fatalf("expected one client, total=%d len=%d", total, len(clients))
+	}
+	if len(clients[0].RedirectURIs) != 1 || clients[0].RedirectURIs[0] != "https://example.com/callback" {
+		t.Fatalf("unexpected redirect URIs: %#v", clients[0].RedirectURIs)
 	}
 }
 

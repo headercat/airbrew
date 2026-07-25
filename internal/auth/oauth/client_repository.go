@@ -99,12 +99,20 @@ func (r *ClientRepository) List(ctx context.Context, limit, offset int) ([]*Clie
 		if err != nil {
 			return nil, err
 		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for _, c := range out {
 		if err := r.loadURIs(ctx, c); err != nil {
 			return nil, err
 		}
-		out = append(out, c)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // Count returns the number of non-deleted clients.

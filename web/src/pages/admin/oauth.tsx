@@ -339,7 +339,7 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="oauth-logout-redirects">{t("admin.oauth.logoutRedirectUris")}</Label>
-                    <Textarea id="oauth-logout-redirects" className="min-h-[86px] font-mono text-xs" value={form.post_logout_redirect_uris}
+                    <Textarea id="oauth-logout-redirects" className="min-h-[104px] font-mono text-xs" value={form.post_logout_redirect_uris}
                       onChange={(e) => setForm({ ...form, post_logout_redirect_uris: e.target.value })} />
                     <HelpText>{t("admin.oauth.logoutRedirectUrisDesc")}</HelpText>
                   </div>

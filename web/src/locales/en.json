@@ -336,7 +336,6 @@
         "profile": "Allows access to basic profile claims such as name and avatar.",
         "email": "Allows access to email and email verification claims.",
         "auth": "Allows authentication state and session-related APIs.",
-        "user": "Allows access to the current user's Airbrew account record.",
         "mail": "Allows future mail module access.",
         "drive": "Allows future drive module access.",
         "contacts": "Allows future contacts module access.",

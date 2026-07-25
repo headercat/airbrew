@@ -37,7 +37,6 @@ const scopeOptions = [
   "profile",
   "email",
   "auth",
-  "user",
   "mail",
   "drive",
   "contacts",

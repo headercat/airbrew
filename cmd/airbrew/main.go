@@ -17,6 +17,7 @@ import (
 	"github.com/headercat/airbrew/internal/config"
 	"github.com/headercat/airbrew/internal/db"
 	"github.com/headercat/airbrew/internal/httpserver"
+	"github.com/headercat/airbrew/internal/logging"
 	"github.com/headercat/airbrew/internal/server"
 	"github.com/headercat/airbrew/web"
 )
@@ -25,9 +26,7 @@ func main() {
 	// Load .env / .env.local if present. Real environment variables always win.
 	config.LoadFile()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	logger := slog.New(logging.NewColorHandler(os.Stdout, slog.LevelInfo))
 	slog.SetDefault(logger)
 
 	cfg, err := config.Load()

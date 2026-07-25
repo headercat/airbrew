@@ -10,6 +10,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/headercat/airbrew/internal/id"
@@ -17,11 +20,11 @@ import (
 
 // Entry describes one audit-worthy event.
 type Entry struct {
-	EventType     string         // e.g. "user.created", "module.disabled"
-	ActorUserID   string         // internal user ID; empty for system
-	ActorClientID string         // OAuth client ID; empty for browser
-	TargetType    string         // "user", "module", "session", "oauth_client"
-	TargetID      string         // ID of the target resource
+	EventType     string // e.g. "user.created", "module.disabled"
+	ActorUserID   string // internal user ID; empty for system
+	ActorClientID string // OAuth client ID; empty for browser
+	TargetType    string // "user", "module", "session", "oauth_client"
+	TargetID      string // ID of the target resource
 	IPAddress     string
 	UserAgent     string
 	Metadata      map[string]any // additional structured context
@@ -66,18 +69,24 @@ func (s *Service) Log(ctx context.Context, e Entry) {
 		meta,
 		now,
 	)
+	slog.Default().Info(humanMessage(s.db, ctx, e),
+		"event", e.EventType,
+		"actor", actorLabel(s.db, ctx, e.ActorUserID, e.ActorClientID),
+		"target", targetLabel(e.TargetType, e.TargetID),
+		"ip", e.IPAddress,
+	)
 }
 
 // ListFilter controls which entries are returned.
 type ListFilter struct {
-	EventType string
-	ActorID   string
+	EventType  string
+	ActorID    string
 	TargetType string
-	TargetID  string
-	From      time.Time
-	To        time.Time
-	Limit     int
-	Offset    int
+	TargetID   string
+	From       time.Time
+	To         time.Time
+	Limit      int
+	Offset     int
 }
 
 // LogEntry is a row read back from audit_logs.
@@ -180,4 +189,97 @@ func nullable(s string) any {
 		return nil
 	}
 	return s
+}
+
+func humanMessage(db *sql.DB, ctx context.Context, e Entry) string {
+	actor := actorLabel(db, ctx, e.ActorUserID, e.ActorClientID)
+	target := targetLabel(e.TargetType, e.TargetID)
+	switch e.EventType {
+	case "admin.bootstrap":
+		return "Bootstrap admin account was created"
+	case "user.created":
+		return fmt.Sprintf("%s created user %s", actor, metadataOrTarget(e, "email", target))
+	case "user.updated":
+		return fmt.Sprintf("%s updated user %s", actor, target)
+	case "user.role_changed":
+		return fmt.Sprintf("%s changed %s role from %s to %s", actor, target, metadataValue(e, "from"), metadataValue(e, "to"))
+	case "user.status_changed", "user.suspended", "user.deleted":
+		return fmt.Sprintf("%s changed %s status from %s to %s", actor, target, metadataValue(e, "from"), metadataValue(e, "to"))
+	case "user.password_reset":
+		return fmt.Sprintf("%s reset password for %s", actor, target)
+	case "user.password_changed":
+		return fmt.Sprintf("%s changed their password", actor)
+	case "session.login":
+		return fmt.Sprintf("%s signed in", actor)
+	case "session.logout":
+		return fmt.Sprintf("%s signed out", actor)
+	case "session.revoked":
+		return fmt.Sprintf("%s revoked session %s", actor, e.TargetID)
+	case "module.enabled":
+		return fmt.Sprintf("%s enabled module %s", actor, e.TargetID)
+	case "module.disabled":
+		return fmt.Sprintf("%s disabled module %s", actor, e.TargetID)
+	case "branding.updated":
+		return fmt.Sprintf("%s updated workspace branding", actor)
+	case "oauth.client_created":
+		return fmt.Sprintf("%s created OAuth client %s", actor, metadataOrTarget(e, "name", target))
+	case "oauth.client_updated":
+		return fmt.Sprintf("%s updated OAuth client %s", actor, metadataOrTarget(e, "name", target))
+	case "oauth.client_deleted":
+		return fmt.Sprintf("%s deleted OAuth client %s", actor, metadataOrTarget(e, "name", target))
+	case "profile.updated":
+		return fmt.Sprintf("%s updated their profile", actor)
+	case "avatar.uploaded":
+		return fmt.Sprintf("%s uploaded an avatar", actor)
+	default:
+		if target != "" {
+			return fmt.Sprintf("%s performed %s on %s", actor, e.EventType, target)
+		}
+		return fmt.Sprintf("%s performed %s", actor, e.EventType)
+	}
+}
+
+func actorLabel(db *sql.DB, ctx context.Context, userID, clientID string) string {
+	if userID != "" && db != nil {
+		var email string
+		if err := db.QueryRowContext(ctx, "SELECT email FROM users WHERE id = ?", userID).Scan(&email); err == nil && email != "" {
+			return email
+		}
+		return "user " + userID
+	}
+	if clientID != "" {
+		return "OAuth client " + clientID
+	}
+	return "system"
+}
+
+func targetLabel(targetType, targetID string) string {
+	if targetType == "" && targetID == "" {
+		return ""
+	}
+	if targetType == "" {
+		return targetID
+	}
+	if targetID == "" {
+		return targetType
+	}
+	return strings.ReplaceAll(targetType, "_", " ") + " " + targetID
+}
+
+func metadataOrTarget(e Entry, key, fallback string) string {
+	if v := metadataValue(e, key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func metadataValue(e Entry, key string) string {
+	if e.Metadata == nil {
+		return ""
+	}
+	v, ok := e.Metadata[key]
+	if !ok || v == nil {
+		return ""
+	}
+	return fmt.Sprint(v)
 }

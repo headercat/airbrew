@@ -25,7 +25,7 @@ func main() {
 	// Load .env / .env.local if present. Real environment variables always win.
 	config.LoadFile()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)

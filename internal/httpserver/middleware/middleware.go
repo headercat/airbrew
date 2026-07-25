@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -59,8 +61,9 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 
 type statusWriter struct {
 	http.ResponseWriter
-	status int
-	bytes  int
+	status    int
+	bytes     int
+	errorBody strings.Builder
 }
 
 func (w *statusWriter) WriteHeader(code int) {
@@ -72,27 +75,53 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
+	if w.status >= 400 && w.errorBody.Len() < 1024 {
+		remaining := 1024 - w.errorBody.Len()
+		if len(b) > remaining {
+			b = b[:remaining]
+		}
+		_, _ = w.errorBody.Write(b)
+	}
 	n, err := w.ResponseWriter.Write(b)
 	w.bytes += n
 	return n, err
 }
 
-// AccessLog logs one structured line per HTTP request.
+// AccessLog logs one human-readable line per HTTP request.
 func AccessLog(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			sw := &statusWriter{ResponseWriter: w}
 			next.ServeHTTP(sw, r)
-			logger.Info("http request",
+			status := sw.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			duration := time.Since(start)
+			msg := fmt.Sprintf("%s %s -> %d %s (%s)", r.Method, r.URL.RequestURI(), status, http.StatusText(status), duration.Round(time.Millisecond))
+			attrs := []any{
 				"method", r.Method,
-				"path", r.URL.Path,
-				"status", sw.status,
+				"path", r.URL.RequestURI(),
+				"status", status,
 				"bytes", sw.bytes,
-				"duration_ms", time.Since(start).Milliseconds(),
+				"duration", duration.Round(time.Millisecond).String(),
 				"ip", r.RemoteAddr,
 				"request_id", RequestIDFromContext(r.Context()),
-			)
+			}
+			if status >= 400 {
+				if body := strings.TrimSpace(sw.errorBody.String()); body != "" {
+					attrs = append(attrs, "error_response", body)
+				}
+			}
+			switch {
+			case status >= 500:
+				logger.Error(msg, attrs...)
+			case status >= 400:
+				logger.Warn(msg, attrs...)
+			default:
+				logger.Info(msg, attrs...)
+			}
 		})
 	}
 }

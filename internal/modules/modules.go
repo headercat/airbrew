@@ -29,12 +29,13 @@ var Catalog = []Meta{
 	{
 		Key: "admin", Name: "Admin",
 		Description: "Workspace administration: modules, users, permissions.",
-		AdminOnly: true, System: true,
+		AdminOnly:   true, System: true,
 	},
 	{Key: "mail", Name: "Mail", Description: "IMAP/SMTP-style mailboxes with inbound + outbound storage."},
 	{Key: "drive", Name: "Drive", Description: "Content-addressed file storage with sharing links."},
 	{Key: "contacts", Name: "Contacts", Description: "vCard 4.0 address book with CardDAV sync."},
 	{Key: "chat", Name: "Chat", Description: "1:1 and group conversations with real-time delivery."},
+	{Key: "passwords", Name: "Passwords", Description: "Zero-knowledge password vault with multi-device sync."},
 	{Key: "ai", Name: "AI Agents", Description: "Tool-using LLM agents with streaming responses."},
 	{Key: "workflow", Name: "Workflows", Description: "Trigger/action graph automation engine."},
 }

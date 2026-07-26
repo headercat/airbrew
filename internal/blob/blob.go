@@ -26,6 +26,9 @@ type Store interface {
 
 	// Open returns a reader for the blob and its content type.
 	Open(ctx context.Context, path string) (io.ReadCloser, string, error)
+
+	// Delete removes the blob. Missing files are not an error.
+	Delete(ctx context.Context, path string) error
 }
 
 // LocalStore writes files under a single root directory.
@@ -84,6 +87,19 @@ func (s *LocalStore) Open(ctx context.Context, path string) (io.ReadCloser, stri
 		return nil, "", err
 	}
 	return f, ContentTypeFor(filepath.Ext(path)), nil
+}
+
+// Delete removes the blob at the given relative path. A missing file is not an
+// error so callers can clean up best-effort.
+func (s *LocalStore) Delete(ctx context.Context, path string) error {
+	clean, err := safeJoin(s.root, path)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(clean); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("blob: remove %q: %w", clean, err)
+	}
+	return nil
 }
 
 // safeJoin prevents path traversal: requires the cleaned joined path to remain

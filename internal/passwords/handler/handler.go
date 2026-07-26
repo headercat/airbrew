@@ -1,0 +1,605 @@
+// Package handler exposes the HTTP endpoints for the password-vault module.
+//
+// Every route requires an authenticated browser session. The handler never
+// touches plaintext: request bodies carry base64 AES-256-GCM ciphertext and
+// nonces, which are stored and returned verbatim. Optimistic-concurrency
+// conflicts are reported as 409 with the server's current row.
+package handler
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/headercat/airbrew/internal/audit"
+	"github.com/headercat/airbrew/internal/auth/session"
+	"github.com/headercat/airbrew/internal/blob"
+	"github.com/headercat/airbrew/internal/httpserver/response"
+	"github.com/headercat/airbrew/internal/passwords/vault"
+)
+
+// Handler exposes the vault JSON endpoints.
+type Handler struct {
+	svc   *vault.Service
+	audit *audit.Service
+	blobs blob.Store
+}
+
+// New builds a Handler. blobs is required for attachment upload/download.
+func New(svc *vault.Service, auditSvc *audit.Service, blobs blob.Store) *Handler {
+	return &Handler{svc: svc, audit: auditSvc, blobs: blobs}
+}
+
+// RegisterRoutes mounts the vault endpoints on mux. All routes are under
+// /api/vault and require a loaded session (see Module wiring in server.go).
+func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/vault/setup", h.setup)
+	mux.HandleFunc("GET /api/vault/keys", h.getKeys)
+	mux.HandleFunc("POST /api/vault/keys/rotate", h.rotateKeys)
+
+	mux.HandleFunc("GET /api/vault/sync", h.sync)
+
+	mux.HandleFunc("POST /api/vault/folders", h.createFolder)
+	mux.HandleFunc("PUT /api/vault/folders/{id}", h.updateFolder)
+	mux.HandleFunc("DELETE /api/vault/folders/{id}", h.deleteFolder)
+
+	mux.HandleFunc("POST /api/vault/items", h.createItem)
+	mux.HandleFunc("GET /api/vault/items/{id}", h.getItem)
+	mux.HandleFunc("PUT /api/vault/items/{id}", h.updateItem)
+	mux.HandleFunc("DELETE /api/vault/items/{id}", h.deleteItem)
+
+	mux.HandleFunc("GET /api/vault/items/{id}/attachments", h.listAttachments)
+	mux.HandleFunc("POST /api/vault/items/{id}/attachments", h.uploadAttachment)
+	mux.HandleFunc("GET /api/vault/items/{id}/attachments/{aid}", h.downloadAttachment)
+	mux.HandleFunc("DELETE /api/vault/items/{id}/attachments/{aid}", h.deleteAttachment)
+}
+
+// --- envelope ---------------------------------------------------------------
+
+type envelopeReq struct {
+	KDFAlgorithm        string `json:"kdf_algorithm"`
+	KDFSalt             string `json:"kdf_salt"`
+	KDFMemoryKiB        int    `json:"kdf_memory_kib"`
+	KDFIterations       int    `json:"kdf_iterations"`
+	KDFParallelism      int    `json:"kdf_parallelism"`
+	ProtectedVaultKey   string `json:"protected_vault_key"`
+	ProtectedVaultNonce string `json:"protected_vault_nonce"`
+}
+
+type envelopeResp struct {
+	KDFAlgorithm        string `json:"kdf_algorithm"`
+	KDFSalt             string `json:"kdf_salt"`
+	KDFMemoryKiB        int    `json:"kdf_memory_kib"`
+	KDFIterations       int    `json:"kdf_iterations"`
+	KDFParallelism      int    `json:"kdf_parallelism"`
+	ProtectedVaultKey   string `json:"protected_vault_key"`
+	ProtectedVaultNonce string `json:"protected_vault_nonce"`
+	UpdatedAt           string `json:"updated_at"`
+}
+
+func toEnvelopeResp(env vault.KeyEnvelope) envelopeResp {
+	return envelopeResp{
+		KDFAlgorithm: env.KDFAlgorithm, KDFSalt: env.KDFSalt,
+		KDFMemoryKiB: env.KDFMemoryKiB, KDFIterations: env.KDFIterations,
+		KDFParallelism:    env.KDFParallelism,
+		ProtectedVaultKey: env.ProtectedVaultKey, ProtectedVaultNonce: env.ProtectedVaultNonce,
+		UpdatedAt: env.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func (h *Handler) setup(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	var req envelopeReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	env := vault.KeyEnvelope{
+		UserID: sess.UserID, KDFAlgorithm: req.KDFAlgorithm, KDFSalt: req.KDFSalt,
+		KDFMemoryKiB: req.KDFMemoryKiB, KDFIterations: req.KDFIterations, KDFParallelism: req.KDFParallelism,
+		ProtectedVaultKey: req.ProtectedVaultKey, ProtectedVaultNonce: req.ProtectedVaultNonce,
+	}
+	if err := h.svc.Setup(r.Context(), env); err != nil {
+		if errors.Is(err, vault.ErrEnvelopeExists) {
+			response.Error(w, http.StatusConflict, "envelope_exists", "vault is already set up")
+			return
+		}
+		if errors.Is(err, vault.ErrInvalidInput) {
+			response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "vault.setup", ActorUserID: sess.UserID,
+		TargetType: "vault", TargetID: sess.UserID,
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
+	response.JSON(w, http.StatusCreated, map[string]bool{"ok": true})
+}
+
+func (h *Handler) getKeys(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	env, err := h.svc.GetEnvelope(r.Context(), sess.UserID)
+	if err != nil {
+		if errors.Is(err, vault.ErrNotFound) {
+			response.Error(w, http.StatusNotFound, "not_set_up", "vault has not been set up")
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	response.JSON(w, http.StatusOK, toEnvelopeResp(env))
+}
+
+func (h *Handler) rotateKeys(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	var req envelopeReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	env := vault.KeyEnvelope{
+		UserID: sess.UserID, KDFAlgorithm: req.KDFAlgorithm, KDFSalt: req.KDFSalt,
+		KDFMemoryKiB: req.KDFMemoryKiB, KDFIterations: req.KDFIterations, KDFParallelism: req.KDFParallelism,
+		ProtectedVaultKey: req.ProtectedVaultKey, ProtectedVaultNonce: req.ProtectedVaultNonce,
+	}
+	if err := h.svc.RotateEnvelope(r.Context(), env); err != nil {
+		if errors.Is(err, vault.ErrNotFound) {
+			response.Error(w, http.StatusNotFound, "not_set_up", "vault has not been set up")
+			return
+		}
+		if errors.Is(err, vault.ErrInvalidInput) {
+			response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "vault.keys_rotated", ActorUserID: sess.UserID,
+		TargetType: "vault", TargetID: sess.UserID,
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
+	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// --- folders ---------------------------------------------------------------
+
+type folderReq struct {
+	NameCipher string `json:"name_cipher"`
+	NameNonce  string `json:"name_nonce"`
+	IfRevision int64  `json:"if_revision"`
+}
+
+type folderResp struct {
+	ID         string  `json:"id"`
+	NameCipher string  `json:"name_cipher"`
+	NameNonce  string  `json:"name_nonce"`
+	Revision   int64   `json:"revision"`
+	CreatedAt  string  `json:"created_at"`
+	UpdatedAt  string  `json:"updated_at"`
+	DeletedAt  *string `json:"deleted_at"`
+}
+
+func toFolderResp(f vault.Folder) folderResp {
+	out := folderResp{
+		ID: f.ID, NameCipher: f.NameCipher, NameNonce: f.NameNonce,
+		Revision:  f.Revision,
+		CreatedAt: f.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: f.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+	if f.DeletedAt != nil {
+		s := f.DeletedAt.UTC().Format(time.RFC3339)
+		out.DeletedAt = &s
+	}
+	return out
+}
+
+func (h *Handler) createFolder(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	var req folderReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	f, err := h.svc.CreateFolder(r.Context(), sess.UserID, req.NameCipher, req.NameNonce)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusCreated, toFolderResp(f))
+}
+
+func (h *Handler) updateFolder(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	var req folderReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	f, err := h.svc.UpdateFolder(r.Context(), sess.UserID, id, req.NameCipher, req.NameNonce, req.IfRevision)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, toFolderResp(f))
+}
+
+func (h *Handler) deleteFolder(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	ifRev, _ := strconv.ParseInt(r.URL.Query().Get("if_revision"), 10, 64)
+	if err := h.svc.DeleteFolder(r.Context(), sess.UserID, id, ifRev); err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// --- items -----------------------------------------------------------------
+
+type itemReq struct {
+	Type        vault.ItemType `json:"type"`
+	FolderID    string         `json:"folder_id"`
+	NameCipher  string         `json:"name_cipher"`
+	NameNonce   string         `json:"name_nonce"`
+	DataCipher  string         `json:"data_cipher"`
+	DataNonce   string         `json:"data_nonce"`
+	NotesCipher string         `json:"notes_cipher"`
+	NotesNonce  string         `json:"notes_nonce"`
+	Favorite    bool           `json:"favorite"`
+	Reprompt    bool           `json:"reprompt"`
+	IfRevision  int64          `json:"if_revision"`
+}
+
+type itemResp struct {
+	ID          string  `json:"id"`
+	Type        string  `json:"type"`
+	FolderID    string  `json:"folder_id"`
+	NameCipher  string  `json:"name_cipher"`
+	NameNonce   string  `json:"name_nonce"`
+	DataCipher  string  `json:"data_cipher"`
+	DataNonce   string  `json:"data_nonce"`
+	NotesCipher string  `json:"notes_cipher"`
+	NotesNonce  string  `json:"notes_nonce"`
+	Favorite    bool    `json:"favorite"`
+	Reprompt    bool    `json:"reprompt"`
+	Revision    int64   `json:"revision"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+	DeletedAt   *string `json:"deleted_at"`
+}
+
+func toItemResp(it vault.Item) itemResp {
+	out := itemResp{
+		ID: it.ID, Type: string(it.Type), FolderID: it.FolderID,
+		NameCipher: it.NameCipher, NameNonce: it.NameNonce,
+		DataCipher: it.DataCipher, DataNonce: it.DataNonce,
+		NotesCipher: it.NotesCipher, NotesNonce: it.NotesNonce,
+		Favorite: it.Favorite, Reprompt: it.Reprompt, Revision: it.Revision,
+		CreatedAt: it.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: it.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+	if it.DeletedAt != nil {
+		s := it.DeletedAt.UTC().Format(time.RFC3339)
+		out.DeletedAt = &s
+	}
+	return out
+}
+
+func itemInput(req itemReq) vault.ItemInput {
+	return vault.ItemInput{
+		Type: req.Type, FolderID: req.FolderID,
+		NameCipher: req.NameCipher, NameNonce: req.NameNonce,
+		DataCipher: req.DataCipher, DataNonce: req.DataNonce,
+		NotesCipher: req.NotesCipher, NotesNonce: req.NotesNonce,
+		Favorite: req.Favorite, Reprompt: req.Reprompt,
+	}
+}
+
+func (h *Handler) createItem(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	var req itemReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	it, err := h.svc.CreateItem(r.Context(), sess.UserID, itemInput(req))
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusCreated, toItemResp(it))
+}
+
+func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	it, err := h.svc.GetItem(r.Context(), sess.UserID, id)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, toItemResp(it))
+}
+
+func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	var req itemReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	it, err := h.svc.UpdateItem(r.Context(), sess.UserID, id, itemInput(req), req.IfRevision)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, toItemResp(it))
+}
+
+func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	ifRev, _ := strconv.ParseInt(r.URL.Query().Get("if_revision"), 10, 64)
+	if err := h.svc.DeleteItem(r.Context(), sess.UserID, id, ifRev); err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// --- sync ------------------------------------------------------------------
+
+type syncResp struct {
+	Cursor  int64        `json:"cursor"`
+	Folders []folderResp `json:"folders"`
+	Items   []itemResp   `json:"items"`
+}
+
+func (h *Handler) sync(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
+	res, err := h.svc.Sync(r.Context(), sess.UserID, since)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	out := syncResp{Cursor: res.Cursor, Folders: []folderResp{}, Items: []itemResp{}}
+	for _, f := range res.Folders {
+		out.Folders = append(out.Folders, toFolderResp(f))
+	}
+	for _, it := range res.Items {
+		out.Items = append(out.Items, toItemResp(it))
+	}
+	response.JSON(w, http.StatusOK, out)
+}
+
+// --- helpers ---------------------------------------------------------------
+
+// requireSession loads the session and writes a 401 + false if absent.
+func requireSession(w http.ResponseWriter, r *http.Request) (*session.Session, bool) {
+	sess, ok := session.FromContext(r.Context())
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, "unauthorized", "no active session")
+		return nil, false
+	}
+	return sess, true
+}
+
+// writeVaultError maps a vault service error to an HTTP status. Conflict errors
+// carry the server's current row so the client can merge.
+func writeVaultError(w http.ResponseWriter, err error) {
+	if ce := vault.AsConflict(err); ce != nil {
+		body := map[string]any{"error": "conflict", "error_description": "revision mismatch"}
+		switch cur := ce.CurrentRow.(type) {
+		case *vault.Item:
+			body["current"] = toItemResp(*cur)
+		case *vault.Folder:
+			body["current"] = toFolderResp(*cur)
+		}
+		response.JSON(w, http.StatusConflict, body)
+		return
+	}
+	switch {
+	case errors.Is(err, vault.ErrNotFound):
+		response.Error(w, http.StatusNotFound, "not_found", "vault entry not found")
+	case errors.Is(err, vault.ErrInvalidInput):
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+	default:
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+	}
+}
+
+func decodeJSON(r *http.Request, v any) error {
+	ct := r.Header.Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		return errors.New("content-type must be application/json")
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
+}
+
+func clientIP(r *http.Request) string {
+	if f := r.Header.Get("X-Forwarded-For"); f != "" {
+		if i := strings.Index(f, ","); i > 0 {
+			return strings.TrimSpace(f[:i])
+		}
+		return strings.TrimSpace(f)
+	}
+	return r.RemoteAddr
+}
+
+// --- attachments -----------------------------------------------------------
+
+const maxAttachmentBytes = 10 << 20 // 10 MiB ciphertext upload cap
+
+type attachmentResp struct {
+	ID            string `json:"id"`
+	NameCipher    string `json:"name_cipher"`
+	NameNonce     string `json:"name_nonce"`
+	FileKeyCipher string `json:"file_key_cipher"`
+	FileKeyNonce  string `json:"file_key_nonce"`
+	SizeBytes     int64  `json:"size_bytes"`
+	CreatedAt     string `json:"created_at"`
+}
+
+func toAttachmentResp(a vault.Attachment) attachmentResp {
+	return attachmentResp{
+		ID: a.ID, NameCipher: a.NameCipher, NameNonce: a.NameNonce,
+		FileKeyCipher: a.FileKeyCipher, FileKeyNonce: a.FileKeyNonce,
+		SizeBytes: a.SizeBytes, CreatedAt: a.CreatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func (h *Handler) listAttachments(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	itemID := r.PathValue("id")
+	atts, err := h.svc.ListAttachments(r.Context(), sess.UserID, itemID)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	out := make([]attachmentResp, 0, len(atts))
+	for _, a := range atts {
+		out = append(out, toAttachmentResp(a))
+	}
+	response.JSON(w, http.StatusOK, map[string]any{"attachments": out})
+}
+
+func (h *Handler) uploadAttachment(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	if h.blobs == nil {
+		response.Error(w, http.StatusServiceUnavailable, "unavailable", "blob store not configured")
+		return
+	}
+	itemID := r.PathValue("id")
+	// Cap total upload size.
+	r.Body = http.MaxBytesReader(w, r.Body, maxAttachmentBytes+2<<10)
+	if err := r.ParseMultipartForm(32 << 10); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", "failed to parse multipart: "+err.Error())
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", "file field is required")
+		return
+	}
+	defer file.Close()
+
+	fkCipher := r.FormValue("file_key_cipher")
+	fkNonce := r.FormValue("file_key_nonce")
+	nameCipher := r.FormValue("name_cipher")
+	nameNonce := r.FormValue("name_nonce")
+	sizeBytes, _ := strconv.ParseInt(r.FormValue("size_bytes"), 10, 64)
+
+	// Stream the encrypted payload straight to the blob store.
+	blobPath, err := h.blobs.Save(r.Context(), "vault-attachments", "application/octet-stream", file)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	att, err := h.svc.CreateAttachment(r.Context(), sess.UserID, itemID, blobPath, sizeBytes,
+		fkCipher, fkNonce, nameCipher, nameNonce)
+	if err != nil {
+		// Best-effort: clean up the orphaned blob on DB failure.
+		_ = h.blobs.Delete(r.Context(), blobPath)
+		writeVaultError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusCreated, toAttachmentResp(att))
+}
+
+func (h *Handler) downloadAttachment(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	itemID := r.PathValue("id")
+	att, err := h.svc.GetAttachment(r.Context(), sess.UserID, itemID, r.PathValue("aid"))
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	body, _, err := h.blobs.Open(r.Context(), att.BlobPath)
+	if err != nil {
+		response.Error(w, http.StatusNotFound, "not_found", "attachment blob missing")
+		return
+	}
+	defer body.Close()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment")
+	if _, err := io.Copy(w, body); err != nil {
+		return
+	}
+}
+
+func (h *Handler) deleteAttachment(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	itemID := r.PathValue("id")
+	aid := r.PathValue("aid")
+	att, err := h.svc.GetAttachment(r.Context(), sess.UserID, itemID, aid)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	if err := h.svc.DeleteAttachment(r.Context(), sess.UserID, itemID, aid); err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	if h.blobs != nil {
+		_ = h.blobs.Delete(r.Context(), att.BlobPath)
+	}
+	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}

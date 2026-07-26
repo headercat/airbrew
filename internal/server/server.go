@@ -17,6 +17,7 @@ import (
 	"github.com/headercat/airbrew/internal/db"
 	"github.com/headercat/airbrew/internal/drive"
 	"github.com/headercat/airbrew/internal/mail"
+	"github.com/headercat/airbrew/internal/passwords"
 	"github.com/headercat/airbrew/internal/workflow"
 )
 
@@ -62,6 +63,14 @@ func Build(d Deps) *http.ServeMux {
 	chat.New(stubState).RegisterRoutes(mux)
 	ai.New(stubState).RegisterRoutes(mux)
 	workflow.New(stubState).RegisterRoutes(mux)
+
+	// Password vault. Status is public; the remaining endpoints require a
+	// session, so they are mounted on a sub-mux wrapped in SessionMiddleware.
+	pwMod := passwords.New(d.DB.DB, stubState, adminMod.Audit(), d.Blobs)
+	mux.HandleFunc("GET /api/vault/status", pwMod.Status)
+	pwSub := http.NewServeMux()
+	pwMod.RegisterRoutes(pwSub)
+	mux.Handle("/api/vault/", authMod.SessionMiddleware(pwSub))
 
 	mux.Handle("/", spaHandler(d.WebFS))
 

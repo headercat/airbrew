@@ -6,7 +6,9 @@ import {
   Cloud,
   Contact,
   FileText,
+  Folder,
   Inbox,
+  KeyRound,
   LayoutDashboard,
   Lock,
   type LucideIcon,
@@ -28,6 +30,7 @@ export type ModuleKey =
   | "drive"
   | "contacts"
   | "chat"
+  | "passwords"
   | "ai"
   | "workflow";
 
@@ -45,6 +48,7 @@ export const MODULES: ModuleMeta[] = [
   { key: "drive", labelKey: "dashboard.modules.drive.label", descriptionKey: "dashboard.modules.drive.description", icon: Cloud, path: "/drive", status: "not_implemented" },
   { key: "contacts", labelKey: "dashboard.modules.contacts.label", descriptionKey: "dashboard.modules.contacts.description", icon: Contact, path: "/contacts", status: "not_implemented" },
   { key: "chat", labelKey: "dashboard.modules.chat.label", descriptionKey: "dashboard.modules.chat.description", icon: MessagesSquare, path: "/chat", status: "not_implemented" },
+  { key: "passwords", labelKey: "dashboard.modules.passwords.label", descriptionKey: "dashboard.modules.passwords.description", icon: KeyRound, path: "/passwords", status: "not_implemented" },
   { key: "ai", labelKey: "dashboard.modules.ai.label", descriptionKey: "dashboard.modules.ai.description", icon: Bot, path: "/ai", status: "not_implemented" },
   { key: "workflow", labelKey: "dashboard.modules.workflow.label", descriptionKey: "dashboard.modules.workflow.description", icon: Workflow, path: "/workflow", status: "not_implemented" },
 ];
@@ -99,6 +103,14 @@ export const NAV_TREE: NavNode[] = [
     children: [
       { labelKey: "nav.chat.channels", to: "/chat", icon: MessagesSquare },
       { labelKey: "nav.chat.direct", to: "/chat?type=dm", icon: UserIcon },
+    ],
+  },
+  {
+    labelKey: "dashboard.modules.passwords.label",
+    to: "/passwords", icon: KeyRound, badge: "planned",
+    children: [
+      { labelKey: "nav.passwords.allItems", to: "/passwords", icon: KeyRound },
+      { labelKey: "nav.passwords.folders", to: "/passwords?view=folders", icon: Folder },
     ],
   },
   {
@@ -169,6 +181,7 @@ export const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
       { labelKey: "dashboard.modules.drive.label", to: "/admin/modules/drive", icon: Cloud },
       { labelKey: "dashboard.modules.contacts.label", to: "/admin/modules/contacts", icon: Contact },
       { labelKey: "dashboard.modules.chat.label", to: "/admin/modules/chat", icon: MessagesSquare },
+      { labelKey: "dashboard.modules.passwords.label", to: "/admin/modules/passwords", icon: KeyRound },
       { labelKey: "dashboard.modules.ai.label", to: "/admin/modules/ai", icon: Bot },
       { labelKey: "dashboard.modules.workflow.label", to: "/admin/modules/workflow", icon: Workflow },
     ],

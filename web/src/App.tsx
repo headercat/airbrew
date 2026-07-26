@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Outlet, Routes, Route } from "react-router-dom";
 
 import { AppLayout } from "@/components/layout/app-layout";
 import { RedirectIfSignedIn, RequireAuth } from "@/components/auth-route";
@@ -16,8 +16,12 @@ import DashboardPage from "@/pages/dashboard";
 import LoginPage from "@/pages/login";
 import ModuleStubPage from "@/pages/module-stub";
 import NotFoundPage from "@/pages/not-found";
+import PasswordsPage from "@/pages/passwords";
+import PasswordEditor from "@/pages/passwords/editor";
+import PasswordView from "@/pages/passwords/view";
 import ProfilePage from "@/pages/profile";
 import RegisterPage from "@/pages/register";
+import { VaultProvider } from "@/lib/vault/store";
 
 export default function App() {
   return (
@@ -50,10 +54,29 @@ export default function App() {
           <Route path="system" element={<AdminSystem />} />
         </Route>
 
+        {/* Password vault — shared VaultProvider so unlock state persists
+            across the list and editor routes. */}
+        <Route path="/passwords" element={<VaultLayout />}>
+          <Route index element={<PasswordsPage />} />
+          <Route path="new" element={<PasswordEditor />} />
+          <Route path=":id" element={<PasswordView />} />
+          <Route path=":id/edit" element={<PasswordEditor />} />
+        </Route>
+
         <Route path="/:module" element={<ModuleStubPage />} />
       </Route>
 
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
+  );
+}
+
+// VaultLayout wraps the password routes in the vault store so navigation
+// between the list and the editor keeps the unlocked vault key in memory.
+function VaultLayout() {
+  return (
+    <VaultProvider>
+      <Outlet />
+    </VaultProvider>
   );
 }

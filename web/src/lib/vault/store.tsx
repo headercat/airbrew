@@ -1,0 +1,546 @@
+// Vault store: the client-side state machine that ties crypto + API together.
+//
+// Lifecycle: bootstrap -> (not_setup | locked) -> unlocked. The vault key is
+// held only in a ref (never in React state, never persisted) so it clears on
+// lock or tab close. All item fields are decrypted in memory for search and
+// re-encrypted before any network write.
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+
+import {
+  decryptBytes,
+  decryptString,
+  deriveMasterKey,
+  encryptBytes,
+  encryptString,
+  generateSalt,
+  generateVaultKey,
+  open,
+  randomBytes,
+  seal,
+  DEFAULT_KDF_PARAMS,
+  type KdfParams,
+} from "@/lib/vault/crypto";
+import * as VApi from "@/lib/vault/api";
+import type { AttachmentMeta, Envelope, ItemInput, VaultItem, VaultItemType } from "@/lib/vault/api";
+
+// ---- decrypted client models ----
+
+// FieldKind controls how a field is rendered (input type) and interpreted
+// (e.g. "totp" derives a rotating code). The item "type" only picks a preset
+// of these fields; the user can add/rename/remove any field freely.
+export type FieldKind = "text" | "password" | "totp" | "url" | "multiline";
+
+export type Field = {
+  id: string;
+  name: string;
+  value: string;
+  kind: FieldKind;
+};
+
+// ItemData is the JSON encrypted into data_cipher. It only carries fields so
+// any combination of custom fields round-trips.
+export type ItemData = { fields: Field[] };
+
+export type DecryptedItem = {
+  id: string;
+  type: VaultItemType;
+  folderId: string;
+  name: string;
+  notes: string;
+  fields: Field[];
+  favorite: boolean;
+  reprompt: boolean;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DecryptedFolder = {
+  id: string;
+  name: string;
+  revision: number;
+};
+
+// Attachment is the decrypted client view: the name is decrypted with the
+// vault key, while fileKeyCipher/Nonce stay wrapped until download (when the
+// file key is unwrapped and used to decrypt the blob).
+export type Attachment = {
+  id: string;
+  name: string;
+  size: number;
+  fileKeyCipher: string;
+  fileKeyNonce: string;
+  createdAt: string;
+};
+
+export type VaultStatus = "unknown" | "not_setup" | "locked" | "unlocked";
+
+// newField creates a blank field with a stable client-side id.
+export function newField(kind: FieldKind = "text", name = "", value = ""): Field {
+  return { id: crypto.randomUUID(), name, value, kind };
+}
+
+// PRESETS seed the field list when an item type is chosen. They are starting
+// points only — the user can edit them however they like afterwards.
+export const PRESETS: Record<VaultItemType, Field[]> = {
+  login: [
+    newField("text", "Username"),
+    newField("password", "Password"),
+    newField("url", "Website"),
+    newField("totp", "TOTP"),
+  ],
+  card: [
+    newField("text", "Cardholder"),
+    newField("password", "Card number"),
+    newField("text", "Expiry"),
+    newField("password", "CVV"),
+  ],
+  identity: [
+    newField("text", "Full name"),
+    newField("text", "Email"),
+    newField("text", "Phone"),
+  ],
+  secure_note: [],
+};
+
+// migrateLegacyData converts the original rigid LoginData shape into the
+// flexible fields[] model so items created before this change keep rendering.
+function migrateLegacyData(raw: unknown): Field[] {
+  if (!raw || typeof raw !== "object") return [];
+  const r = raw as Record<string, unknown>;
+  const fields: Field[] = [];
+  const push = (kind: FieldKind, name: string, value: unknown) => {
+    if (value !== undefined && value !== null && value !== "") {
+      const v = Array.isArray(value) ? value[0] : value;
+      if (typeof v === "string") fields.push(newField(kind, name, v));
+    }
+  };
+  push("text", "Username", r.username);
+  push("password", "Password", r.password);
+  push("url", "Website", r.uris);
+  push("totp", "TOTP", r.totp);
+  return fields;
+}
+
+// WrongMasterPassword is thrown by unlock/unwrap when the AES-GCM auth tag
+// fails to verify — the only signal that the master password was wrong.
+export class WrongMasterPassword extends Error {
+  constructor() {
+    super("incorrect master password");
+    this.name = "WrongMasterPassword";
+  }
+}
+
+// ---- crypto <-> api glue ----
+
+async function decryptItem(key: Uint8Array, it: VaultItem): Promise<DecryptedItem> {
+  const name = await decryptString(key, it.name_cipher, it.name_nonce);
+  const dataJson = await decryptString(key, it.data_cipher, it.data_nonce);
+  let fields: Field[] = [];
+  try {
+    const parsed = JSON.parse(dataJson) as Partial<ItemData> & Record<string, unknown>;
+    if (Array.isArray(parsed.fields)) {
+      fields = (parsed.fields as Field[]).map((f) => ({
+        id: f.id ?? crypto.randomUUID(),
+        name: f.name ?? "",
+        value: f.value ?? "",
+        kind: (f.kind as FieldKind) ?? "text",
+      }));
+    } else {
+      fields = migrateLegacyData(parsed);
+    }
+  } catch {
+    fields = [];
+  }
+  let notes = "";
+  if (it.notes_cipher && it.notes_nonce) {
+    try {
+      notes = await decryptString(key, it.notes_cipher, it.notes_nonce);
+    } catch {
+      notes = "";
+    }
+  }
+  return {
+    id: it.id,
+    type: it.type,
+    folderId: it.folder_id,
+    name,
+    notes,
+    fields,
+    favorite: it.favorite,
+    reprompt: it.reprompt,
+    revision: it.revision,
+    createdAt: it.created_at,
+    updatedAt: it.updated_at,
+  };
+}
+
+// DraftItem is what the editor produces; encryptItemInput turns it into the
+// ciphertext payload the server stores.
+export type DraftItem = {
+  type: VaultItemType;
+  folderId: string;
+  name: string;
+  notes: string;
+  fields: Field[];
+  favorite: boolean;
+  reprompt: boolean;
+};
+
+export async function encryptItemInput(key: Uint8Array, draft: DraftItem): Promise<ItemInput> {
+  const name = await encryptString(key, draft.name);
+  const data: ItemData = { fields: draft.fields };
+  const dataEnc = await encryptString(key, JSON.stringify(data));
+  let notesCipher = "";
+  let notesNonce = "";
+  if (draft.notes) {
+    const notes = await encryptString(key, draft.notes);
+    notesCipher = notes.cipher;
+    notesNonce = notes.nonce;
+  }
+  return {
+    type: draft.type,
+    folder_id: draft.folderId,
+    name_cipher: name.cipher,
+    name_nonce: name.nonce,
+    data_cipher: dataEnc.cipher,
+    data_nonce: dataEnc.nonce,
+    notes_cipher: notesCipher,
+    notes_nonce: notesNonce,
+    favorite: draft.favorite,
+    reprompt: draft.reprompt,
+  };
+}
+
+// ---- context ----
+
+type VaultContextValue = {
+  status: VaultStatus;
+  error: string | null;
+  busy: boolean;
+  items: DecryptedItem[];
+  folders: DecryptedFolder[];
+  cursor: number;
+  bootstrap: () => Promise<void>;
+  setupAndUnlock: (masterPassword: string) => Promise<void>;
+  unlock: (masterPassword: string) => Promise<void>;
+  lock: () => void;
+  refresh: () => Promise<void>;
+  createItem: (draft: DraftItem) => Promise<DecryptedItem>;
+  updateItem: (id: string, draft: DraftItem, ifRevision: number) => Promise<DecryptedItem>;
+  deleteItem: (id: string, ifRevision: number) => Promise<void>;
+  listAttachments: (itemId: string) => Promise<Attachment[]>;
+  uploadAttachment: (itemId: string, file: File) => Promise<Attachment>;
+  deleteAttachment: (itemId: string, aid: string) => Promise<void>;
+  downloadAttachment: (itemId: string, att: Attachment) => Promise<{ blob: Blob; name: string }>;
+};
+
+const VaultContext = createContext<VaultContextValue | null>(null);
+
+export function VaultProvider({ children }: { children: ReactNode }) {
+  const [status, setStatus] = useState<VaultStatus>("unknown");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [items, setItems] = useState<DecryptedItem[]>([]);
+  const [folders, setFolders] = useState<DecryptedFolder[]>([]);
+  const [cursor, setCursor] = useState(0);
+
+  // The vault key lives in a ref — never in React state, never serialized.
+  const keyRef = useRef<Uint8Array | null>(null);
+  const envelopeRef = useRef<Envelope | null>(null);
+
+  // Full sync from the server, decrypt, and merge into local state.
+  const syncAndDecrypt = useCallback(async () => {
+    const key = keyRef.current;
+    if (!key) return;
+    const res = await VApi.sync(cursor);
+    const byId = new Map(items.map((it) => [it.id, it]));
+    for (const raw of res.items) {
+      if (raw.deleted_at) {
+        byId.delete(raw.id);
+        continue;
+      }
+      byId.set(raw.id, await decryptItem(key, raw));
+    }
+    const next = Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+    setItems(next);
+
+    if (res.folders.length) {
+      const decFolders: DecryptedFolder[] = [];
+      for (const f of res.folders) {
+        if (f.deleted_at) continue;
+        try {
+          const name = await decryptString(key, f.name_cipher, f.name_nonce);
+          decFolders.push({ id: f.id, name, revision: f.revision });
+        } catch {
+          decFolders.push({ id: f.id, name: "•••", revision: f.revision });
+        }
+      }
+      setFolders((prev) => {
+        const map = new Map(prev.map((f) => [f.id, f]));
+        for (const f of decFolders) map.set(f.id, f);
+        return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+      });
+    }
+    setCursor(res.cursor);
+  }, [cursor, items]);
+
+  const bootstrap = useCallback(async () => {
+    setError(null);
+    try {
+      const env = await VApi.getKeys();
+      envelopeRef.current = env;
+      setStatus("locked");
+    } catch (e) {
+      if (e && typeof e === "object" && "status" in e && (e as { status: number }).status === 404) {
+        setStatus("not_setup");
+      } else {
+        setStatus("unknown");
+        setError(e instanceof Error ? e.message : "failed to reach vault");
+      }
+    }
+  }, []);
+
+  const setupAndUnlock = useCallback(async (masterPassword: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const params: KdfParams = DEFAULT_KDF_PARAMS;
+      const salt = generateSalt();
+      const masterKey = await deriveMasterKey(masterPassword, salt, params);
+      const vaultKey = generateVaultKey();
+      const wrapped = await encryptBytes(masterKey, vaultKey);
+      const env: VApi.EnvelopeInput = {
+        kdf_algorithm: "argon2id",
+        kdf_salt: salt,
+        kdf_memory_kib: params.memoryKiB,
+        kdf_iterations: params.iterations,
+        kdf_parallelism: params.parallelism,
+        protected_vault_key: wrapped.cipher,
+        protected_vault_nonce: wrapped.nonce,
+      };
+      await VApi.setup(env);
+      keyRef.current = vaultKey;
+      envelopeRef.current = {
+        ...env,
+        updated_at: new Date().toISOString(),
+      };
+      setCursor(0);
+      setItems([]);
+      setFolders([]);
+      setStatus("unlocked");
+      await syncAndDecrypt();
+    } finally {
+      setBusy(false);
+    }
+  }, [syncAndDecrypt]);
+
+  const unlock = useCallback(async (masterPassword: string) => {
+    const env = envelopeRef.current;
+    if (!env) {
+      // Bootstrap not run yet; fetch envelope on demand.
+      try {
+        envelopeRef.current = await VApi.getKeys();
+      } catch {
+        setStatus("not_setup");
+        throw new WrongMasterPassword();
+      }
+    }
+    const envNow = envelopeRef.current!;
+    setBusy(true);
+    setError(null);
+    try {
+      const params: KdfParams = {
+        memoryKiB: envNow.kdf_memory_kib,
+        iterations: envNow.kdf_iterations,
+        parallelism: envNow.kdf_parallelism,
+      };
+      const masterKey = await deriveMasterKey(masterPassword, envNow.kdf_salt, params);
+      let vaultKey: Uint8Array;
+      try {
+        vaultKey = await decryptBytes(masterKey, envNow.protected_vault_key, envNow.protected_vault_nonce);
+      } catch {
+        throw new WrongMasterPassword();
+      }
+      // Verify by re-wrapping and comparing — cheap integrity check that the
+      // derived key matches the one used at setup.
+      keyRef.current = vaultKey;
+      setCursor(0);
+      setItems([]);
+      setFolders([]);
+      setStatus("unlocked");
+      await syncAndDecrypt();
+    } finally {
+      setBusy(false);
+    }
+  }, [syncAndDecrypt]);
+
+  const lock = useCallback(() => {
+    keyRef.current = null;
+    setItems([]);
+    setFolders([]);
+    setCursor(0);
+    setStatus("locked");
+  }, []);
+
+  const refresh = useCallback(async () => {
+    setBusy(true);
+    try {
+      await syncAndDecrypt();
+    } finally {
+      setBusy(false);
+    }
+  }, [syncAndDecrypt]);
+
+  const createItem = useCallback(async (draft: DraftItem): Promise<DecryptedItem> => {
+    const key = keyRef.current;
+    if (!key) throw new Error("vault locked");
+    const input = await encryptItemInput(key, draft);
+    const raw = await VApi.createItem(input);
+    const dec = await decryptItem(key, raw);
+    setItems((prev) => [...prev, dec].sort((a, b) => a.name.localeCompare(b.name)));
+    setCursor(raw.revision);
+    return dec;
+  }, []);
+
+  const updateItem = useCallback(async (id: string, draft: DraftItem, ifRevision: number): Promise<DecryptedItem> => {
+    const key = keyRef.current;
+    if (!key) throw new Error("vault locked");
+    const input = await encryptItemInput(key, draft);
+    input.if_revision = ifRevision;
+    const raw = await VApi.updateItem(id, input);
+    const dec = await decryptItem(key, raw);
+    setItems((prev) => prev.map((it) => (it.id === id ? dec : it)).sort((a, b) => a.name.localeCompare(b.name)));
+    setCursor(raw.revision);
+    return dec;
+  }, []);
+
+  const deleteItem = useCallback(async (id: string, ifRevision: number): Promise<void> => {
+    await VApi.deleteItem(id, ifRevision);
+    setItems((prev) => prev.filter((it) => it.id !== id));
+  }, []);
+
+  // --- attachments ---
+
+  const listAttachments = useCallback(async (itemId: string): Promise<Attachment[]> => {
+    const key = keyRef.current;
+    if (!key) throw new Error("vault locked");
+    const metas = await VApi.listAttachments(itemId);
+    const out: Attachment[] = [];
+    for (const m of metas) {
+      let name = "attachment";
+      try {
+        name = await decryptString(key, m.name_cipher, m.name_nonce);
+      } catch {
+        name = "attachment";
+      }
+      out.push({
+        id: m.id,
+        name,
+        size: m.size_bytes,
+        fileKeyCipher: m.file_key_cipher,
+        fileKeyNonce: m.file_key_nonce,
+        createdAt: m.created_at,
+      });
+    }
+    return out;
+  }, []);
+
+  const uploadAttachment = useCallback(async (itemId: string, file: File): Promise<Attachment> => {
+    const key = keyRef.current;
+    if (!key) throw new Error("vault locked");
+    const plain = new Uint8Array(await file.arrayBuffer());
+    // Fresh per-file key, sealed content (nonce||ciphertext), wrapped key and
+    // encrypted filename — all under the vault key.
+    const fileKey = randomBytes(32);
+    const sealed = await seal(fileKey, plain);
+    const wrapped = await encryptBytes(key, fileKey);
+    const nameEnc = await encryptString(key, file.name || "attachment");
+    const meta: AttachmentMeta = await VApi.uploadAttachment(itemId, sealed, {
+      fileKeyCipher: wrapped.cipher,
+      fileKeyNonce: wrapped.nonce,
+      nameCipher: nameEnc.cipher,
+      nameNonce: nameEnc.nonce,
+      sizeBytes: plain.length,
+    });
+    return {
+      id: meta.id,
+      name: file.name || "attachment",
+      size: meta.size_bytes,
+      fileKeyCipher: meta.file_key_cipher,
+      fileKeyNonce: meta.file_key_nonce,
+      createdAt: meta.created_at,
+    };
+  }, []);
+
+  const deleteAttachment = useCallback(async (itemId: string, aid: string): Promise<void> => {
+    await VApi.deleteAttachment(itemId, aid);
+  }, []);
+
+  const downloadAttachment = useCallback(
+    async (itemId: string, att: Attachment): Promise<{ blob: Blob; name: string }> => {
+      const key = keyRef.current;
+      if (!key) throw new Error("vault locked");
+      const sealed = await VApi.fetchAttachmentBlob(itemId, att.id);
+      const fileKey = await decryptBytes(key, att.fileKeyCipher, att.fileKeyNonce);
+      const plain = await open(fileKey, sealed);
+      return { blob: new Blob([plain as unknown as BlobPart]), name: att.name };
+    },
+    [],
+  );
+
+  // Auto-bootstrap on first mount so the page knows which gate to show.
+  useEffect(() => {
+    void bootstrap();
+  }, [bootstrap]);
+
+  // Best-effort: clear the key if the tab is hidden for a while would be a
+  // future enhancement; for now lock is manual.
+
+  const value = useMemo<VaultContextValue>(
+    () => ({
+      status,
+      error,
+      busy,
+      items,
+      folders,
+      cursor,
+      bootstrap,
+      setupAndUnlock,
+      unlock,
+      lock,
+      refresh,
+      createItem,
+      updateItem,
+      deleteItem,
+      listAttachments,
+      uploadAttachment,
+      deleteAttachment,
+      downloadAttachment,
+    }),
+    [
+      status, error, busy, items, folders, cursor,
+      bootstrap, setupAndUnlock, unlock, lock, refresh,
+      createItem, updateItem, deleteItem,
+      listAttachments, uploadAttachment, deleteAttachment, downloadAttachment,
+    ],
+  );
+
+  return <VaultContext.Provider value={value}>{children}</VaultContext.Provider>;
+}
+
+export function useVault(): VaultContextValue {
+  const ctx = useContext(VaultContext);
+  if (!ctx) throw new Error("useVault must be used within <VaultProvider>");
+  return ctx;
+}

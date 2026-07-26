@@ -33,6 +33,10 @@
       "channels": "Channels",
       "direct": "Direct Messages"
     },
+    "passwords": {
+      "allItems": "All Items",
+      "folders": "Folders"
+    },
     "ai": {
       "agents": "Agents",
       "history": "History"
@@ -40,16 +44,6 @@
     "workflow": {
       "flows": "Workflows",
       "runs": "Runs"
-    },
-    "admin": {
-      "dashboard": "Overview",
-      "users": "Users",
-      "modules": "Modules",
-      "audit": "Audit Log",
-      "security": "Security",
-      "branding": "Branding",
-      "oauth": "OAuth",
-      "system": "System"
     }
   },
   "app": {
@@ -112,6 +106,10 @@
         "label": "Chat",
         "description": "1:1 and group conversations with real-time delivery."
       },
+      "passwords": {
+        "label": "Passwords",
+        "description": "Zero-knowledge password vault with multi-device sync."
+      },
       "ai": {
         "label": "AI Agents",
         "description": "Tool-using LLM agents with streaming responses."
@@ -128,6 +126,103 @@
     "unknownTitle": "Unknown module",
     "unknownDescription": "The module \"{{module}}\" is not registered.",
     "planned": "planned"
+  },
+  "passwords": {
+    "setup": {
+      "title": "Set up your vault",
+      "subtitle": "Choose a master password. It encrypts your vault and is never sent to the server.",
+      "masterPassword": "Master password",
+      "masterPasswordPlaceholder": "At least 8 characters",
+      "confirm": "Confirm master password",
+      "warning": "There is no recovery. If you forget this password, your vault cannot be decrypted.",
+      "submit": "Create vault",
+      "tooShort": "Master password must be at least 8 characters.",
+      "mismatch": "Passwords do not match."
+    },
+    "unlock": {
+      "title": "Unlock vault",
+      "subtitle": "Enter your master password to decrypt your vault.",
+      "masterPassword": "Master password",
+      "submit": "Unlock",
+      "wrong": "Incorrect master password."
+    },
+    "list": {
+      "title": "Passwords",
+      "description": "{{count}} items",
+      "refresh": "Refresh",
+      "lock": "Lock",
+      "add": "Add item",
+      "search": "Search vault",
+      "noMatches": "No matching items.",
+      "empty": "Your vault is empty."
+    },
+    "types": {
+      "login": "Login",
+      "secure_note": "Secure note",
+      "card": "Card",
+      "identity": "Identity"
+    },
+    "kinds": {
+      "text": "Text",
+      "password": "Password",
+      "totp": "TOTP",
+      "url": "Website",
+      "multiline": "Multiline"
+    },
+    "view": {
+      "edit": "Edit",
+      "fields": "Fields",
+      "fieldsDescription": "Click a field's icon to copy its value.",
+      "noFields": "This item has no fields.",
+      "totpInvalid": "Invalid TOTP secret",
+      "totpEmpty": "No TOTP secret set",
+      "notFound": "Item not found. It may have been deleted on another device."
+    },
+    "attachments": {
+      "title": "Attachments",
+      "description": "Files are encrypted with a per-file key before upload.",
+      "empty": "No attachments.",
+      "upload": "Upload file",
+      "download": "Download",
+      "remove": "Remove",
+      "confirmDelete": "Remove this attachment?"
+    },
+    "editor": {
+      "newTitle": "New item",
+      "editTitle": "Edit item",
+      "subtitle": "Fields are encrypted before they leave your browser.",
+      "formTitle": "Item details",
+      "formDescription": "Choose a type and fill in the fields you want to store.",
+      "cancel": "Cancel",
+      "type": "Type",
+      "name": "Name",
+      "nameRequired": "Name is required.",
+      "username": "Username",
+      "password": "Password",
+      "toggleVisibility": "Show / hide",
+      "generate": "Generate",
+      "copy": "Copy",
+      "uri": "Website URI",
+      "totp": "TOTP secret",
+      "notes": "Notes",
+      "favorite": "Favorite",
+      "reprompt": "Re-prompt master password",
+      "save": "Save",
+      "delete": "Delete",
+      "confirmDelete": "Delete this item? This cannot be undone.",
+      "notFound": "Item not found. It may have been deleted on another device.",
+      "conflict": "This item was changed elsewhere. Refresh and try again.",
+      "fields": "Fields",
+      "addField": "Add field",
+      "noFields": "No fields yet. Add one, or pick a type above to load a preset.",
+      "fieldName": "Field name",
+      "fieldValue": "Value",
+      "fieldKind": "Field type",
+      "removeField": "Remove field",
+      "typeHint": "Type only sets the icon and the starting field preset.",
+      "confirmReplacePreset": "Replace current fields with this type's preset?",
+      "totpHint": "Store the base32 shared secret (or an otpauth:// URI)."
+    }
   },
   "profile": {
     "title": "Profile",

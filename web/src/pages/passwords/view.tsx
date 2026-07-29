@@ -23,6 +23,7 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageWrapper } from "@/components/page";
 import { isApiError } from "@/lib/api";
 import { useVault, type DecryptedItem, type Field } from "@/lib/vault/store";
 import { generateTotp, type TotpCode } from "@/lib/vault/totp";
@@ -58,15 +59,13 @@ export default function PasswordView() {
 
   if (!item) {
     return (
-      <div className="p-6 lg:p-10">
-        <div className="mx-auto max-w-2xl space-y-6">
-          <Card>
-            <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              {t("passwords.view.notFound")}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+      <PageWrapper>
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            {t("passwords.view.notFound")}
+          </CardContent>
+        </Card>
+      </PageWrapper>
     );
   }
 
@@ -88,74 +87,72 @@ export default function PasswordView() {
   const Icon = typeIcon(item.type);
 
   return (
-    <div className="p-6 lg:p-10">
-      <div className="mx-auto max-w-2xl space-y-6">
-        {/* header */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <Button variant="ghost" size="icon" onClick={() => navigate("/passwords")} className="-ml-2">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted">
-              <Icon className="h-5 w-5 text-muted-foreground" />
-            </div>
-            <div className="space-y-1">
-              <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
-                {item.name}
-                {item.favorite && <Star className="h-4 w-4 fill-amber-500 text-amber-500" />}
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                {t(`passwords.types.${item.type}`)}
-              </p>
-            </div>
-          </div>
-          <Button variant="outline" onClick={() => navigate(`/passwords/${item.id}/edit`)}>
-            <Pencil className="h-4 w-4" />
-            {t("passwords.view.edit")}
+    <PageWrapper>
+      {/* header */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/passwords")} className="-ml-2">
+            <ArrowLeft className="h-4 w-4" />
           </Button>
+          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted">
+            <Icon className="h-5 w-5 text-muted-foreground" />
+          </div>
+          <div className="space-y-1">
+            <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+              {item.name}
+              {item.favorite && <Star className="h-4 w-4 fill-amber-500 text-amber-500" />}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {t(`passwords.types.${item.type}`)}
+            </p>
+          </div>
         </div>
+        <Button variant="outline" onClick={() => navigate(`/passwords/${item.id}/edit`)}>
+          <Pencil className="h-4 w-4" />
+          {t("passwords.view.edit")}
+        </Button>
+      </div>
 
-        {/* fields */}
+      {/* fields */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{t("passwords.view.fields")}</CardTitle>
+          <CardDescription>{t("passwords.view.fieldsDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {item.fields.length === 0 ? (
+            <p className="rounded-md border border-dashed bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
+              {t("passwords.view.noFields")}
+            </p>
+          ) : (
+            item.fields.map((f) => <FieldRow key={f.id} field={f} />)
+          )}
+        </CardContent>
+      </Card>
+
+      {/* notes */}
+      {item.notes && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">{t("passwords.view.fields")}</CardTitle>
-            <CardDescription>{t("passwords.view.fieldsDescription")}</CardDescription>
+            <CardTitle className="text-base">{t("passwords.editor.notes")}</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {item.fields.length === 0 ? (
-              <p className="rounded-md border border-dashed bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
-                {t("passwords.view.noFields")}
-              </p>
-            ) : (
-              item.fields.map((f) => <FieldRow key={f.id} field={f} />)
-            )}
+          <CardContent>
+            <p className="whitespace-pre-wrap text-sm">{item.notes}</p>
           </CardContent>
         </Card>
+      )}
 
-        {/* notes */}
-        {item.notes && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">{t("passwords.editor.notes")}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="whitespace-pre-wrap text-sm">{item.notes}</p>
-            </CardContent>
-          </Card>
-        )}
+      <AttachmentsCard itemId={item.id} editable={false} />
 
-        <AttachmentsCard itemId={item.id} editable={false} />
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
-
-        <div className="flex justify-end">
-          <Button variant="destructive" onClick={onDelete} disabled={busy}>
-            <Trash2 className="h-4 w-4" />
-            {t("passwords.editor.delete")}
-          </Button>
-        </div>
+      <div className="flex justify-end">
+        <Button variant="destructive" onClick={onDelete} disabled={busy}>
+          <Trash2 className="h-4 w-4" />
+          {t("passwords.editor.delete")}
+        </Button>
       </div>
-    </div>
+    </PageWrapper>
   );
 }
 

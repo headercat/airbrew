@@ -61,8 +61,8 @@ function ModuleCard({
   }, [moduleKey]);
 
   return (
-    <Link to={path}>
-      <Card className="group cursor-pointer transition-all hover:border-foreground/20 hover:shadow-md">
+    <Link to={path} className="block w-full">
+      <Card className="group h-full w-full cursor-pointer transition-all hover:border-foreground/20 hover:shadow-md">
         <CardContent className="flex items-start gap-3 p-4">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
             <Icon className="h-4.5 w-4.5 text-muted-foreground" />

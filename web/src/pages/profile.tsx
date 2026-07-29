@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader, PageWrapper } from "@/components/page";
 import { useAuth } from "@/lib/auth";
 import { api, isApiError, type ProfileUpdate } from "@/lib/api";
 
@@ -26,22 +27,13 @@ export default function ProfilePage() {
   if (!user) return null;
 
   return (
-    <div className="p-6 lg:p-10">
-      <div className="mx-auto max-w-2xl space-y-6">
-        <div className="space-y-1">
-          <h1 className="text-xl font-semibold tracking-tight">
-            {t("profile.title")}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {t("profile.subtitle")}
-          </p>
-        </div>
+    <PageWrapper>
+      <PageHeader title={t("profile.title")} description={t("profile.subtitle")} />
 
-        <AvatarSection onSaved={refresh} />
-        <ProfileSection onSaved={refresh} />
-        <PasswordSection />
-      </div>
-    </div>
+      <AvatarSection onSaved={refresh} />
+      <ProfileSection onSaved={refresh} />
+      <PasswordSection />
+    </PageWrapper>
   );
 }
 

@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader, PageWrapper } from "@/components/page";
 import { isApiError } from "@/lib/api";
 import { isConflict } from "@/lib/vault/api";
 import {
@@ -89,15 +90,13 @@ export default function PasswordEditor() {
 
   if (isEdit && !existing) {
     return (
-      <div className="p-6 lg:p-10">
-        <div className="mx-auto max-w-2xl space-y-6">
-          <Card>
-            <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              {t("passwords.editor.notFound")}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+      <PageWrapper>
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            {t("passwords.editor.notFound")}
+          </CardContent>
+        </Card>
+      </PageWrapper>
     );
   }
 
@@ -165,119 +164,113 @@ export default function PasswordEditor() {
   }
 
   return (
-    <div className="p-6 lg:p-10">
-      <div className="mx-auto max-w-2xl space-y-6">
-        <div className="space-y-1">
-          <h1 className="text-xl font-semibold tracking-tight">
-            {isEdit ? t("passwords.editor.editTitle") : t("passwords.editor.newTitle")}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {t("passwords.editor.subtitle")}
-          </p>
-        </div>
+    <PageWrapper>
+      <PageHeader
+        title={isEdit ? t("passwords.editor.editTitle") : t("passwords.editor.newTitle")}
+        description={t("passwords.editor.subtitle")}
+      />
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">{t("passwords.editor.formTitle")}</CardTitle>
-            <CardDescription>{t("passwords.editor.formDescription")}</CardDescription>
-          </CardHeader>
-          <form onSubmit={onSubmit}>
-            <CardContent className="space-y-4">
-              <div className="grid gap-2">
-                <Label htmlFor="name">{t("passwords.editor.name")}</Label>
-                <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{t("passwords.editor.formTitle")}</CardTitle>
+          <CardDescription>{t("passwords.editor.formDescription")}</CardDescription>
+        </CardHeader>
+        <form onSubmit={onSubmit}>
+          <CardContent className="space-y-4">
+            <div className="grid gap-2">
+              <Label htmlFor="name">{t("passwords.editor.name")}</Label>
+              <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
+            </div>
+
+            <div className="grid gap-2">
+              <Label>{t("passwords.editor.type")}</Label>
+              <div className="flex flex-wrap gap-2">
+                {TYPES.map((ty) => (
+                  <Button
+                    key={ty}
+                    type="button"
+                    size="sm"
+                    variant={type === ty ? "default" : "outline"}
+                    onClick={() => applyType(ty)}
+                  >
+                    {t(`passwords.types.${ty}`)}
+                  </Button>
+                ))}
               </div>
+              <p className="text-xs text-muted-foreground">
+                {t("passwords.editor.typeHint")}
+              </p>
+            </div>
 
-              <div className="grid gap-2">
-                <Label>{t("passwords.editor.type")}</Label>
-                <div className="flex flex-wrap gap-2">
-                  {TYPES.map((ty) => (
-                    <Button
-                      key={ty}
-                      type="button"
-                      size="sm"
-                      variant={type === ty ? "default" : "outline"}
-                      onClick={() => applyType(ty)}
-                    >
-                      {t(`passwords.types.${ty}`)}
-                    </Button>
-                  ))}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {t("passwords.editor.typeHint")}
-                </p>
+            {/* custom fields */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>{t("passwords.editor.fields")}</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addField}>
+                  <Plus className="h-4 w-4" />
+                  {t("passwords.editor.addField")}
+                </Button>
               </div>
-
-              {/* custom fields */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label>{t("passwords.editor.fields")}</Label>
-                  <Button type="button" variant="outline" size="sm" onClick={addField}>
-                    <Plus className="h-4 w-4" />
-                    {t("passwords.editor.addField")}
-                  </Button>
-                </div>
-                <div className="space-y-3">
-                  {fields.length === 0 ? (
-                    <p className="rounded-md border border-dashed bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
-                      {t("passwords.editor.noFields")}
-                    </p>
-                  ) : (
-                    fields.map((f, idx) => (
-                      <FieldEditor
-                        key={f.id}
-                        field={f}
-                        onChange={(patch) => patchField(idx, patch)}
-                        onRemove={() => removeField(idx)}
-                      />
-                    ))
-                  )}
-                </div>
-              </div>
-
-              <div className="grid gap-2">
-                <Label htmlFor="notes">{t("passwords.editor.notes")}</Label>
-                <Textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} />
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label htmlFor="favorite" className="flex items-center gap-2 text-sm">
-                  <Switch id="favorite" checked={favorite} onCheckedChange={setFavorite} />
-                  <Star className="h-4 w-4" />
-                  {t("passwords.editor.favorite")}
-                </label>
-                <label htmlFor="reprompt" className="flex items-center gap-2 text-sm">
-                  <Switch id="reprompt" checked={reprompt} onCheckedChange={setReprompt} />
-                  {t("passwords.editor.reprompt")}
-                </label>
-              </div>
-            </CardContent>
-            <CardFooter className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-sm">
-                {isEdit && (
-                  <Button type="button" variant="destructive" onClick={onDelete} disabled={busy}>
-                    <Trash2 className="h-4 w-4" />
-                    {t("passwords.editor.delete")}
-                  </Button>
+                {fields.length === 0 ? (
+                  <p className="rounded-md border border-dashed bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
+                    {t("passwords.editor.noFields")}
+                  </p>
+                ) : (
+                  fields.map((f, idx) => (
+                    <FieldEditor
+                      key={f.id}
+                      field={f}
+                      onChange={(patch) => patchField(idx, patch)}
+                      onRemove={() => removeField(idx)}
+                    />
+                  ))
                 )}
-                {error && <span className="text-destructive">{error}</span>}
               </div>
-              <div className="flex items-center gap-2">
-                <Button type="button" variant="ghost" onClick={() => navigate("/passwords")} disabled={busy}>
-                  {t("passwords.editor.cancel")}
-                </Button>
-                <Button type="submit" disabled={busy}>
-                  {busy && <Loader2 className="animate-spin" />}
-                  {t("passwords.editor.save")}
-                </Button>
-              </div>
-            </CardFooter>
-          </form>
-        </Card>
+            </div>
 
-        {isEdit && existing && <AttachmentsCard itemId={existing.id} editable />}
-      </div>
-    </div>
+            <div className="grid gap-2">
+              <Label htmlFor="notes">{t("passwords.editor.notes")}</Label>
+              <Textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label htmlFor="favorite" className="flex items-center gap-2 text-sm">
+                <Switch id="favorite" checked={favorite} onCheckedChange={setFavorite} />
+                <Star className="h-4 w-4" />
+                {t("passwords.editor.favorite")}
+              </label>
+              <label htmlFor="reprompt" className="flex items-center gap-2 text-sm">
+                <Switch id="reprompt" checked={reprompt} onCheckedChange={setReprompt} />
+                {t("passwords.editor.reprompt")}
+              </label>
+            </div>
+          </CardContent>
+          <CardFooter className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm">
+              {isEdit && (
+                <Button type="button" variant="destructive" onClick={onDelete} disabled={busy}>
+                  <Trash2 className="h-4 w-4" />
+                  {t("passwords.editor.delete")}
+                </Button>
+              )}
+              {error && <span className="text-destructive">{error}</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="ghost" onClick={() => navigate("/passwords")} disabled={busy}>
+                {t("passwords.editor.cancel")}
+              </Button>
+              <Button type="submit" disabled={busy}>
+                {busy && <Loader2 className="animate-spin" />}
+                {t("passwords.editor.save")}
+              </Button>
+            </div>
+          </CardFooter>
+        </form>
+      </Card>
+
+      {isEdit && existing && <AttachmentsCard itemId={existing.id} editable />}
+    </PageWrapper>
   );
 }
 

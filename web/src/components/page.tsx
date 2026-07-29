@@ -12,7 +12,7 @@ export function PageWrapper({
 }) {
   return (
     <div className={`p-6 lg:p-10 ${className}`}>
-      <div className="mx-auto max-w-5xl space-y-8">{children}</div>
+      <div className="mx-auto w-full max-w-5xl space-y-8">{children}</div>
     </div>
   );
 }

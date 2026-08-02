@@ -116,6 +116,10 @@ export const contacts = {
   patch: (id: string, body: ContactPayload) =>
     api.patch<ContactRecord>(`/api/contacts/${id}`, body),
   remove: (id: string) => api.del<{ ok: boolean }>(`/api/contacts/${id}`),
+  uploadAvatar: (id: string, file: File) =>
+    api.upload<ContactRecord>(`/api/contacts/${id}/avatar`, file),
+  clearAvatar: (id: string) =>
+    api.del<ContactRecord>(`/api/contacts/${id}/avatar`),
   groups: () => api.get<{ groups: ContactGroup[] }>("/api/contacts/groups"),
   createGroup: (body: { name: string; color?: string }) =>
     api.post<ContactGroup>("/api/contacts/groups", body),

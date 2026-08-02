@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type ChangeEvent,
   type ReactNode,
 } from "react";
 import {
@@ -163,6 +164,33 @@ export default function ContactsPage() {
     try {
       await contacts.remove(item.id);
       await refresh();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadAvatar(item: ContactRecord, file?: File) {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await contacts.uploadAvatar(item.id, file);
+      setItems((prev) => prev.map((row) => (row.id === next.id ? next : row)));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearAvatar(item: ContactRecord) {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await contacts.clearAvatar(item.id);
+      setItems((prev) => prev.map((row) => (row.id === next.id ? next : row)));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -399,6 +427,8 @@ export default function ContactsPage() {
               onEdit={() => setEditing(selected)}
               onDelete={() => void removeContact(selected)}
               onFavorite={() => void toggleFavorite(selected)}
+              onAvatar={(file) => void uploadAvatar(selected, file)}
+              onClearAvatar={() => void clearAvatar(selected)}
             />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -484,14 +514,23 @@ function ContactDetails({
   onEdit,
   onDelete,
   onFavorite,
+  onAvatar,
+  onClearAvatar,
 }: {
   contact: ContactRecord;
   groups: ContactGroup[];
   onEdit: () => void;
   onDelete: () => void;
   onFavorite: () => void;
+  onAvatar: (file?: File) => void;
+  onClearAvatar: () => void;
 }) {
   const groupMap = new Map(groups.map((group) => [group.id, group]));
+  const avatarInput = useRef<HTMLInputElement>(null);
+  function changeAvatar(e: ChangeEvent<HTMLInputElement>) {
+    onAvatar(e.target.files?.[0]);
+    e.target.value = "";
+  }
   return (
     <div className="space-y-5">
       <div className="flex items-start gap-3">
@@ -504,6 +543,26 @@ function ContactDetails({
         </div>
       </div>
       <div className="flex gap-2">
+        <input
+          ref={avatarInput}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={changeAvatar}
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => avatarInput.current?.click()}
+        >
+          <Upload className="h-4 w-4" />
+          사진
+        </Button>
+        {contact.avatar_url && (
+          <Button variant="ghost" size="sm" onClick={onClearAvatar}>
+            <X className="h-4 w-4" />
+          </Button>
+        )}
         <Button variant="outline" size="sm" onClick={onFavorite}>
           <Star
             className={cn(

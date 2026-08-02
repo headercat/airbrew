@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { History, Save, ShieldCheck, Trash2, Users } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  History,
+  Save,
+  ShieldCheck,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +50,10 @@ export default function AdminSecurity() {
   const [attempts, setAttempts] = useState<LoginAttempt[] | null>(null);
   const [loginResult, setLoginResult] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
+  const [loginFrom, setLoginFrom] = useState("");
+  const [loginTo, setLoginTo] = useState("");
+  const [loginTotal, setLoginTotal] = useState(0);
+  const [loginOffset, setLoginOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -69,20 +81,31 @@ export default function AdminSecurity() {
   }, [refresh]);
 
   const refreshLoginHistory = useCallback(async () => {
-    const params = new URLSearchParams({ limit: "50" });
+    const params = new URLSearchParams({
+      limit: String(loginPageSize),
+      offset: String(loginOffset),
+    });
     if (loginResult) params.set("result", loginResult);
     if (loginEmail.trim()) params.set("email", loginEmail.trim());
+    if (loginFrom) params.set("from", new Date(loginFrom).toISOString());
+    if (loginTo) params.set("to", new Date(loginTo).toISOString());
     try {
-      const res = await api.get<{ entries: LoginAttempt[] }>(
+      const res = await api.get<{
+        entries: LoginAttempt[];
+        total: number;
+        limit: number;
+        offset: number;
+      }>(
         `/api/admin/security/login-history?${params.toString()}`,
       );
       setAttempts(res.entries);
+      setLoginTotal(res.total);
     } catch (err) {
       setError(
         isApiError(err) ? (err.error_description ?? err.error) : "error",
       );
     }
-  }, [loginEmail, loginResult]);
+  }, [loginEmail, loginFrom, loginOffset, loginResult, loginTo]);
 
   useEffect(() => {
     void refreshLoginHistory();
@@ -140,6 +163,11 @@ export default function AdminSecurity() {
       );
     }
   }
+
+  const loginStart = loginTotal === 0 ? 0 : loginOffset + 1;
+  const loginEnd = Math.min(loginOffset + (attempts?.length ?? 0), loginTotal);
+  const canLoginPageBack = loginOffset > 0;
+  const canLoginPageForward = loginOffset + loginPageSize < loginTotal;
 
   return (
     <>
@@ -399,22 +427,52 @@ export default function AdminSecurity() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px_auto]">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_160px_190px_190px_auto]">
             <Input
               placeholder={t("admin.security.emailFilter")}
               value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
+              onChange={(e) => {
+                setLoginEmail(e.target.value);
+                setLoginOffset(0);
+              }}
             />
             <select
               className="h-10 rounded-md border border-input bg-background px-3 text-sm"
               value={loginResult}
-              onChange={(e) => setLoginResult(e.target.value)}
+              onChange={(e) => {
+                setLoginResult(e.target.value);
+                setLoginOffset(0);
+              }}
             >
               <option value="">{t("admin.security.allResults")}</option>
               <option value="success">{t("admin.security.success")}</option>
               <option value="failure">{t("admin.security.failure")}</option>
             </select>
-            <Button variant="outline" onClick={refreshLoginHistory}>
+            <Input
+              type="datetime-local"
+              value={loginFrom}
+              onChange={(e) => {
+                setLoginFrom(e.target.value);
+                setLoginOffset(0);
+              }}
+              aria-label={t("admin.security.from")}
+            />
+            <Input
+              type="datetime-local"
+              value={loginTo}
+              onChange={(e) => {
+                setLoginTo(e.target.value);
+                setLoginOffset(0);
+              }}
+              aria-label={t("admin.security.to")}
+            />
+            <Button
+              variant="outline"
+              onClick={() => {
+                setLoginOffset(0);
+                void refreshLoginHistory();
+              }}
+            >
               {t("common.search")}
             </Button>
           </div>
@@ -472,11 +530,46 @@ export default function AdminSecurity() {
               {t("common.loading")}
             </p>
           )}
+          {attempts && (
+            <div className="flex flex-col gap-2 border-t border-border pt-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                {t("admin.security.loginPageSummary", {
+                  start: loginStart,
+                  end: loginEnd,
+                  total: loginTotal,
+                })}
+              </span>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!canLoginPageBack}
+                  onClick={() =>
+                    setLoginOffset(Math.max(0, loginOffset - loginPageSize))
+                  }
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  {t("admin.security.previousPage")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!canLoginPageForward}
+                  onClick={() => setLoginOffset(loginOffset + loginPageSize)}
+                >
+                  {t("admin.security.nextPage")}
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </>
   );
 }
+
+const loginPageSize = 50;
 
 function PolicySwitch({
   title,

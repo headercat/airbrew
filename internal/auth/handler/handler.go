@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -141,6 +142,9 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	email := strings.TrimSpace(req.Email)
+	if h.loginRateLimited(w, r, email) {
+		return
+	}
 	u, err := h.userSvc.Authenticate(r.Context(), req.Email, req.Password)
 	if err != nil {
 		h.recordLoginAttempt(r, email, "", false, "invalid_credentials")
@@ -214,6 +218,28 @@ func (h *Handler) recordLoginAttempt(r *http.Request, email, userID string, succ
 		UserAgent: r.UserAgent(),
 		Failure:   failure,
 	})
+}
+
+func (h *Handler) loginRateLimited(w http.ResponseWriter, r *http.Request, email string) bool {
+	if h.security == nil {
+		return false
+	}
+	limit, err := h.security.CheckLoginRateLimit(r.Context(), email, clientIP(r))
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return true
+	}
+	if !limit.Blocked {
+		return false
+	}
+	retryAfter := int(time.Until(limit.RetryAfter).Seconds())
+	if retryAfter < 1 {
+		retryAfter = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+	h.recordLoginAttempt(r, email, "", false, "rate_limited")
+	response.Error(w, http.StatusTooManyRequests, "rate_limited", "too many failed login attempts")
+	return true
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
@@ -323,6 +349,9 @@ func (h *Handler) changeExpiredPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	email := strings.TrimSpace(req.Email)
+	if h.loginRateLimited(w, r, email) {
+		return
+	}
 	u, err := h.userSvc.Authenticate(r.Context(), email, req.CurrentPassword)
 	if err != nil {
 		h.recordLoginAttempt(r, email, "", false, "invalid_credentials")

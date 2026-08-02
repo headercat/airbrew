@@ -4,26 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 func TestAllowsIP(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("sqlite", "file::memory:?cache=shared&_pragma=foreign_keys(1)&_time_format=sqlite")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.ExecContext(ctx, `
-		CREATE TABLE server_settings (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL,
-			updated_at DATETIME NOT NULL
-		)
-	`); err != nil {
-		t.Fatal(err)
-	}
+	db := newTestDB(t, ctx)
 	svc := NewService(db)
 
 	ok, err := svc.AllowsIP(ctx, "203.0.113.10")
@@ -59,4 +47,67 @@ func TestAllowsIP(t *testing.T) {
 			t.Fatalf("AllowsIP(%q) = %v, want %v", tc.ip, got, tc.want)
 		}
 	}
+}
+
+func TestCheckLoginRateLimit(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t, ctx)
+	svc := NewService(db)
+	now := time.Now().UTC().Truncate(time.Second)
+	for i := 0; i < loginRateLimitThreshold; i++ {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO login_attempts (id, email, success, ip_address, failure, created_at)
+			VALUES (?, ?, 0, ?, 'invalid_credentials', ?)
+		`, itoa(i+1), "USER@example.com", "203.0.113.10", now.Add(time.Duration(-i)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	limit, err := svc.CheckLoginRateLimit(ctx, "user@example.com", "203.0.113.10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !limit.Blocked {
+		t.Fatal("expected repeated failures for the same email and IP to be blocked")
+	}
+	if !limit.RetryAfter.After(now) {
+		t.Fatalf("retry_after = %s, want after %s", limit.RetryAfter, now)
+	}
+
+	limit, err = svc.CheckLoginRateLimit(ctx, "user@example.com", "203.0.113.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limit.Blocked {
+		t.Fatal("failures from one IP should not block a different IP")
+	}
+}
+
+func newTestDB(t *testing.T, ctx context.Context) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file::memory:?cache=shared&_pragma=foreign_keys(1)&_time_format=sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE server_settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at DATETIME NOT NULL
+		);
+		CREATE TABLE login_attempts (
+			id         TEXT PRIMARY KEY NOT NULL,
+			user_id    TEXT,
+			email      TEXT NOT NULL,
+			success    INTEGER NOT NULL DEFAULT 0,
+			ip_address TEXT,
+			user_agent TEXT,
+			failure    TEXT,
+			created_at DATETIME NOT NULL
+		);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	return db
 }

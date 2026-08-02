@@ -2,6 +2,7 @@ package security
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/headercat/airbrew/internal/id"
@@ -17,6 +18,18 @@ type LoginAttempt struct {
 	UserAgent string    `json:"user_agent"`
 	Failure   string    `json:"failure,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+const (
+	loginRateLimitWindow    = 15 * time.Minute
+	loginRateLimitThreshold = 5
+)
+
+// LoginRateLimit reports whether an authentication request should be delayed.
+type LoginRateLimit struct {
+	Blocked    bool
+	RetryAfter time.Time
+	Failures   int
 }
 
 // RecordLoginAttempt writes one login attempt row. userID may be empty when the
@@ -37,6 +50,51 @@ func (s *Service) RecordLoginAttempt(ctx context.Context, a LoginAttempt) error 
 	`, a.ID, userID, a.Email, a.Success, nullable(a.IPAddress), nullable(a.UserAgent),
 		nullable(a.Failure), time.Now().UTC().Truncate(time.Second))
 	return err
+}
+
+// CheckLoginRateLimit blocks repeated failures for the same email and IP in a
+// short rolling window. Successful logins are deliberately not counted.
+func (s *Service) CheckLoginRateLimit(ctx context.Context, email, ip string) (LoginRateLimit, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	ip = strings.TrimSpace(ip)
+	if email == "" || ip == "" {
+		return LoginRateLimit{}, nil
+	}
+	cutoff := time.Now().UTC().Add(-loginRateLimitWindow)
+	var failures int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM login_attempts
+		WHERE success = 0
+		  AND lower(email) = ?
+		  AND ip_address = ?
+		  AND created_at >= ?
+	`, email, ip, cutoff).Scan(&failures)
+	if err != nil {
+		return LoginRateLimit{}, err
+	}
+	if failures < loginRateLimitThreshold {
+		return LoginRateLimit{Failures: failures}, nil
+	}
+	var first time.Time
+	err = s.db.QueryRowContext(ctx, `
+		SELECT created_at
+		FROM login_attempts
+		WHERE success = 0
+		  AND lower(email) = ?
+		  AND ip_address = ?
+		  AND created_at >= ?
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, email, ip, cutoff).Scan(&first)
+	if err != nil {
+		return LoginRateLimit{}, err
+	}
+	retry := first.Add(loginRateLimitWindow)
+	if retry.Before(time.Now().UTC()) {
+		return LoginRateLimit{Failures: failures}, nil
+	}
+	return LoginRateLimit{Blocked: true, RetryAfter: retry, Failures: failures}, nil
 }
 
 // LoginHistoryFilter controls the login-history query.

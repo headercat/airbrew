@@ -343,11 +343,22 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 			return
 		}
+		revoked := int64(0)
+		if newStatus != user.StatusActive {
+			revoked, err = h.revokeActiveSessionsForUser(r.Context(), id)
+			if err != nil {
+				response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+				return
+			}
+		}
 		h.audit.Log(r.Context(), audit.Entry{
 			EventType: "user.status_changed", ActorUserID: callerID,
 			TargetType: "user", TargetID: id,
 			IPAddress: clientIP(r), UserAgent: r.UserAgent(),
-			Metadata: map[string]any{"from": string(target.Status), "to": string(newStatus)},
+			Metadata: map[string]any{
+				"from": string(target.Status), "to": string(newStatus),
+				"revoked_sessions": revoked,
+			},
 		})
 	}
 
@@ -386,11 +397,19 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
+	revoked, err := h.revokeActiveSessionsForUser(r.Context(), id)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "user.deleted", ActorUserID: callerID,
 		TargetType: "user", TargetID: id,
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
-		Metadata: map[string]any{"from": string(target.Status), "to": string(user.StatusDeleted)},
+		Metadata: map[string]any{
+			"from": string(target.Status), "to": string(user.StatusDeleted),
+			"revoked_sessions": revoked,
+		},
 	})
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -450,12 +469,18 @@ func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	revoked, err := h.revokeActiveSessionsForUser(r.Context(), id)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "user.password_reset", ActorUserID: callerUserID(r),
 		TargetType: "user", TargetID: id,
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"revoked_sessions": revoked},
 	})
-	resp := map[string]any{"ok": true}
+	resp := map[string]any{"ok": true, "revoked_sessions": revoked}
 	if generated {
 		resp["temp_password"] = pw
 	}
@@ -889,17 +914,11 @@ func (h *Handler) revokeUserSessions(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusNotFound, "not_found", "user not found")
 		return
 	}
-	now := time.Now().UTC().Truncate(time.Second)
-	res, err := h.db.ExecContext(r.Context(), `
-		UPDATE sessions
-		SET revoked_at = ?
-		WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
-	`, now, id, now)
+	n, err := h.revokeActiveSessionsForUser(r.Context(), id)
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	n, _ := res.RowsAffected()
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "session.revoked", ActorUserID: callerUserID(r),
 		TargetType: "user", TargetID: id,
@@ -907,6 +926,20 @@ func (h *Handler) revokeUserSessions(w http.ResponseWriter, r *http.Request) {
 		Metadata: map[string]any{"count": n},
 	})
 	response.JSON(w, http.StatusOK, map[string]any{"ok": true, "revoked": n})
+}
+
+func (h *Handler) revokeActiveSessionsForUser(ctx context.Context, userID string) (int64, error) {
+	now := time.Now().UTC().Truncate(time.Second)
+	res, err := h.db.ExecContext(ctx, `
+		UPDATE sessions
+		SET revoked_at = ?
+		WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
+	`, now, userID, now)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 func (h *Handler) userActivity(w http.ResponseWriter, r *http.Request) {

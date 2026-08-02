@@ -200,8 +200,10 @@ export default function AIPage() {
                 break;
               case "done":
                 cur.streaming = false;
-                streamEnded = true;
-                if (ev.message_id) cur.id = ev.message_id;
+                if (ev.message_id) {
+                  streamEnded = true;
+                  cur.id = ev.message_id;
+                }
                 if (ev.usage) {
                   cur.prompt_tokens = ev.usage.prompt_tokens;
                   cur.completion_tokens = ev.usage.completion_tokens;

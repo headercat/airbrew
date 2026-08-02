@@ -67,7 +67,7 @@ export default function PasswordView() {
     if (status !== "unlocked") navigate("/passwords");
   }, [status, navigate]);
 
-  // Reprompt gate: items flagged reprompt hide their sensitive (password) fields
+  // Reprompt gate: items flagged reprompt hide the whole decrypted detail area
   // until the user re-enters the master password. Verified state is kept only
   // for this view session and resets on navigation away.
   const { verifyMasterPassword } = useVault();
@@ -198,24 +198,22 @@ export default function PasswordView() {
               )}
             </div>
           )}
-          {item.fields.length === 0 ? (
+          {sensitiveGateActive ? (
+            <p className="rounded-md border border-dashed bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
+              {t("passwords.view.lockedContent")}
+            </p>
+          ) : item.fields.length === 0 ? (
             <p className="rounded-md border border-dashed bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
               {t("passwords.view.noFields")}
             </p>
           ) : (
-            item.fields.map((f) => (
-              <FieldRow
-                key={f.id}
-                field={f}
-                hideSensitive={sensitiveGateActive}
-              />
-            ))
+            item.fields.map((f) => <FieldRow key={f.id} field={f} />)
           )}
         </CardContent>
       </Card>
 
       {/* notes */}
-      {item.notes && (
+      {!sensitiveGateActive && item.notes && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
@@ -228,9 +226,11 @@ export default function PasswordView() {
         </Card>
       )}
 
-      <AttachmentsCard itemId={item.id} editable={false} />
+      {!sensitiveGateActive && (
+        <AttachmentsCard itemId={item.id} editable={false} />
+      )}
 
-      <HistoryCard itemId={item.id} />
+      {!sensitiveGateActive && <HistoryCard itemId={item.id} />}
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
@@ -278,30 +278,9 @@ function CopyButton({
   );
 }
 
-function FieldRow({
-  field,
-  hideSensitive,
-}: {
-  field: Field;
-  hideSensitive?: boolean;
-}) {
+function FieldRow({ field }: { field: Field }) {
   const { t } = useTranslation();
   const label = field.name || t(`passwords.kinds.${field.kind}`);
-
-  if (hideSensitive && field.kind === "password") {
-    return (
-      <div className="grid gap-1">
-        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {label}
-        </span>
-        <div className="flex items-center justify-between gap-2">
-          <span className="font-mono text-sm text-muted-foreground">
-            {"••••••••••••••••"}
-          </span>
-        </div>
-      </div>
-    );
-  }
 
   if (field.kind === "totp") {
     return <TotpField label={label} secret={field.value} />;
@@ -536,7 +515,9 @@ function HistoryCard({ itemId }: { itemId: string }) {
       {open && (
         <CardContent className="space-y-1">
           {busy && revs === null && (
-            <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
+            <p className="text-xs text-muted-foreground">
+              {t("common.loading")}
+            </p>
           )}
           {revs?.length === 0 && (
             <p className="text-xs text-muted-foreground">

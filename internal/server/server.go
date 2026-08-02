@@ -14,10 +14,10 @@ import (
 
 	"github.com/headercat/airbrew/internal/admin"
 	"github.com/headercat/airbrew/internal/ai"
-	aicrypto "github.com/headercat/airbrew/internal/ai/crypto"
 	"github.com/headercat/airbrew/internal/ai/agent"
-	aiprovider "github.com/headercat/airbrew/internal/ai/provider"
 	"github.com/headercat/airbrew/internal/ai/conv"
+	aicrypto "github.com/headercat/airbrew/internal/ai/crypto"
+	aiprovider "github.com/headercat/airbrew/internal/ai/provider"
 	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/auth"
 	"github.com/headercat/airbrew/internal/blob"
@@ -121,8 +121,26 @@ func Build(d Deps) *http.ServeMux {
 		modules.RequireEnabled(stubState, "contacts"),
 	)))
 
-	chat.New(stubState).RegisterRoutes(mux)
-	workflow.New(stubState).RegisterRoutes(mux)
+	// Chat module. Status is public; room/message/user discovery endpoints
+	// require a session, module-enable gating, and a modest per-IP rate limit.
+	chatMod := chat.New(d.DB.DB, stubState, adminMod.Audit())
+	chatMod.RegisterPublicRoutes(mux)
+	chatSub := http.NewServeMux()
+	chatMod.RegisterRoutes(chatSub)
+	chatLimiter := middleware.NewRateLimiter(120, time.Minute)
+	mux.Handle("/api/chat/", authMod.SessionMiddleware(middleware.Chain(chatSub,
+		modules.RequireEnabled(stubState, "chat"),
+		middleware.RateLimit(chatLimiter, middleware.ClientIPKey),
+	)))
+	// Workflow automation. Status + webhook triggers are public; authoring,
+	// manual runs and run history require a session plus module-enable gating.
+	workflowMod := workflow.New(d.DB.DB, stubState, adminMod.Audit())
+	workflowMod.RegisterPublicRoutes(mux)
+	workflowSub := http.NewServeMux()
+	workflowMod.RegisterRoutes(workflowSub)
+	mux.Handle("/api/workflow/", authMod.SessionMiddleware(middleware.Chain(workflowSub,
+		modules.RequireEnabled(stubState, "workflow"),
+	)))
 
 	// AI agent module. Status is public; user endpoints require a session,
 	// module-enable gating, and a per-IP rate limit. Admin provider/agent

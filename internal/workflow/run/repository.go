@@ -376,6 +376,18 @@ func (r *Repository) GetRun(ctx context.Context, userID, id string) (*Run, error
 	return &run, nil
 }
 
+// GetRunByID returns one run without user scoping. It is used by internal
+// execution paths that already operate on a trusted persisted run id.
+func (r *Repository) GetRunByID(ctx context.Context, id string) (*Run, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, workflow_id, user_id, version, status, trigger,
+		       COALESCE(input_json,'{}'), COALESCE(error,''),
+		       started_at, finished_at
+		FROM workflow_runs WHERE id = ?
+	`, id)
+	return scanRun(row)
+}
+
 // ListRunsFilter controls which runs are returned.
 type ListRunsFilter struct {
 	UserID     string
@@ -416,22 +428,11 @@ func (r *Repository) ListRuns(ctx context.Context, f ListRunsFilter) ([]*Run, er
 	defer rows.Close()
 	var out []*Run
 	for rows.Next() {
-		var run Run
-		var status, trigger string
-		var finished sql.NullTime
-		if err := rows.Scan(
-			&run.ID, &run.WorkflowID, &run.UserID, &run.Version, &status, &trigger,
-			&run.InputJSON, &run.Error, &run.StartedAt, &finished,
-		); err != nil {
+		run, err := scanRun(rows)
+		if err != nil {
 			return nil, err
 		}
-		run.Status = RunStatus(status)
-		run.Trigger = RunTrigger(trigger)
-		if finished.Valid {
-			t := finished.Time.UTC()
-			run.FinishedAt = &t
-		}
-		out = append(out, &run)
+		out = append(out, run)
 	}
 	return out, rows.Err()
 }
@@ -513,6 +514,28 @@ func (r *Repository) ListSteps(ctx context.Context, userID, runID string) ([]*St
 
 type scanner interface {
 	Scan(dest ...any) error
+}
+
+func scanRun(row scanner) (*Run, error) {
+	var run Run
+	var status, trigger string
+	var finished sql.NullTime
+	if err := row.Scan(
+		&run.ID, &run.WorkflowID, &run.UserID, &run.Version, &status, &trigger,
+		&run.InputJSON, &run.Error, &run.StartedAt, &finished,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	run.Status = RunStatus(status)
+	run.Trigger = RunTrigger(trigger)
+	if finished.Valid {
+		t := finished.Time.UTC()
+		run.FinishedAt = &t
+	}
+	return &run, nil
 }
 
 func scanWorkflow(row scanner) (*Workflow, error) {

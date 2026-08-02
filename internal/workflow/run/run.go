@@ -107,11 +107,11 @@ type Run struct {
 type StepStatus string
 
 const (
-	StepPending  StepStatus = "pending"
-	StepRunning  StepStatus = "running"
-	StepSuccess  StepStatus = "success"
-	StepFailed   StepStatus = "failed"
-	StepSkipped  StepStatus = "skipped"
+	StepPending StepStatus = "pending"
+	StepRunning StepStatus = "running"
+	StepSuccess StepStatus = "success"
+	StepFailed  StepStatus = "failed"
+	StepSkipped StepStatus = "skipped"
 )
 
 // StepRun is one visited node inside a Run.

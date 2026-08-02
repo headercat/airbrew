@@ -172,18 +172,14 @@ func (s *Service) CancelRun(ctx context.Context, userID, id string) error {
 // between nodes so cancel takes effect promptly without blocking on a
 // channel.
 func (s *Service) IsCancelled(ctx context.Context, runID string) (bool, error) {
-	run, err := s.repo.GetRun(ctx, "", runID)
+	run, err := s.repo.GetRunByID(ctx, runID)
 	if err != nil {
-		// GetRun scopes by userID; for engine polls we do not have a user
-		// scope. Fall through to a raw lookup below.
-		if !errors.Is(err, ErrNotFound) {
-			return false, err
+		if errors.Is(err, ErrNotFound) {
+			return false, nil
 		}
+		return false, err
 	}
-	if run != nil {
-		return run.Status == RunCancelled, nil
-	}
-	return false, nil
+	return run.Status == RunCancelled, nil
 }
 
 // --- helpers exposed to the engine -----------------------------------------

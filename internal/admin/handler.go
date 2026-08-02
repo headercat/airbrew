@@ -1526,7 +1526,7 @@ func (h *Handler) createStoredBackup(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
 		return
 	}
-	name := "airbrew-backup-" + time.Now().UTC().Format("20060102T150405Z") + ".sqlite"
+	name := newStoredBackupName(time.Now().UTC())
 	path := filepath.Join(dir, name)
 	escaped := strings.ReplaceAll(path, "'", "''")
 	if _, err := h.db.ExecContext(r.Context(), "VACUUM INTO '"+escaped+"'"); err != nil {
@@ -1896,8 +1896,16 @@ func validStoredBackupName(name string) bool {
 		return false
 	}
 	stamp := strings.TrimSuffix(strings.TrimPrefix(name, "airbrew-backup-"), ".sqlite")
-	_, err := time.Parse("20060102T150405Z", stamp)
-	return err == nil
+	for _, layout := range []string{"20060102T150405.000000000Z", "20060102T150405Z"} {
+		if _, err := time.Parse(layout, stamp); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func newStoredBackupName(t time.Time) string {
+	return "airbrew-backup-" + t.UTC().Format("20060102T150405.000000000Z") + ".sqlite"
 }
 
 func (h *Handler) latestMigrationVersion(ctx context.Context) (string, error) {

@@ -125,6 +125,14 @@ func TestStoredBackupHelpersValidateAndPrune(t *testing.T) {
 	if !validStoredBackupName("airbrew-backup-20260101T000000Z.sqlite") {
 		t.Fatal("generated backup name should be valid")
 	}
+	if !validStoredBackupName("airbrew-backup-20260101T000000.123456789Z.sqlite") {
+		t.Fatal("nanosecond backup name should be valid")
+	}
+	first := newStoredBackupName(time.Date(2026, 1, 1, 0, 0, 0, 1, time.UTC))
+	second := newStoredBackupName(time.Date(2026, 1, 1, 0, 0, 0, 2, time.UTC))
+	if first == second {
+		t.Fatal("backup names should include sub-second precision")
+	}
 	if err := pruneStoredBackups(dir, 2); err != nil {
 		t.Fatal(err)
 	}

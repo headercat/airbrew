@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -142,6 +143,56 @@ func TestUploadQuotaAndHash(t *testing.T) {
 	})
 	if !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("expected ErrTooLarge, got %v", err)
+	}
+}
+
+func TestConcurrentUploadsCannotOverrunQuota(t *testing.T) {
+	svc, uid := testService(t)
+	svc.repo.db.SetMaxOpenConns(8)
+	svc.SetConfig(Config{MaxUploadBytes: 1 << 20, QuotaBytes: 100})
+	ctx := context.Background()
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := svc.Upload(ctx, UploadInput{
+				UserID:  uid,
+				Name:    "race.bin",
+				Content: bytes.NewReader(make([]byte, 80)),
+			})
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	var successes, quotaErrors int
+	for err := range errs {
+		if err == nil {
+			successes++
+			continue
+		}
+		if errors.Is(err, ErrQuotaExceeded) {
+			quotaErrors++
+			continue
+		}
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if successes != 1 || quotaErrors != 1 {
+		t.Fatalf("expected one success and one quota error, got %d successes and %d quota errors", successes, quotaErrors)
+	}
+	used, _, err := svc.Usage(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used > 100 {
+		t.Fatalf("quota overrun: used=%d", used)
 	}
 }
 

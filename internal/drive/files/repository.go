@@ -75,14 +75,23 @@ func (r *Repository) CreateNodeWithQuota(ctx context.Context, n *Node, quota int
 	now := time.Now().UTC().Truncate(time.Second)
 	n.CreatedAt = now
 	n.UpdatedAt = now
-	tx, err := r.db.BeginTx(ctx, nil)
+	conn, err := r.db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("drive: begin tx: %w", err)
+		return fmt.Errorf("drive: conn: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }() //nolint:errcheck
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("drive: begin quota tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
 	if quota > 0 {
 		var used sql.NullInt64
-		if err := tx.QueryRowContext(ctx,
+		if err := conn.QueryRowContext(ctx,
 			"SELECT COALESCE(SUM(size_bytes),0) FROM drive_nodes WHERE user_id = ? AND kind = 'file' AND deleted_at IS NULL",
 			n.UserID).Scan(&used); err != nil {
 			return fmt.Errorf("drive: quota read: %w", err)
@@ -91,7 +100,7 @@ func (r *Repository) CreateNodeWithQuota(ctx context.Context, n *Node, quota int
 			return ErrQuotaExceeded
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := conn.ExecContext(ctx, `
 		INSERT INTO drive_nodes
 		  (id, user_id, parent_id, kind, name, blob_path, content_type,
 		   size_bytes, sha256, is_starred, deleted_at, created_at, updated_at)
@@ -103,9 +112,10 @@ func (r *Repository) CreateNodeWithQuota(ctx context.Context, n *Node, quota int
 	); err != nil {
 		return fmt.Errorf("drive: insert node: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return fmt.Errorf("drive: commit node: %w", err)
 	}
+	committed = true
 	return nil
 }
 

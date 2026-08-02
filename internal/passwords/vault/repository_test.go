@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -32,9 +33,28 @@ func testRepo(t *testing.T) *Repository {
 
 func env(userID string) KeyEnvelope {
 	return KeyEnvelope{
-		UserID: userID, KDFAlgorithm: "argon2id", KDFSalt: "s",
+		UserID: userID, KDFAlgorithm: "argon2id", KDFSalt: b64bytes(16, 1),
 		KDFMemoryKiB: 1024, KDFIterations: 1, KDFParallelism: 1,
-		ProtectedVaultKey: "k", ProtectedVaultNonce: "n",
+		ProtectedVaultKey: cipherFixture(48, 2), ProtectedVaultNonce: nonceFixture(3),
+	}
+}
+
+func b64bytes(n int, seed byte) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = seed + byte(i%17)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func cipherFixture(n int, seed byte) string { return b64bytes(n, seed) }
+
+func nonceFixture(seed byte) string { return b64bytes(12, seed) }
+
+func itemInputFixture() ItemInput {
+	return ItemInput{
+		Type: ItemLogin, NameCipher: cipherFixture(24, 10), NameNonce: nonceFixture(20),
+		DataCipher: cipherFixture(32, 30), DataNonce: nonceFixture(40),
 	}
 }
 
@@ -91,10 +111,7 @@ func TestRotateEnvelopeConflictGuardsConcurrentRotation(t *testing.T) {
 func TestItemCRUDAndRevisionGuard(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
-	in := ItemInput{
-		Type: ItemLogin, NameCipher: "n", NameNonce: "nn",
-		DataCipher: "d", DataNonce: "dn",
-	}
+	in := itemInputFixture()
 	it, err := repo.CreateItem(ctx, "u1", in)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -116,8 +133,8 @@ func TestItemCRUDAndRevisionGuard(t *testing.T) {
 	}
 	// Update with the correct revision archives history + bumps revision.
 	upd, err := repo.UpdateItem(ctx, "u1", it.ID, ItemInput{
-		Type: ItemLogin, NameCipher: "n2", NameNonce: "nn2",
-		DataCipher: "d2", DataNonce: "dn2",
+		Type: ItemLogin, NameCipher: cipherFixture(24, 11), NameNonce: nonceFixture(21),
+		DataCipher: cipherFixture(32, 31), DataNonce: nonceFixture(41),
 	}, it.Revision)
 	if err != nil {
 		t.Fatalf("update: %v", err)
@@ -143,10 +160,7 @@ func isConflictErr(err error) bool {
 func TestSyncReturnsDeltaAndTombstones(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
-	it, _ := repo.CreateItem(ctx, "u1", ItemInput{
-		Type: ItemLogin, NameCipher: "n", NameNonce: "nn",
-		DataCipher: "d", DataNonce: "dn",
-	})
+	it, _ := repo.CreateItem(ctx, "u1", itemInputFixture())
 	first, err := repo.Sync(ctx, "u1", 0, 0)
 	if err != nil {
 		t.Fatalf("sync 1: %v", err)
@@ -183,8 +197,8 @@ func TestSyncPagination(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
 		repo.CreateItem(ctx, "u1", ItemInput{
-			Type: ItemLogin, NameCipher: "n", NameNonce: "nn",
-			DataCipher: "d", DataNonce: "dn",
+			Type: ItemLogin, NameCipher: cipherFixture(24, byte(10+i)), NameNonce: nonceFixture(byte(20 + i)),
+			DataCipher: cipherFixture(32, byte(30+i)), DataNonce: nonceFixture(byte(40 + i)),
 		})
 	}
 	// Page size 2 should yield HasMore until drained.
@@ -211,12 +225,9 @@ func TestSyncPagination(t *testing.T) {
 func TestSoftDeleteItemDropsAttachmentRows(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
-	it, _ := repo.CreateItem(ctx, "u1", ItemInput{
-		Type: ItemLogin, NameCipher: "n", NameNonce: "nn",
-		DataCipher: "d", DataNonce: "dn",
-	})
+	it, _ := repo.CreateItem(ctx, "u1", itemInputFixture())
 	if _, err := repo.CreateAttachment(ctx, "u1", it.ID, "vault-attachments/blob1",
-		10, "fk", "fkn", "nm", "nmn"); err != nil {
+		10, cipherFixture(48, 50), nonceFixture(60), cipherFixture(24, 70), nonceFixture(80)); err != nil {
 		t.Fatalf("create attachment: %v", err)
 	}
 	paths, err := repo.SoftDeleteItem(ctx, "u1", it.ID, it.Revision)
@@ -244,10 +255,10 @@ func TestImportBundleReinsertsWithFreshIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	fc, ic, err := repo.ImportBundle(ctx, "u1",
-		[]Folder{{NameCipher: "fn", NameNonce: "fnn"}},
+		[]Folder{{NameCipher: cipherFixture(24, 12), NameNonce: nonceFixture(22)}},
 		[]Item{{
-			Type: ItemLogin, NameCipher: "in", NameNonce: "inn",
-			DataCipher: "id", DataNonce: "idn",
+			Type: ItemLogin, NameCipher: cipherFixture(24, 13), NameNonce: nonceFixture(23),
+			DataCipher: cipherFixture(32, 33), DataNonce: nonceFixture(43),
 		}})
 	if err != nil {
 		t.Fatalf("import: %v", err)
@@ -268,12 +279,12 @@ func TestRestoreItemRevision(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
 	it, _ := repo.CreateItem(ctx, "u1", ItemInput{
-		Type: ItemLogin, NameCipher: "v1", NameNonce: "nn",
-		DataCipher: "d1", DataNonce: "dn",
+		Type: ItemLogin, NameCipher: cipherFixture(24, 14), NameNonce: nonceFixture(24),
+		DataCipher: cipherFixture(32, 34), DataNonce: nonceFixture(44),
 	})
 	upd, _ := repo.UpdateItem(ctx, "u1", it.ID, ItemInput{
-		Type: ItemLogin, NameCipher: "v2", NameNonce: "nn",
-		DataCipher: "d2", DataNonce: "dn",
+		Type: ItemLogin, NameCipher: cipherFixture(24, 15), NameNonce: nonceFixture(25),
+		DataCipher: cipherFixture(32, 35), DataNonce: nonceFixture(45),
 	}, it.Revision)
 	revs, _ := repo.ListItemRevisions(ctx, "u1", it.ID)
 	if len(revs) != 1 {
@@ -284,18 +295,15 @@ func TestRestoreItemRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	if restored.NameCipher != "v1" || restored.DataCipher != "d1" {
-		t.Fatalf("restored = name %q data %q, want v1/d1", restored.NameCipher, restored.DataCipher)
+	if restored.NameCipher != cipherFixture(24, 14) || restored.DataCipher != cipherFixture(32, 34) {
+		t.Fatalf("restored = name %q data %q, want archived snapshot", restored.NameCipher, restored.DataCipher)
 	}
 }
 
 func TestPurgeOldTombstonesRespectsCutoff(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
-	it, _ := repo.CreateItem(ctx, "u1", ItemInput{
-		Type: ItemLogin, NameCipher: "n", NameNonce: "nn",
-		DataCipher: "d", DataNonce: "dn",
-	})
+	it, _ := repo.CreateItem(ctx, "u1", itemInputFixture())
 	if _, err := repo.SoftDeleteItem(ctx, "u1", it.ID, it.Revision); err != nil {
 		t.Fatal(err)
 	}

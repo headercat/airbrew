@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 )
@@ -56,6 +57,9 @@ func (s *Service) CreateFolder(ctx context.Context, userID, nameCipher, nameNonc
 	if nameCipher == "" || nameNonce == "" {
 		return Folder{}, fmt.Errorf("%w: name ciphertext and nonce required", ErrInvalidInput)
 	}
+	if err := validateCipherPair(nameCipher, nameNonce, "name"); err != nil {
+		return Folder{}, err
+	}
 	return s.repo.CreateFolder(ctx, userID, nameCipher, nameNonce)
 }
 
@@ -63,6 +67,9 @@ func (s *Service) CreateFolder(ctx context.Context, userID, nameCipher, nameNonc
 func (s *Service) UpdateFolder(ctx context.Context, userID, id, nameCipher, nameNonce string, ifRevision int64) (Folder, error) {
 	if nameCipher == "" || nameNonce == "" {
 		return Folder{}, fmt.Errorf("%w: name ciphertext and nonce required", ErrInvalidInput)
+	}
+	if err := validateCipherPair(nameCipher, nameNonce, "name"); err != nil {
+		return Folder{}, err
 	}
 	if ifRevision <= 0 {
 		return Folder{}, fmt.Errorf("%w: if_revision required", ErrInvalidInput)
@@ -155,6 +162,15 @@ func validateEnvelope(env *KeyEnvelope) error {
 	if env.ProtectedVaultKey == "" || env.ProtectedVaultNonce == "" {
 		return fmt.Errorf("%w: protected_vault_key and nonce required", ErrInvalidInput)
 	}
+	if _, err := decodeB64Exact(env.KDFSalt, 16, "kdf_salt"); err != nil {
+		return err
+	}
+	if err := validateCipherBlob(env.ProtectedVaultKey, "protected_vault_key"); err != nil {
+		return err
+	}
+	if err := validateNonce(env.ProtectedVaultNonce, "protected_vault_nonce"); err != nil {
+		return err
+	}
 	if env.KDFMemoryKiB <= 0 || env.KDFIterations <= 0 || env.KDFParallelism <= 0 {
 		return fmt.Errorf("%w: kdf params must be positive", ErrInvalidInput)
 	}
@@ -178,10 +194,68 @@ func validateItem(in ItemInput) error {
 	if in.DataCipher == "" || in.DataNonce == "" {
 		return fmt.Errorf("%w: data ciphertext and nonce required", ErrInvalidInput)
 	}
+	if err := validateCipherPair(in.NameCipher, in.NameNonce, "name"); err != nil {
+		return err
+	}
+	if err := validateCipherPair(in.DataCipher, in.DataNonce, "data"); err != nil {
+		return err
+	}
 	if in.NotesCipher != "" && in.NotesNonce == "" {
 		return fmt.Errorf("%w: notes nonce required when notes ciphertext present", ErrInvalidInput)
 	}
+	if in.NotesCipher != "" {
+		if err := validateCipherPair(in.NotesCipher, in.NotesNonce, "notes"); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+const maxCiphertextBytes = 64 << 10
+
+func validateCipherPair(cipher, nonce, field string) error {
+	if err := validateCipherBlob(cipher, field+"_cipher"); err != nil {
+		return err
+	}
+	return validateNonce(nonce, field+"_nonce")
+}
+
+func validateCipherBlob(value, field string) error {
+	b, err := decodeB64(value, field)
+	if err != nil {
+		return err
+	}
+	if len(b) < 17 {
+		return fmt.Errorf("%w: %s too short", ErrInvalidInput, field)
+	}
+	if len(b) > maxCiphertextBytes {
+		return fmt.Errorf("%w: %s too large", ErrInvalidInput, field)
+	}
+	return nil
+}
+
+func validateNonce(value, field string) error {
+	_, err := decodeB64Exact(value, 12, field)
+	return err
+}
+
+func decodeB64Exact(value string, want int, field string) ([]byte, error) {
+	b, err := decodeB64(value, field)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) != want {
+		return nil, fmt.Errorf("%w: %s must decode to %d bytes", ErrInvalidInput, field, want)
+	}
+	return b, nil
+}
+
+func decodeB64(value, field string) ([]byte, error) {
+	b, err := base64.StdEncoding.Strict().DecodeString(value)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s must be base64", ErrInvalidInput, field)
+	}
+	return b, nil
 }
 
 // AsConflict returns the *ConflictError stored in err, or nil.
@@ -208,6 +282,12 @@ func (s *Service) CreateAttachment(ctx context.Context, userID, itemID, blobPath
 ) (Attachment, error) {
 	if blobPath == "" || fkCipher == "" || fkNonce == "" || nameCipher == "" || nameNonce == "" {
 		return Attachment{}, fmt.Errorf("%w: attachment ciphertext required", ErrInvalidInput)
+	}
+	if err := validateCipherPair(fkCipher, fkNonce, "file_key"); err != nil {
+		return Attachment{}, err
+	}
+	if err := validateCipherPair(nameCipher, nameNonce, "name"); err != nil {
+		return Attachment{}, err
 	}
 	if sizeBytes < 0 {
 		return Attachment{}, fmt.Errorf("%w: negative size", ErrInvalidInput)
@@ -252,5 +332,24 @@ func (s *Service) ExportBundle(ctx context.Context, userID string) (KeyEnvelope,
 // ImportBundle re-inserts the given ciphertext folders and items with fresh IDs
 // and bumped revisions, returning the count of each.
 func (s *Service) ImportBundle(ctx context.Context, userID string, folders []Folder, items []Item) (int64, int64, error) {
+	for _, f := range folders {
+		if f.NameCipher == "" || f.NameNonce == "" {
+			return 0, 0, fmt.Errorf("%w: folder name ciphertext required", ErrInvalidInput)
+		}
+		if err := validateCipherPair(f.NameCipher, f.NameNonce, "folder_name"); err != nil {
+			return 0, 0, err
+		}
+	}
+	for _, it := range items {
+		if err := validateItem(ItemInput{
+			Type: it.Type, FolderID: it.FolderID,
+			NameCipher: it.NameCipher, NameNonce: it.NameNonce,
+			DataCipher: it.DataCipher, DataNonce: it.DataNonce,
+			NotesCipher: it.NotesCipher, NotesNonce: it.NotesNonce,
+			Favorite: it.Favorite, Reprompt: it.Reprompt,
+		}); err != nil {
+			return 0, 0, err
+		}
+	}
 	return s.repo.ImportBundle(ctx, userID, folders, items)
 }

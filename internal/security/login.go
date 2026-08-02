@@ -2,7 +2,6 @@ package security
 
 import (
 	"context"
-	"database/sql"
 	"time"
 
 	"github.com/headercat/airbrew/internal/id"
@@ -10,14 +9,14 @@ import (
 
 // LoginAttempt is one recorded login try (success or failure).
 type LoginAttempt struct {
-	ID         string    `json:"id"`
-	UserID     string    `json:"user_id"`
-	Email      string    `json:"email"`
-	Success    bool      `json:"success"`
-	IPAddress  string    `json:"ip_address"`
-	UserAgent  string    `json:"user_agent"`
-	Failure    string    `json:"failure,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Email     string    `json:"email"`
+	Success   bool      `json:"success"`
+	IPAddress string    `json:"ip_address"`
+	UserAgent string    `json:"user_agent"`
+	Failure   string    `json:"failure,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // RecordLoginAttempt writes one login attempt row. userID may be empty when the
@@ -43,7 +42,7 @@ func (s *Service) RecordLoginAttempt(ctx context.Context, a LoginAttempt) error 
 // LoginHistoryFilter controls the login-history query.
 type LoginHistoryFilter struct {
 	Email  string
-	 UserID string
+	UserID string
 	From   time.Time
 	To     time.Time
 	Only   string // "success" | "failure" | "" (both)

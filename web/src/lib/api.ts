@@ -77,6 +77,32 @@ export type AdminSession = {
   expires_at: string;
 };
 
+export type PasswordPolicy = {
+  min_length: number;
+  require_uppercase: boolean;
+  require_lowercase: boolean;
+  require_digit: boolean;
+  require_symbol: boolean;
+  max_age_days: number;
+  history_count: number;
+};
+
+export type IPAllowlist = {
+  enabled: boolean;
+  cidrs: string[];
+};
+
+export type LoginAttempt = {
+  id: string;
+  user_id: string;
+  email: string;
+  success: boolean;
+  ip_address: string;
+  user_agent: string;
+  failure?: string;
+  created_at: string;
+};
+
 export type OAuthClient = {
   id: string;
   client_id: string;

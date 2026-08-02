@@ -428,6 +428,11 @@
       "dbSizeDesc": "Current on-disk size of the SQLite file.",
       "backup": "Database backup",
       "backupDesc": "Download a snapshot of the SQLite database.",
+      "verifyBackup": "Verify backup",
+      "backupVerification": "Last verification",
+      "backupOK": "Backup snapshot passed integrity checks.",
+      "backupFailed": "Backup snapshot failed integrity checks.",
+      "backupChecks": "integrity={{integrity}}, quick={{quick}}",
       "downloadBackup": "Download backup",
       "export": "Export",
       "featureFlags": "Feature flags"

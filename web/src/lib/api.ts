@@ -146,6 +146,15 @@ export type SystemInfo = {
   migration_version: string;
 };
 
+export type BackupVerification = {
+  ok: boolean;
+  integrity_check: string;
+  quick_check: string;
+  size_bytes: number;
+  sha256: string;
+  generated_at: string;
+};
+
 export type ProfileUpdate = {
   display_name: string;
   description: string;

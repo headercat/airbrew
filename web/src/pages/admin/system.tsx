@@ -1,22 +1,38 @@
 import { useEffect, useState } from "react";
-import { Download, Settings as SettingsIcon } from "lucide-react";
+import { CheckCircle2, Download, Settings as SettingsIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SectionHeader, SettingRow } from "./shared";
-import { api, type SystemInfo } from "@/lib/api";
+import { api, type BackupVerification, type SystemInfo } from "@/lib/api";
 
 export default function AdminSystem() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<SystemInfo | null>(null);
+  const [backupCheck, setBackupCheck] = useState<BackupVerification | null>(
+    null,
+  );
+  const [verifying, setVerifying] = useState(false);
   useEffect(() => {
     api
       .get<SystemInfo>("/api/admin/system")
       .then(setInfo)
       .catch(() => {});
   }, []);
+
+  async function verifyBackup() {
+    setVerifying(true);
+    try {
+      const res = await api.get<BackupVerification>(
+        "/api/admin/system/backup/verify",
+      );
+      setBackupCheck(res);
+    } finally {
+      setVerifying(false);
+    }
+  }
 
   return (
     <>
@@ -98,13 +114,48 @@ export default function AdminSystem() {
             title={t("admin.system.backup")}
             description={t("admin.system.backupDesc")}
           >
-            <Button asChild size="sm" variant="outline">
-              <a href="/api/admin/system/backup">
-                <Download className="h-4 w-4" />
-                {t("admin.system.downloadBackup")}
-              </a>
-            </Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={verifyBackup}
+                disabled={verifying}
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                {verifying
+                  ? t("common.loading")
+                  : t("admin.system.verifyBackup")}
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <a href="/api/admin/system/backup">
+                  <Download className="h-4 w-4" />
+                  {t("admin.system.downloadBackup")}
+                </a>
+              </Button>
+            </div>
           </SettingRow>
+          {backupCheck && (
+            <SettingRow
+              title={t("admin.system.backupVerification")}
+              description={new Date(backupCheck.generated_at).toLocaleString()}
+            >
+              <div className="max-w-[420px] space-y-1 text-right text-xs text-muted-foreground">
+                <div className="font-medium text-foreground">
+                  {backupCheck.ok
+                    ? t("admin.system.backupOK")
+                    : t("admin.system.backupFailed")}
+                </div>
+                <div>
+                  {t("admin.system.backupChecks", {
+                    integrity: backupCheck.integrity_check,
+                    quick: backupCheck.quick_check,
+                  })}
+                </div>
+                <div className="font-mono break-all">{backupCheck.sha256}</div>
+                <div>{formatBytes(backupCheck.size_bytes)}</div>
+              </div>
+            </SettingRow>
+          )}
         </CardContent>
       </Card>
     </>
@@ -118,4 +169,10 @@ function formatUptime(seconds: number) {
   if (days > 0) return `${days}d ${hours}h ${minutes}m`;
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
 }

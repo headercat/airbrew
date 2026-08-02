@@ -3,11 +3,14 @@ package admin
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -1188,6 +1191,81 @@ func (h *Handler) backupDatabase(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/vnd.sqlite3")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	http.ServeFile(w, r, tmpPath)
+}
+
+type backupVerifyDTO struct {
+	OK             bool   `json:"ok"`
+	IntegrityCheck string `json:"integrity_check"`
+	QuickCheck     string `json:"quick_check"`
+	SizeBytes      int64  `json:"size_bytes"`
+	SHA256         string `json:"sha256"`
+	GeneratedAt    string `json:"generated_at"`
+}
+
+func (h *Handler) verifyDatabaseBackup(w http.ResponseWriter, r *http.Request) {
+	dbPath, err := h.databasePath(r.Context())
+	if err != nil || dbPath == "" {
+		response.Error(w, http.StatusInternalServerError, "backup_unavailable", "database file path is unavailable")
+		return
+	}
+	tmp, err := os.CreateTemp("", "airbrew-backup-verify-*.sqlite")
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	tmpPath := tmp.Name()
+	_ = tmp.Close()
+	defer os.Remove(tmpPath)
+
+	escaped := strings.ReplaceAll(tmpPath, "'", "''")
+	if _, err := h.db.ExecContext(r.Context(), "VACUUM INTO '"+escaped+"'"); err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	hash, size, err := fileSHA256(tmpPath)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	integrity := sqlitePragmaString(h.db, r.Context(), "PRAGMA integrity_check")
+	quick := sqlitePragmaString(h.db, r.Context(), "PRAGMA quick_check")
+	ok := integrity == "ok" && quick == "ok" && size > 0
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "system.backup_verified", ActorUserID: callerUserID(r),
+		TargetType: "system", TargetID: filepath.Base(dbPath),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"ok": ok, "size_bytes": size, "sha256": hash},
+	})
+	response.JSON(w, http.StatusOK, backupVerifyDTO{
+		OK:             ok,
+		IntegrityCheck: integrity,
+		QuickCheck:     quick,
+		SizeBytes:      size,
+		SHA256:         hash,
+		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func fileSHA256(path string) (string, int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", 0, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, f)
+	if err != nil {
+		return "", 0, err
+	}
+	return hex.EncodeToString(h.Sum(nil)), n, nil
+}
+
+func sqlitePragmaString(db *sql.DB, ctx context.Context, query string) string {
+	var out string
+	if err := db.QueryRowContext(ctx, query).Scan(&out); err != nil {
+		return err.Error()
+	}
+	return out
 }
 
 func (h *Handler) databasePath(ctx context.Context) (string, error) {

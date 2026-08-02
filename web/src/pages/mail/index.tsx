@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 const folders = [
   { id: "inbox", label: "받은편지함", icon: Inbox },
   { id: "sent", label: "보낸메일", icon: Send },
+  { id: "draft", label: "임시보관", icon: Inbox },
   { id: "unread", label: "읽지 않음", icon: Inbox },
   { id: "starred", label: "중요", icon: Star },
 ] as const;
@@ -64,6 +65,7 @@ export default function MailPage() {
   const [params, setParams] = useSearchParams();
   const folder = normalizeFolder(params.get("box"));
   const messageID = params.get("message") ?? "";
+  const mailboxID = params.get("mailbox") ?? "";
 
   const [status, setStatus] = useState<{ enabled: boolean } | null>(null);
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
@@ -74,9 +76,13 @@ export default function MailPage() {
   const [error, setError] = useState<string | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [compose, setCompose] = useState<ComposeState>(emptyCompose);
+  const [mailboxOpen, setMailboxOpen] = useState(false);
+  const [newAddress, setNewAddress] = useState("");
+  const [newDisplayName, setNewDisplayName] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const activeMailbox = mailboxes[0];
+  const activeMailbox =
+    mailboxes.find((mb) => mb.id === mailboxID) ?? mailboxes[0];
 
   useEffect(() => {
     mail
@@ -94,14 +100,18 @@ export default function MailPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await mail.messages({ folder, limit: 100 });
+      const res = await mail.messages({
+        folder,
+        mailbox: activeMailbox?.id,
+        limit: 100,
+      });
       setMessages(res.messages ?? []);
     } catch (e) {
       setError(errorText(e));
     } finally {
       setLoading(false);
     }
-  }, [folder]);
+  }, [activeMailbox?.id, folder]);
 
   useEffect(() => {
     void refreshMailboxes().catch((e) => setError(errorText(e)));
@@ -155,6 +165,14 @@ export default function MailPage() {
     const next = new URLSearchParams(params);
     if (nextFolder === "inbox") next.delete("box");
     else next.set("box", nextFolder);
+    next.delete("message");
+    setParams(next, { replace: false });
+  };
+
+  const selectMailbox = (id: string) => {
+    const next = new URLSearchParams(params);
+    if (id) next.set("mailbox", id);
+    else next.delete("mailbox");
     next.delete("message");
     setParams(next, { replace: false });
   };
@@ -254,6 +272,27 @@ export default function MailPage() {
     }
   };
 
+  const createMailbox = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const mb = await mail.createMailbox({
+        address: newAddress,
+        display_name: newDisplayName,
+        is_primary: mailboxes.length === 0,
+      });
+      setMailboxes((prev) => [...prev, mb]);
+      selectMailbox(mb.id);
+      setNewAddress("");
+      setNewDisplayName("");
+      setMailboxOpen(false);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (status && !status.enabled) {
     return (
       <PageWrapper>
@@ -329,15 +368,33 @@ export default function MailPage() {
               메일함
             </p>
             {mailboxes.map((mb) => (
-              <div key={mb.id} className="truncate px-2 py-1 text-xs">
+              <button
+                key={mb.id}
+                onClick={() => selectMailbox(mb.id)}
+                className={cn(
+                  "block w-full truncate rounded px-2 py-1 text-left text-xs",
+                  activeMailbox?.id === mb.id
+                    ? "bg-accent font-medium"
+                    : "text-muted-foreground hover:bg-accent/60",
+                )}
+              >
                 {mb.address}
-              </div>
+              </button>
             ))}
             {mailboxes.length === 0 && (
               <p className="px-2 text-xs text-muted-foreground">
-                관리자 또는 API로 메일함을 추가하세요.
+                아직 메일함이 없습니다.
               </p>
             )}
+            <Button
+              className="mt-3 w-full"
+              variant="outline"
+              size="sm"
+              onClick={() => setMailboxOpen(true)}
+            >
+              <MailPlus className="mr-2 h-4 w-4" />
+              메일함 추가
+            </Button>
           </div>
         </aside>
 
@@ -492,6 +549,31 @@ export default function MailPage() {
           </div>
         </div>
       </Modal>
+
+      <Modal
+        open={mailboxOpen}
+        onClose={() => setMailboxOpen(false)}
+        title="메일함 추가"
+      >
+        <div className="space-y-3">
+          <Input
+            placeholder="name@example.com"
+            value={newAddress}
+            onChange={(e) => setNewAddress(e.target.value)}
+          />
+          <Input
+            placeholder="표시 이름"
+            value={newDisplayName}
+            onChange={(e) => setNewDisplayName(e.target.value)}
+          />
+          <div className="flex justify-end">
+            <Button onClick={() => void createMailbox()} disabled={busy}>
+              {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              추가
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </PageWrapper>
   );
 }
@@ -589,7 +671,7 @@ function MessageView({
 
 function normalizeFolder(box: string | null) {
   if (box === "sent" || box === "starred" || box === "unread") return box;
-  if (box === "drafts") return "draft";
+  if (box === "drafts" || box === "draft") return "draft";
   return "inbox";
 }
 

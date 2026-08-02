@@ -105,14 +105,25 @@ func (r *Repository) GetByEmail(ctx context.Context, email string) (*User, error
 	return r.queryOne(ctx, `SELECT `+columnsRead+` FROM users WHERE email = ?`, email)
 }
 
-// CountByRole returns active-or-suspended users with the given role. Deleted
-// users are ignored so deleting the only admin intentionally re-enables
-// bootstrap recovery on next startup.
+// CountByRole returns non-deleted users with the given role.
 func (r *Repository) CountByRole(ctx context.Context, role Role) (int, error) {
 	var n int
 	if err := r.db.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM users WHERE role = ? AND status != ?",
 		string(role), string(StatusDeleted),
+	).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// CountActiveByRole returns active users with the given role. It is used for
+// last-admin protections because suspended admins cannot access the console.
+func (r *Repository) CountActiveByRole(ctx context.Context, role Role) (int, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM users WHERE role = ? AND status = ?",
+		string(role), string(StatusActive),
 	).Scan(&n); err != nil {
 		return 0, err
 	}

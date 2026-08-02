@@ -87,7 +87,7 @@ type dashboardResp struct {
 func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userCount, _ := h.userRepo.Count(ctx)
-	adminCount, _ := h.userRepo.CountByRole(ctx, user.RoleAdmin)
+	adminCount, _ := h.userRepo.CountActiveByRole(ctx, user.RoleAdmin)
 	activeSessions, _ := h.countActiveSessions(ctx)
 	states, _ := h.state.AllEnabled(ctx)
 	enabled := 0
@@ -419,7 +419,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if target.Role == user.RoleAdmin && newRole == user.RoleUser {
-			count, err := h.userRepo.CountByRole(r.Context(), user.RoleAdmin)
+			count, err := h.userRepo.CountActiveByRole(r.Context(), user.RoleAdmin)
 			if err != nil {
 				response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 				return
@@ -452,7 +452,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if target.Role == user.RoleAdmin && newStatus != user.StatusActive {
-			count, err := h.userRepo.CountByRole(r.Context(), user.RoleAdmin)
+			count, err := h.userRepo.CountActiveByRole(r.Context(), user.RoleAdmin)
 			if err != nil {
 				response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 				return
@@ -506,7 +506,7 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if target.Role == user.RoleAdmin {
-		count, err := h.userRepo.CountByRole(r.Context(), user.RoleAdmin)
+		count, err := h.userRepo.CountActiveByRole(r.Context(), user.RoleAdmin)
 		if err != nil {
 			response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 			return

@@ -22,11 +22,11 @@ import (
 // the security center shows how the workspace was initialized.
 func EnsureAdmin(ctx context.Context, db *sql.DB, cfg config.Config, logger *slog.Logger) error {
 	repo := user.NewRepository(db)
-	count, err := repo.CountByRole(ctx, user.RoleAdmin)
+	count, err := repo.CountActiveByRole(ctx, user.RoleAdmin)
 	if err != nil {
-		return fmt.Errorf("bootstrap: count admin users: %w", err)
+		return fmt.Errorf("bootstrap: count active admin users: %w", err)
 	}
-	logger.Info("bootstrap admin check", "existing_admin_count", count)
+	logger.Info("bootstrap admin check", "active_admin_count", count)
 	if count > 0 {
 		return nil
 	}

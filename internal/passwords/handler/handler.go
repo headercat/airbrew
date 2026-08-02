@@ -528,8 +528,14 @@ func (h *Handler) exportVault(w http.ResponseWriter, r *http.Request) {
 }
 
 type importReq struct {
-	Folders []folderReq `json:"folders"`
-	Items   []itemReq   `json:"items"`
+	Folders []importFolderReq `json:"folders"`
+	Items   []itemReq         `json:"items"`
+}
+
+type importFolderReq struct {
+	ID         string `json:"id"`
+	NameCipher string `json:"name_cipher"`
+	NameNonce  string `json:"name_nonce"`
 }
 
 func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
@@ -545,7 +551,7 @@ func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
 	folders := make([]vault.Folder, 0, len(req.Folders))
 	for _, f := range req.Folders {
 		folders = append(folders, vault.Folder{
-			NameCipher: f.NameCipher, NameNonce: f.NameNonce,
+			ID: f.ID, NameCipher: f.NameCipher, NameNonce: f.NameNonce,
 		})
 	}
 	items := make([]vault.Item, 0, len(req.Items))

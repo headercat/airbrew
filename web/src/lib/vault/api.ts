@@ -108,9 +108,7 @@ export function rotateKeys(input: EnvelopeInput): Promise<{ ok: true }> {
 }
 
 export function sync(since: number, limit = 500): Promise<SyncResponse> {
-  return api.get<SyncResponse>(
-    `/api/vault/sync?since=${since}&limit=${limit}`,
-  );
+  return api.get<SyncResponse>(`/api/vault/sync?since=${since}&limit=${limit}`);
 }
 
 export function createItem(input: ItemInput): Promise<VaultItem> {
@@ -253,9 +251,7 @@ export type ItemRevision = {
 
 export function listRevisions(itemId: string): Promise<ItemRevision[]> {
   return api
-    .get<{ revisions: ItemRevision[] }>(
-      `/api/vault/items/${itemId}/revisions`,
-    )
+    .get<{ revisions: ItemRevision[] }>(`/api/vault/items/${itemId}/revisions`)
     .then((r) => r.revisions ?? []);
 }
 
@@ -284,9 +280,8 @@ export function exportVault(): Promise<ExportBundle> {
 export type ImportCounts = { folders: number; items: number };
 
 export function importVault(
-  folders: { name_cipher: string; name_nonce: string }[],
+  folders: { id?: string; name_cipher: string; name_nonce: string }[],
   items: ItemInput[],
 ): Promise<ImportCounts> {
   return api.post<ImportCounts>("/api/vault/import", { folders, items });
 }
-

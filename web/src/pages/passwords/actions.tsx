@@ -72,7 +72,7 @@ export function VaultActions() {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text) as {
-        folders?: { name_cipher: string; name_nonce: string }[];
+        folders?: { id?: string; name_cipher: string; name_nonce: string }[];
         items?: {
           type: string;
           folder_id: string;

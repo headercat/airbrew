@@ -436,10 +436,10 @@ func (r *Repository) SoftDeleteItem(ctx context.Context, userID, id string, ifRe
 
 // SyncResult is the payload returned to the client for a delta sync.
 type SyncResult struct {
-	Cursor   int64
-	Folders  []Folder
-	Items    []Item
-	HasMore  bool
+	Cursor  int64
+	Folders []Folder
+	Items   []Item
+	HasMore bool
 }
 
 // Sync returns the folders and items changed since the cursor, ordered by
@@ -636,7 +636,9 @@ func (r *Repository) RestoreItemRevision(ctx context.Context, userID, itemID, re
 func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []Folder, items []Item) (folderCount, itemCount int64, err error) {
 	err = inTx(ctx, r.db, func(tx *sql.Tx) error {
 		now := time.Now().UTC().Truncate(time.Second)
+		folderIDs := make(map[string]string, len(folders))
 		for _, f := range folders {
+			oldID := f.ID
 			rev, err := bumpRev(ctx, tx, userID)
 			if err != nil {
 				return err
@@ -654,6 +656,9 @@ func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []
 				nullableTime(f.DeletedAt)); err != nil {
 				return fmt.Errorf("vault: import folder: %w", err)
 			}
+			if oldID != "" {
+				folderIDs[oldID] = f.ID
+			}
 			folderCount++
 		}
 		for _, it := range items {
@@ -666,6 +671,13 @@ func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []
 			}
 			it.ID = id.New()
 			it.UserID = userID
+			if it.FolderID != "" {
+				if mapped, ok := folderIDs[it.FolderID]; ok {
+					it.FolderID = mapped
+				} else {
+					it.FolderID = ""
+				}
+			}
 			it.Revision = rev
 			it.CreatedAt = now
 			it.UpdatedAt = now

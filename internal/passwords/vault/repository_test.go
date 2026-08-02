@@ -275,6 +275,37 @@ func TestImportBundleReinsertsWithFreshIDs(t *testing.T) {
 	}
 }
 
+func TestImportBundleRemapsFolderIDs(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	_, _, err := repo.ImportBundle(ctx, "u1",
+		[]Folder{{ID: "old-folder", NameCipher: cipherFixture(24, 16), NameNonce: nonceFixture(26)}},
+		[]Item{{
+			Type: ItemLogin, FolderID: "old-folder",
+			NameCipher: cipherFixture(24, 17), NameNonce: nonceFixture(27),
+			DataCipher: cipherFixture(32, 37), DataNonce: nonceFixture(47),
+		}})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	res, err := repo.Sync(ctx, "u1", 0, 0)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if len(res.Folders) != 1 || len(res.Items) != 1 {
+		t.Fatalf("sync = folders %d items %d, want 1/1", len(res.Folders), len(res.Items))
+	}
+	if res.Items[0].FolderID == "" {
+		t.Fatal("item folder_id was dropped")
+	}
+	if res.Items[0].FolderID == "old-folder" {
+		t.Fatal("item folder_id was not remapped")
+	}
+	if res.Items[0].FolderID != res.Folders[0].ID {
+		t.Fatalf("item folder_id = %q, want imported folder %q", res.Items[0].FolderID, res.Folders[0].ID)
+	}
+}
+
 func TestRestoreItemRevision(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()

@@ -297,7 +297,7 @@ type VaultContextValue = {
   // exportBundle / importBundle wrap the encrypted backup/restore endpoints.
   exportBundle: () => Promise<VApi.ExportBundle>;
   importBundle: (
-    folders: { name_cipher: string; name_nonce: string }[],
+    folders: { id?: string; name_cipher: string; name_nonce: string }[],
     items: VApi.ItemInput[],
   ) => Promise<VApi.ImportCounts>;
   // Folder CRUD (encrypts the folder name with the vault key).
@@ -800,7 +800,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const importBundle = useCallback(
     async (
-      folders: { name_cipher: string; name_nonce: string }[],
+      folders: { id?: string; name_cipher: string; name_nonce: string }[],
       items: VApi.ItemInput[],
     ) => {
       const counts = await VApi.importVault(folders, items);

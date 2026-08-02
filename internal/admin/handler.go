@@ -1476,8 +1476,8 @@ func (h *Handler) verifyDatabaseBackup(w http.ResponseWriter, r *http.Request) {
 	defer backupDB.Close()
 	integrity := sqlitePragmaString(backupDB, r.Context(), "PRAGMA integrity_check")
 	quick := sqlitePragmaString(backupDB, r.Context(), "PRAGMA quick_check")
-	schema := airbrewSchemaCheck(backupDB, r.Context())
 	migration := sqliteQueryString(backupDB, r.Context(), "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1")
+	schema := h.airbrewSchemaCompatibilityCheck(r.Context(), backupDB, migration)
 	ok := backupChecksOK(integrity, quick, schema, migration, size)
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "system.backup_verified", ActorUserID: callerUserID(r),
@@ -1612,7 +1612,7 @@ func (h *Handler) restoreDryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cleanup()
 
-	result, err := verifySQLiteFile(r.Context(), tmpPath)
+	result, err := h.verifySQLiteBackupFile(r.Context(), tmpPath)
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "backup_failed", err.Error())
 		return
@@ -1632,7 +1632,7 @@ func (h *Handler) stageRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
-	result, err := verifySQLiteFile(r.Context(), tmpPath)
+	result, err := h.verifySQLiteBackupFile(r.Context(), tmpPath)
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "backup_failed", err.Error())
 		return
@@ -1796,8 +1796,37 @@ func verifySQLiteFile(ctx context.Context, path string) (backupVerifyDTO, error)
 	}, nil
 }
 
+func (h *Handler) verifySQLiteBackupFile(ctx context.Context, path string) (backupVerifyDTO, error) {
+	result, err := verifySQLiteFile(ctx, path)
+	if err != nil {
+		return backupVerifyDTO{}, err
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_time_format=sqlite")
+	if err != nil {
+		return backupVerifyDTO{}, err
+	}
+	defer db.Close()
+	result.SchemaCheck = h.airbrewSchemaCompatibilityCheck(ctx, db, result.Migration)
+	result.OK = backupChecksOK(result.IntegrityCheck, result.QuickCheck, result.SchemaCheck, result.Migration, result.SizeBytes)
+	return result, nil
+}
+
 func backupChecksOK(integrity, quick, schema, migration string, size int64) bool {
 	return integrity == "ok" && quick == "ok" && schema == "ok" && strings.TrimSpace(migration) != "" && size > 0
+}
+
+func (h *Handler) airbrewSchemaCompatibilityCheck(ctx context.Context, candidate *sql.DB, candidateMigration string) string {
+	if schema := airbrewSchemaCheck(candidate, ctx); schema != "ok" {
+		return schema
+	}
+	currentMigration, err := h.latestMigrationVersion(ctx)
+	if err != nil {
+		return "current migration check failed: " + err.Error()
+	}
+	if currentMigration != "" && candidateMigration != currentMigration {
+		return "migration mismatch: backup=" + candidateMigration + ", current=" + currentMigration
+	}
+	return h.compareCurrentSchema(ctx, candidate)
 }
 
 func airbrewSchemaCheck(db *sql.DB, ctx context.Context) string {
@@ -1817,6 +1846,78 @@ func airbrewSchemaCheck(db *sql.DB, ctx context.Context) string {
 		return "missing tables: " + strings.Join(missing, ", ")
 	}
 	return "ok"
+}
+
+func (h *Handler) compareCurrentSchema(ctx context.Context, candidate *sql.DB) string {
+	tables, err := sqliteUserTables(ctx, h.db)
+	if err != nil {
+		return "current schema check failed: " + err.Error()
+	}
+	for _, table := range tables {
+		currentCols, err := sqliteTableColumns(ctx, h.db, table)
+		if err != nil {
+			return "current schema check failed: " + err.Error()
+		}
+		candidateCols, err := sqliteTableColumns(ctx, candidate, table)
+		if err != nil {
+			return "backup schema check failed: " + err.Error()
+		}
+		if len(candidateCols) == 0 {
+			return "missing table: " + table
+		}
+		for col := range currentCols {
+			if !candidateCols[col] {
+				return "missing column: " + table + "." + col
+			}
+		}
+	}
+	return "ok"
+}
+
+func sqliteUserTables(ctx context.Context, db *sql.DB) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT name FROM sqlite_master
+		WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+		ORDER BY name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}
+
+func sqliteTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+sqliteIdent(table)+")")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return nil, err
+		}
+		cols[name] = true
+	}
+	return cols, rows.Err()
+}
+
+func sqliteIdent(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 func (h *Handler) databasePath(ctx context.Context) (string, error) {

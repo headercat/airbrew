@@ -74,6 +74,61 @@ func TestVerifySQLiteFileAcceptsAirbrewCoreSchema(t *testing.T) {
 	}
 }
 
+func TestVerifySQLiteBackupFileRequiresCurrentColumns(t *testing.T) {
+	ctx := context.Background()
+	current, err := sql.Open("sqlite", "file::memory:?cache=shared&_time_format=sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = current.Close() })
+	for _, stmt := range []string{
+		`CREATE TABLE schema_migrations (version TEXT PRIMARY KEY)`,
+		`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL)`,
+		`CREATE TABLE sessions (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE audit_logs (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE module_states (key TEXT PRIMARY KEY)`,
+		`CREATE TABLE server_settings (key TEXT PRIMARY KEY)`,
+		`INSERT INTO schema_migrations (version) VALUES ('0001_initial.sql')`,
+	} {
+		if _, err := current.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "backup.sqlite")
+	backup, err := sql.Open("sqlite", "file:"+path+"?_time_format=sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE schema_migrations (version TEXT PRIMARY KEY)`,
+		`CREATE TABLE users (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE sessions (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE audit_logs (id TEXT PRIMARY KEY)`,
+		`CREATE TABLE module_states (key TEXT PRIMARY KEY)`,
+		`CREATE TABLE server_settings (key TEXT PRIMARY KEY)`,
+		`INSERT INTO schema_migrations (version) VALUES ('0001_initial.sql')`,
+	} {
+		if _, err := backup.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if err := backup.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := (&Handler{db: current}).verifySQLiteBackupFile(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.OK {
+		t.Fatalf("expected missing current column to fail compatibility: %+v", result)
+	}
+	if result.SchemaCheck != "missing column: users.email" {
+		t.Fatalf("schema check = %q", result.SchemaCheck)
+	}
+}
+
 func TestNormalizeLogoURL(t *testing.T) {
 	ok := []string{
 		"https://example.com/logo.png",

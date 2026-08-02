@@ -152,7 +152,7 @@ func (r *ClientRepository) GetByID(ctx context.Context, id string) (*Client, err
 // client_id. The authorize / token endpoints resolve clients this way (the
 // protocol never exposes the internal ID).
 func (r *ClientRepository) GetByClientID(ctx context.Context, clientID string) (*Client, error) {
-	rows, err := r.db.QueryContext(ctx, "SELECT "+clientColumns+" FROM oauth_clients WHERE client_id = ? AND deleted_at IS NULL", clientID)
+	rows, err := r.db.QueryContext(ctx, "SELECT "+clientColumns+" FROM oauth_clients WHERE client_id = ? AND is_active = 1 AND deleted_at IS NULL", clientID)
 	if err != nil {
 		return nil, err
 	}

@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"net"
 	"net/url"
 	"sort"
 	"strings"
@@ -232,6 +233,9 @@ func validateClient(c *Client) error {
 	if c.ClientType == ClientTypeConfidential && c.TokenEndpointAuthMethod == TokenEndpointAuthNone {
 		return ErrConfidentialAuthMethod
 	}
+	if !validAuthMethod(c.TokenEndpointAuthMethod) {
+		return ErrInvalidAuthMethod
+	}
 	if len(c.RedirectURIs) == 0 {
 		return ErrRedirectURIRequired
 	}
@@ -254,6 +258,11 @@ func validateClient(c *Client) error {
 	if len(c.AllowedScopes) > maxAllowedScopes {
 		return ErrTooManyScopes
 	}
+	for _, scope := range c.AllowedScopes {
+		if !validScopeToken(scope) {
+			return ErrInvalidScopeSyntax
+		}
+	}
 	return nil
 }
 
@@ -262,10 +271,47 @@ func validateRedirectURI(raw string) error {
 	if err != nil || u.Scheme == "" || u.Host == "" || u.Fragment != "" {
 		return ErrInvalidRedirectURI
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if isLoopbackHost(u.Hostname()) {
+			return nil
+		}
+		return ErrInvalidRedirectURI
+	default:
 		return ErrInvalidRedirectURI
 	}
-	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func validAuthMethod(method TokenEndpointAuthMethod) bool {
+	switch method {
+	case TokenEndpointAuthNone, TokenEndpointAuthBasic, TokenEndpointAuthPost:
+		return true
+	default:
+		return false
+	}
+}
+
+func validScopeToken(scope string) bool {
+	if scope == "" || len(scope) > 128 {
+		return false
+	}
+	for _, r := range scope {
+		if r < 0x21 || r > 0x7e || r == '"' || r == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeAuthMethod(clientType ClientType, method TokenEndpointAuthMethod) TokenEndpointAuthMethod {

@@ -23,6 +23,8 @@ var (
 	ErrTooManyRedirectURIs    = errors.New("too many redirect_uris")
 	ErrTooManyPostLogoutURIs  = errors.New("too many post_logout_redirect_uris")
 	ErrInvalidRedirectURI     = errors.New("invalid redirect_uri")
+	ErrInvalidAuthMethod      = errors.New("invalid token_endpoint_auth_method")
+	ErrInvalidScopeSyntax     = errors.New("invalid scope syntax")
 	ErrTooManyScopes          = errors.New("too many allowed scopes")
 )
 

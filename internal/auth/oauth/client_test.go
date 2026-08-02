@@ -61,6 +61,77 @@ func TestClientServiceRejectsInvalidRedirectURI(t *testing.T) {
 	}
 }
 
+func TestClientServiceRejectsPlainHTTPRedirectURIExceptLoopback(t *testing.T) {
+	svc := testClientService(t)
+	_, err := svc.Create(context.Background(), ClientCreate{
+		Name:         "Bad Web App",
+		ClientType:   ClientTypePublic,
+		RedirectURIs: []string{"http://example.com/callback"},
+	})
+	if !errors.Is(err, ErrInvalidRedirectURI) {
+		t.Fatalf("expected ErrInvalidRedirectURI, got %v", err)
+	}
+
+	_, err = svc.Create(context.Background(), ClientCreate{
+		Name:         "Loopback CLI",
+		ClientType:   ClientTypePublic,
+		RedirectURIs: []string{"http://127.0.0.1:5051/callback"},
+	})
+	if err != nil {
+		t.Fatalf("expected loopback HTTP redirect to be accepted: %v", err)
+	}
+}
+
+func TestClientServiceRejectsInvalidScopeSyntax(t *testing.T) {
+	svc := testClientService(t)
+	_, err := svc.Create(context.Background(), ClientCreate{
+		Name:          "Bad Scope App",
+		ClientType:    ClientTypePublic,
+		AllowedScopes: []string{"openid", "bad\"scope"},
+		RedirectURIs:  []string{"https://example.com/callback"},
+	})
+	if !errors.Is(err, ErrInvalidScopeSyntax) {
+		t.Fatalf("expected ErrInvalidScopeSyntax, got %v", err)
+	}
+}
+
+func TestClientServiceRejectsInvalidTokenAuthMethod(t *testing.T) {
+	svc := testClientService(t)
+	_, err := svc.Create(context.Background(), ClientCreate{
+		Name:                    "Bad Auth Method App",
+		ClientType:              ClientTypeConfidential,
+		TokenEndpointAuthMethod: "private_key_jwt",
+		RedirectURIs:            []string{"https://example.com/callback"},
+	})
+	if !errors.Is(err, ErrInvalidAuthMethod) {
+		t.Fatalf("expected ErrInvalidAuthMethod, got %v", err)
+	}
+}
+
+func TestClientServiceGetByClientIDRequiresActiveClient(t *testing.T) {
+	svc := testClientService(t)
+	res, err := svc.Create(context.Background(), ClientCreate{
+		Name:         "Inactive App",
+		ClientType:   ClientTypePublic,
+		RedirectURIs: []string{"https://example.com/callback"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.Update(context.Background(), res.Client.ID, ClientUpdate{
+		Name:         "Inactive App",
+		RedirectURIs: []string{"https://example.com/callback"},
+		IsActive:     false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.GetByClientID(context.Background(), res.Client.ClientID)
+	if !errors.Is(err, ErrClientNotFound) {
+		t.Fatalf("expected ErrClientNotFound, got %v", err)
+	}
+}
+
 func TestClientServiceListDoesNotBlockSingleSQLiteConnection(t *testing.T) {
 	svc := testClientService(t)
 	_, err := svc.Create(context.Background(), ClientCreate{

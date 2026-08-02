@@ -1,9 +1,8 @@
 // Vault-level actions: export/import the encrypted backup bundle, change the
 // master password, and create folders. Reached from the vault list header.
 //
-// Export/import move ciphertext only. Import first proves the bundle decrypts
-// with the currently unlocked vault key, then re-encrypts metadata with fresh
-// nonces before uploading it again.
+// Import unlocks the backup envelope with the source master password, then
+// re-encrypts the contents with the currently unlocked vault key.
 
 import { useRef, useState } from "react";
 import { Download, FolderPlus, KeyRound, Loader2, Upload } from "lucide-react";
@@ -74,7 +73,11 @@ export function VaultActions() {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text) as ExportBundle;
-      const counts = await importBundle(parsed);
+      const sourcePassword = window.prompt(
+        t("passwords.actions.importPasswordPrompt"),
+      );
+      if (sourcePassword === null) return;
+      const counts = await importBundle(parsed, sourcePassword);
       setInfo(
         t("passwords.actions.imported", {
           folders: counts.folders,

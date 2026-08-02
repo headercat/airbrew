@@ -312,9 +312,13 @@ type VaultContextValue = {
   // sensitive item is only revealed after re-entering the master password.
   verifyMasterPassword: (password: string) => Promise<boolean>;
   unlockItemDetails: (itemId: string, password: string) => Promise<boolean>;
-  // exportBundle / importBundle wrap same-vault encrypted backup/restore.
+  // exportBundle / importBundle move encrypted backups between vaults by
+  // unlocking the source envelope and re-encrypting under the current vault key.
   exportBundle: () => Promise<VApi.ExportBundle>;
-  importBundle: (bundle: VApi.ExportBundle) => Promise<VApi.ImportCounts>;
+  importBundle: (
+    bundle: VApi.ExportBundle,
+    sourcePassword?: string,
+  ) => Promise<VApi.ImportCounts>;
   // Folder CRUD (encrypts the folder name with the vault key).
   createFolder: (name: string) => Promise<DecryptedFolder>;
   renameFolder: (id: string, name: string) => Promise<void>;
@@ -850,84 +854,116 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const importBundle = useCallback(
-    async (bundle: VApi.ExportBundle) => {
+    async (bundle: VApi.ExportBundle, sourcePassword?: string) => {
       const key = keyRef.current;
       if (!key) throw new Error("vault locked");
-      const folders = [];
-      for (const f of bundle.folders ?? []) {
-        const name = await decryptString(key, f.name_cipher, f.name_nonce);
-        const enc = await encryptString(key, name);
-        folders.push({
-          id: f.id,
-          name_cipher: enc.cipher,
-          name_nonce: enc.nonce,
-          deleted_at: f.deleted_at,
-        });
-      }
-      const items: (VApi.ItemInput & {
-        id?: string;
-        deleted_at?: string | null;
-      })[] = [];
-      for (const it of bundle.items ?? []) {
-        const name = await decryptString(key, it.name_cipher, it.name_nonce);
-        const data = await decryptString(key, it.data_cipher, it.data_nonce);
-        const nameEnc = await encryptString(key, name);
-        const dataEnc = await encryptString(key, data);
-        let notes_cipher = "";
-        let notes_nonce = "";
-        if (it.notes_cipher && it.notes_nonce) {
-          const notes = await decryptString(
-            key,
-            it.notes_cipher,
-            it.notes_nonce,
-          );
-          const notesEnc = await encryptString(key, notes);
-          notes_cipher = notesEnc.cipher;
-          notes_nonce = notesEnc.nonce;
-        }
-        items.push({
-          id: it.id,
-          type: it.type,
-          folder_id: it.folder_id,
-          name_cipher: nameEnc.cipher,
-          name_nonce: nameEnc.nonce,
-          data_cipher: dataEnc.cipher,
-          data_nonce: dataEnc.nonce,
-          notes_cipher,
-          notes_nonce,
-          favorite: it.favorite,
-          reprompt: it.reprompt,
-          deleted_at: it.deleted_at,
-        });
-      }
-      const attachments: VApi.ExportAttachment[] = [];
-      for (const att of bundle.attachments ?? []) {
-        const fileKey = await decryptBytes(
-          key,
-          att.file_key_cipher,
-          att.file_key_nonce,
+      let sourceKey = key;
+      if (sourcePassword && bundle.envelope) {
+        const params: KdfParams = {
+          memoryKiB: bundle.envelope.kdf_memory_kib,
+          iterations: bundle.envelope.kdf_iterations,
+          parallelism: bundle.envelope.kdf_parallelism,
+        };
+        const sourceMaster = await deriveMasterKey(
+          sourcePassword,
+          bundle.envelope.kdf_salt,
+          params,
         );
-        const verifiedPayload = await open(fileKey, b64ToBytes(att.payload));
-        zeroize(verifiedPayload);
-        const wrapped = await encryptBytes(key, fileKey);
-        zeroize(fileKey);
-        const name = await decryptString(key, att.name_cipher, att.name_nonce);
-        const nameEnc = await encryptString(key, name);
-        attachments.push({
-          id: att.id,
-          item_id: att.item_id,
-          name_cipher: nameEnc.cipher,
-          name_nonce: nameEnc.nonce,
-          file_key_cipher: wrapped.cipher,
-          file_key_nonce: wrapped.nonce,
-          size_bytes: att.size_bytes,
-          payload: att.payload,
-        });
+        try {
+          sourceKey = await decryptBytes(
+            sourceMaster,
+            bundle.envelope.protected_vault_key,
+            bundle.envelope.protected_vault_nonce,
+          );
+        } catch {
+          throw new WrongMasterPassword();
+        } finally {
+          zeroize(sourceMaster);
+        }
       }
-      const counts = await VApi.importVault({ folders, items, attachments });
-      // Pull the freshly-imported rows into the decrypted cache.
-      await syncAndDecrypt();
-      return counts;
+      const folders = [];
+      try {
+        for (const f of bundle.folders ?? []) {
+          const name = await decryptString(sourceKey, f.name_cipher, f.name_nonce);
+          const enc = await encryptString(key, name);
+          folders.push({
+            id: f.id,
+            name_cipher: enc.cipher,
+            name_nonce: enc.nonce,
+            deleted_at: f.deleted_at,
+          });
+        }
+        const items: (VApi.ItemInput & {
+          id?: string;
+          deleted_at?: string | null;
+        })[] = [];
+        for (const it of bundle.items ?? []) {
+          const name = await decryptString(sourceKey, it.name_cipher, it.name_nonce);
+          const data = await decryptString(sourceKey, it.data_cipher, it.data_nonce);
+          const nameEnc = await encryptString(key, name);
+          const dataEnc = await encryptString(key, data);
+          let notes_cipher = "";
+          let notes_nonce = "";
+          if (it.notes_cipher && it.notes_nonce) {
+            const notes = await decryptString(
+              sourceKey,
+              it.notes_cipher,
+              it.notes_nonce,
+            );
+            const notesEnc = await encryptString(key, notes);
+            notes_cipher = notesEnc.cipher;
+            notes_nonce = notesEnc.nonce;
+          }
+          items.push({
+            id: it.id,
+            type: it.type,
+            folder_id: it.folder_id,
+            name_cipher: nameEnc.cipher,
+            name_nonce: nameEnc.nonce,
+            data_cipher: dataEnc.cipher,
+            data_nonce: dataEnc.nonce,
+            notes_cipher,
+            notes_nonce,
+            favorite: it.favorite,
+            reprompt: it.reprompt,
+            deleted_at: it.deleted_at,
+          });
+        }
+        const attachments: VApi.ExportAttachment[] = [];
+        for (const att of bundle.attachments ?? []) {
+          const fileKey = await decryptBytes(
+            sourceKey,
+            att.file_key_cipher,
+            att.file_key_nonce,
+          );
+          const verifiedPayload = await open(fileKey, b64ToBytes(att.payload));
+          zeroize(verifiedPayload);
+          const wrapped = await encryptBytes(key, fileKey);
+          zeroize(fileKey);
+          const name = await decryptString(
+            sourceKey,
+            att.name_cipher,
+            att.name_nonce,
+          );
+          const nameEnc = await encryptString(key, name);
+          attachments.push({
+            id: att.id,
+            item_id: att.item_id,
+            name_cipher: nameEnc.cipher,
+            name_nonce: nameEnc.nonce,
+            file_key_cipher: wrapped.cipher,
+            file_key_nonce: wrapped.nonce,
+            size_bytes: att.size_bytes,
+            payload: att.payload,
+          });
+        }
+        const counts = await VApi.importVault({ folders, items, attachments });
+        // Pull the freshly-imported rows into the decrypted cache.
+        await syncAndDecrypt();
+        return counts;
+      } finally {
+        if (sourceKey !== key) zeroize(sourceKey);
+      }
     },
     [syncAndDecrypt],
   );

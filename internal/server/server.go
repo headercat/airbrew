@@ -19,7 +19,9 @@ import (
 	"github.com/headercat/airbrew/internal/contacts"
 	"github.com/headercat/airbrew/internal/db"
 	"github.com/headercat/airbrew/internal/drive"
+	"github.com/headercat/airbrew/internal/httpserver/middleware"
 	"github.com/headercat/airbrew/internal/mail"
+	"github.com/headercat/airbrew/internal/modules"
 	"github.com/headercat/airbrew/internal/passwords"
 	"github.com/headercat/airbrew/internal/workflow"
 )
@@ -90,11 +92,17 @@ func Build(d Deps) *http.ServeMux {
 
 	// Password vault. Status is public; the remaining endpoints require a
 	// session, so they are mounted on a sub-mux wrapped in SessionMiddleware.
+	// The sub-mux additionally enforces module-disable gating (so an admin can
+	// actually take the vault offline) and a per-IP rate limit.
 	pwMod := passwords.New(d.Ctx, d.DB.DB, stubState, adminMod.Audit(), d.Blobs)
 	mux.HandleFunc("GET /api/vault/status", pwMod.Status)
 	pwSub := http.NewServeMux()
 	pwMod.RegisterRoutes(pwSub)
-	mux.Handle("/api/vault/", authMod.SessionMiddleware(pwSub))
+	vaultLimiter := middleware.NewRateLimiter(120, time.Minute)
+	mux.Handle("/api/vault/", authMod.SessionMiddleware(middleware.Chain(pwSub,
+		modules.RequireEnabled(stubState, "passwords"),
+		middleware.RateLimit(vaultLimiter, middleware.ClientIPKey),
+	)))
 
 	if d.WebProxyTarget != "" {
 		mux.Handle("/", webProxyHandler(d.WebProxyTarget))

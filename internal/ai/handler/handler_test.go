@@ -137,6 +137,20 @@ func TestAdminListTools(t *testing.T) {
 	}
 }
 
+func TestAdminRejectsUnknownAgentTool(t *testing.T) {
+	reg := agent.NewToolRegistry()
+	agent.Builtin(reg)
+	h := &AdminHandler{tools: reg}
+
+	err := h.validateAgentTools([]string{"clock", "missing.tool"})
+	if err == nil {
+		t.Fatalf("expected unknown tool error")
+	}
+	if !strings.Contains(err.Error(), "missing.tool") {
+		t.Fatalf("error should name unknown tool: %v", err)
+	}
+}
+
 // newTestConvService spins up an in-memory conv.Service backed by SQLite.
 func newTestConvService(t *testing.T) (*conv.Service, string, string) {
 	t.Helper()

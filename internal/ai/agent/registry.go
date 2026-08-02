@@ -19,17 +19,17 @@ import (
 
 // Definition is the agent-level config persisted in ai_agents.
 type Definition struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	Description  string  `json:"description"`
-	Model        string  `json:"model"`
-	SystemPrompt string  `json:"system_prompt"`
-	Tools        []string `json:"tools"`
-	Temperature  float32 `json:"temperature"`
-	MaxTokens    int     `json:"max_tokens"`
-	MaxTurns     int     `json:"max_turns"`
-	IsBuiltin    bool    `json:"is_builtin"`
-	IsActive     bool    `json:"is_active"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description"`
+	Model        string    `json:"model"`
+	SystemPrompt string    `json:"system_prompt"`
+	Tools        []string  `json:"tools"`
+	Temperature  float32   `json:"temperature"`
+	MaxTokens    int       `json:"max_tokens"`
+	MaxTurns     int       `json:"max_turns"`
+	IsBuiltin    bool      `json:"is_builtin"`
+	IsActive     bool      `json:"is_active"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -101,18 +101,28 @@ type Input struct {
 
 func normalize(in Input) (Input, error) {
 	in.Name = strings.TrimSpace(in.Name)
+	in.Description = strings.TrimSpace(in.Description)
+	in.Model = strings.TrimSpace(in.Model)
+	in.SystemPrompt = strings.TrimSpace(in.SystemPrompt)
 	if in.Name == "" {
 		return in, fmt.Errorf("%w: name required", ErrInvalidInput)
 	}
 	if len(in.Name) > 80 {
 		return in, fmt.Errorf("%w: name too long", ErrInvalidInput)
 	}
+	if len(in.Description) > 512 {
+		return in, fmt.Errorf("%w: description too long", ErrInvalidInput)
+	}
 	if in.Model == "" {
 		return in, fmt.Errorf("%w: model required", ErrInvalidInput)
+	}
+	if len(in.Model) > 160 {
+		return in, fmt.Errorf("%w: model too long", ErrInvalidInput)
 	}
 	if len(in.SystemPrompt) > 8<<10 {
 		return in, fmt.Errorf("%w: system_prompt too long", ErrInvalidInput)
 	}
+	in.Tools = normalizeToolKeys(in.Tools)
 	if len(in.Tools) > 32 {
 		return in, fmt.Errorf("%w: too many tools", ErrInvalidInput)
 	}
@@ -126,6 +136,26 @@ func normalize(in Input) (Input, error) {
 		in.MaxTokens = 0
 	}
 	return in, nil
+}
+
+func normalizeToolKeys(keys []string) []string {
+	if len(keys) == 0 {
+		return []string{}
+	}
+	out := make([]string, 0, len(keys))
+	seen := map[string]struct{}{}
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
 }
 
 // Create inserts a custom (non-builtin) agent.

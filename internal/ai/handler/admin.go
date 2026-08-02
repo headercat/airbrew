@@ -6,6 +6,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -201,6 +202,10 @@ func (a *AdminHandler) createAgent(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	if err := a.validateAgentTools(req.Tools); err != nil {
+		writeAgentError(w, err)
+		return
+	}
 	created, err := a.agents.Create(r.Context(), agent.Input{
 		Name: req.Name, Description: req.Description, Model: req.Model,
 		SystemPrompt: req.SystemPrompt, Tools: req.Tools,
@@ -229,6 +234,10 @@ func (a *AdminHandler) updateAgent(w http.ResponseWriter, r *http.Request) {
 	var req agentReq
 	if err := decodeJSON(r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := a.validateAgentTools(req.Tools); err != nil {
+		writeAgentError(w, err)
 		return
 	}
 	updated, err := a.agents.Update(r.Context(), id, agent.Input{
@@ -293,6 +302,19 @@ func (a *AdminHandler) listTools(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	response.JSON(w, http.StatusOK, map[string]any{"tools": out})
+}
+
+func (a *AdminHandler) validateAgentTools(keys []string) error {
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := a.tools.Get(key); !ok {
+			return fmt.Errorf("%w: unknown tool %q", agent.ErrInvalidInput, key)
+		}
+	}
+	return nil
 }
 
 // --- drivers --------------------------------------------------------------

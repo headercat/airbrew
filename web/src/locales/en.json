@@ -538,7 +538,7 @@
     "goHome": "Go home"
   },
   "drive": {
-    "disabled": "Drive is disabled. Ask an administrator to enable it.",
+    "disabled": "Disabled",
     "myFiles": "My Files",
     "starred": "Starred",
     "trash": "Trash",
@@ -587,7 +587,9 @@
       "starred": "Starred",
       "shared": "Shared",
       "trash": "Trash"
-    }
+    },
+    "untitled": "Untitled",
+    "inTrash": "In trash"
   },
   "share": {
     "expired": "This share link has expired.",

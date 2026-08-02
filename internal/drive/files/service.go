@@ -402,9 +402,10 @@ func (s *Service) CreateShare(ctx context.Context, in CreateShareInput) (*Share,
 	return nil, fmt.Errorf("drive: could not allocate share token")
 }
 
-// ListShares returns the user's shares.
+// ListShares returns the user's shares, joined to their source node so the
+// Shared view can label each link and flag a trashed source.
 func (s *Service) ListShares(ctx context.Context, userID string) ([]*Share, error) {
-	return s.repo.ListShares(ctx, userID)
+	return s.repo.ListSharesWithNode(ctx, userID)
 }
 
 // ListSharesByNode returns the shares for a node.

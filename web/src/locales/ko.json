@@ -538,7 +538,7 @@
     "goHome": "홈으로"
   },
   "drive": {
-    "disabled": "드라이브가 비활성화되어 있습니다. 관리자에게 활성화를 요청하세요.",
+    "disabled": "비활성화됨",
     "myFiles": "내 파일",
     "starred": "별표함",
     "trash": "휴지통",
@@ -587,7 +587,9 @@
       "starred": "별표함",
       "shared": "공유",
       "trash": "휴지통"
-    }
+    },
+    "untitled": "제목 없음",
+    "inTrash": "휴지통에 있음"
   },
   "share": {
     "expired": "이 공유 링크가 만료되었습니다.",

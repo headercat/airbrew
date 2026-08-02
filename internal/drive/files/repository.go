@@ -703,6 +703,27 @@ func scanShare(row scanner) (*Share, error) {
 	return &s, nil
 }
 
+// scanShareWithNode scans a share row plus the joined node name + trashed flag
+// (see shareColumnsForJoin).
+func scanShareWithNode(row scanner) (*Share, error) {
+	var s Share
+	var hasPW, active, trashed int
+	var expires sql.NullTime
+	err := row.Scan(&s.ID, &s.NodeID, &s.UserID, &s.Token, &hasPW, &expires,
+		&s.Downloads, &active, &s.CreatedAt, &s.UpdatedAt, &s.NodeName, &trashed)
+	if err != nil {
+		return nil, err
+	}
+	s.HasPassword = hasPW == 1
+	s.IsActive = active == 1
+	s.NodeTrashed = trashed == 1
+	if expires.Valid {
+		t := expires.Time.UTC()
+		s.ExpiresAt = &t
+	}
+	return &s, nil
+}
+
 func nextID() string { return id.New() }
 
 func nullable(s string) any {

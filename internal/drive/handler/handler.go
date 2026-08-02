@@ -84,6 +84,8 @@ func toNodeResp(n *files.Node) nodeResp {
 type shareResp struct {
 	ID          string `json:"id"`
 	NodeID      string `json:"node_id"`
+	NodeName    string `json:"node_name"`
+	NodeTrashed bool   `json:"node_trashed"`
 	Token       string `json:"token"`
 	URL         string `json:"url"`
 	HasPassword bool   `json:"has_password"`
@@ -95,8 +97,8 @@ type shareResp struct {
 
 func toShareResp(s *files.Share) shareResp {
 	out := shareResp{
-		ID: s.ID, NodeID: s.NodeID, Token: s.Token,
-		URL: "/s/" + s.Token, HasPassword: s.HasPassword,
+		ID: s.ID, NodeID: s.NodeID, NodeName: s.NodeName, NodeTrashed: s.NodeTrashed,
+		Token: s.Token, URL: "/s/" + s.Token, HasPassword: s.HasPassword,
 		Downloads: s.Downloads, IsActive: s.IsActive,
 		CreatedAt: s.CreatedAt.UTC().Format(timeRFC3339),
 	}

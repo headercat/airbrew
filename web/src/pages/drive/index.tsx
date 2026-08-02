@@ -687,12 +687,36 @@ function SharedView() {
   return (
     <div className="divide-y divide-border">
       {shares.map((s) => (
-        <div key={s.id} className="flex items-center gap-3 px-4 py-2.5">
+        <div
+          key={s.id}
+          className={cn(
+            "flex items-center gap-3 px-4 py-2.5",
+            (s.node_trashed || !s.is_active) && "opacity-60",
+          )}
+        >
           <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">{s.url}</div>
+            <div className="flex items-center gap-2">
+              <span className="truncate text-sm font-medium">
+                {s.node_name || t("drive.untitled")}
+              </span>
+              {s.node_trashed && (
+                <Badge variant="destructive" className="text-[10px]">
+                  {t("drive.inTrash")}
+                </Badge>
+              )}
+              {!s.is_active && !s.node_trashed && (
+                <Badge variant="secondary" className="text-[10px]">
+                  {t("drive.disabled")}
+                </Badge>
+              )}
+              {s.has_password && (
+                <Badge variant="secondary" className="text-[10px]">
+                  PW
+                </Badge>
+              )}
+            </div>
             <div className="flex gap-2 text-xs text-muted-foreground">
-              {s.has_password && <Badge variant="secondary">PW</Badge>}
               {s.expires_at && (
                 <span>
                   {t("drive.expires")}{" "}
@@ -707,6 +731,7 @@ function SharedView() {
           <Button
             variant="outline"
             size="sm"
+            disabled={s.node_trashed}
             onClick={async () => {
               await navigator.clipboard.writeText(
                 window.location.origin + s.url,

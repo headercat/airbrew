@@ -18,6 +18,8 @@ export type DriveNode = {
 export type DriveShare = {
   id: string;
   node_id: string;
+  node_name: string;
+  node_trashed: boolean;
   token: string;
   url: string;
   has_password: boolean;

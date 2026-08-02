@@ -36,3 +36,10 @@ type Client struct {
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 }
+
+// IssuedCredentialRevocation summarizes OAuth credentials invalidated after a
+// client security event.
+type IssuedCredentialRevocation struct {
+	AuthorizationCodes int64
+	RefreshTokens      int64
+}

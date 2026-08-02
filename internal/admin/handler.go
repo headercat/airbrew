@@ -679,11 +679,23 @@ func (h *Handler) updateOAuthClient(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, status, code, err.Error())
 		return
 	}
+	revoked := oauth.IssuedCredentialRevocation{}
+	if !c.IsActive {
+		revoked, err = h.oauthSvc.RevokeIssuedCredentials(r.Context(), id)
+		if err != nil {
+			response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+			return
+		}
+	}
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "oauth.client_updated", ActorUserID: callerUserID(r),
 		TargetType: "oauth_client", TargetID: c.ID,
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
-		Metadata: map[string]any{"client_id": c.ClientID, "name": c.Name, "is_active": c.IsActive},
+		Metadata: map[string]any{
+			"client_id": c.ClientID, "name": c.Name, "is_active": c.IsActive,
+			"revoked_authorization_codes": revoked.AuthorizationCodes,
+			"revoked_refresh_tokens":      revoked.RefreshTokens,
+		},
 	})
 	response.JSON(w, http.StatusOK, toOAuthClientDTO(c))
 }
@@ -707,11 +719,20 @@ func (h *Handler) deleteOAuthClient(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
+	revoked, err := h.oauthSvc.RevokeIssuedCredentials(r.Context(), id)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "oauth.client_deleted", ActorUserID: callerUserID(r),
 		TargetType: "oauth_client", TargetID: id,
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
-		Metadata: map[string]any{"client_id": c.ClientID, "name": c.Name},
+		Metadata: map[string]any{
+			"client_id": c.ClientID, "name": c.Name,
+			"revoked_authorization_codes": revoked.AuthorizationCodes,
+			"revoked_refresh_tokens":      revoked.RefreshTokens,
+		},
 	})
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -733,10 +754,19 @@ func (h *Handler) rotateOAuthClientSecret(w http.ResponseWriter, r *http.Request
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
+	revoked, err := h.oauthSvc.RevokeIssuedCredentials(r.Context(), id)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "oauth.client_secret_rotated", ActorUserID: callerUserID(r),
 		TargetType: "oauth_client", TargetID: id,
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{
+			"revoked_authorization_codes": revoked.AuthorizationCodes,
+			"revoked_refresh_tokens":      revoked.RefreshTokens,
+		},
 	})
 	response.JSON(w, http.StatusOK, map[string]string{"client_secret": secret})
 }

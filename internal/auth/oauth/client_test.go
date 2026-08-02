@@ -16,6 +16,12 @@ import (
 
 func testClientService(t *testing.T) *ClientService {
 	t.Helper()
+	svc, _ := testClientServiceWithDB(t)
+	return svc
+}
+
+func testClientServiceWithDB(t *testing.T) (*ClientService, *db.DB) {
+	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "airbrew-test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -25,7 +31,7 @@ func testClientService(t *testing.T) *ClientService {
 		t.Fatal(err)
 	}
 	repo := NewClientRepository(d.DB)
-	return NewClientService(repo)
+	return NewClientService(repo), d
 }
 
 func TestClientServiceCreateConfidential(t *testing.T) {
@@ -154,6 +160,77 @@ func TestClientServiceGetByClientIDRequiresActiveClient(t *testing.T) {
 	_, err = svc.GetByClientID(context.Background(), res.Client.ClientID)
 	if !errors.Is(err, ErrClientNotFound) {
 		t.Fatalf("expected ErrClientNotFound, got %v", err)
+	}
+}
+
+func TestClientServiceRevokeIssuedCredentials(t *testing.T) {
+	svc, d := testClientServiceWithDB(t)
+	ctx := context.Background()
+	res, err := svc.Create(ctx, ClientCreate{
+		Name:         "Revoked App",
+		ClientType:   ClientTypeConfidential,
+		RedirectURIs: []string{"https://example.com/callback"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := d.ExecContext(ctx, `
+		INSERT INTO users (id, public_subject, email, status, created_at, updated_at)
+		VALUES ('usr_revoked', 'sub_revoked', 'revoked@example.com', 'active', ?, ?)
+	`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ExecContext(ctx, `
+		INSERT INTO sessions (id, user_id, session_token_hash, created_at, expires_at)
+		VALUES ('sess_revoked', 'usr_revoked', 'hash_revoked', ?, ?)
+	`, now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ExecContext(ctx, `
+		INSERT INTO oauth_authorization_codes
+			(id, code_hash, oauth_client_id, user_id, session_id, redirect_uri, code_challenge, created_at, expires_at)
+		VALUES
+			('code_active', 'code_hash_active', ?, 'usr_revoked', 'sess_revoked', 'https://example.com/callback', 'challenge', ?, ?),
+			('code_expired', 'code_hash_expired', ?, 'usr_revoked', 'sess_revoked', 'https://example.com/callback', 'challenge', ?, ?)
+	`, res.Client.ID, now, now.Add(time.Hour),
+		res.Client.ID, now.Add(-2*time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ExecContext(ctx, `
+		INSERT INTO oauth_refresh_tokens
+			(id, token_hash, family_id, oauth_client_id, user_id, created_at, expires_at)
+		VALUES
+			('refresh_active', 'refresh_hash_active', 'family_active', ?, 'usr_revoked', ?, ?),
+			('refresh_expired', 'refresh_hash_expired', 'family_expired', ?, 'usr_revoked', ?, ?)
+	`, res.Client.ID, now, now.Add(time.Hour),
+		res.Client.ID, now.Add(-2*time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	revoked, err := svc.RevokeIssuedCredentials(ctx, res.Client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revoked.AuthorizationCodes != 1 || revoked.RefreshTokens != 1 {
+		t.Fatalf("revoked = %#v, want one active code and one active refresh token", revoked)
+	}
+
+	var consumed, tokenRevoked int
+	if err := d.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM oauth_authorization_codes WHERE oauth_client_id = ? AND consumed_at IS NOT NULL",
+		res.Client.ID,
+	).Scan(&consumed); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM oauth_refresh_tokens WHERE oauth_client_id = ? AND revoked_at IS NOT NULL",
+		res.Client.ID,
+	).Scan(&tokenRevoked); err != nil {
+		t.Fatal(err)
+	}
+	if consumed != 1 || tokenRevoked != 1 {
+		t.Fatalf("consumed=%d revoked=%d, want 1/1", consumed, tokenRevoked)
 	}
 }
 

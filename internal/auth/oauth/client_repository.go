@@ -200,6 +200,36 @@ func (r *ClientRepository) UpdateSecret(ctx context.Context, id, secretHash stri
 	return nil
 }
 
+// RevokeIssuedCredentials invalidates outstanding authorization codes and
+// refresh tokens for one client. Access tokens are short-lived and stateless in
+// the planned OAuth flow; refresh-token revocation prevents further renewal.
+func (r *ClientRepository) RevokeIssuedCredentials(ctx context.Context, id string) (IssuedCredentialRevocation, error) {
+	now := time.Now().UTC().Truncate(time.Second)
+	codeRes, err := r.db.ExecContext(ctx, `
+		UPDATE oauth_authorization_codes
+		   SET consumed_at = ?
+		 WHERE oauth_client_id = ?
+		   AND consumed_at IS NULL
+		   AND expires_at > ?
+	`, now, id, now)
+	if err != nil {
+		return IssuedCredentialRevocation{}, fmt.Errorf("oauth client: revoke authorization codes: %w", err)
+	}
+	tokenRes, err := r.db.ExecContext(ctx, `
+		UPDATE oauth_refresh_tokens
+		   SET revoked_at = ?
+		 WHERE oauth_client_id = ?
+		   AND revoked_at IS NULL
+		   AND expires_at > ?
+	`, now, id, now)
+	if err != nil {
+		return IssuedCredentialRevocation{}, fmt.Errorf("oauth client: revoke refresh tokens: %w", err)
+	}
+	codes, _ := codeRes.RowsAffected()
+	tokens, _ := tokenRes.RowsAffected()
+	return IssuedCredentialRevocation{AuthorizationCodes: codes, RefreshTokens: tokens}, nil
+}
+
 // Update applies editable fields and replaces redirect URI sets.
 func (r *ClientRepository) Update(ctx context.Context, c *Client) error {
 	tx, err := r.db.BeginTx(ctx, nil)

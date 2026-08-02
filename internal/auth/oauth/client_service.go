@@ -143,6 +143,11 @@ func (s *ClientService) Delete(ctx context.Context, id string) error {
 	return s.repo.Delete(ctx, id)
 }
 
+// RevokeIssuedCredentials invalidates outstanding credentials for a client.
+func (s *ClientService) RevokeIssuedCredentials(ctx context.Context, id string) (IssuedCredentialRevocation, error) {
+	return s.repo.RevokeIssuedCredentials(ctx, id)
+}
+
 // RotateSecret issues a fresh one-time secret for a confidential client,
 // replacing the stored hash. It returns the plaintext secret exactly once.
 // Rotating a public client is an error (ErrPublicClientSecret).

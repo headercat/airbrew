@@ -74,6 +74,13 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]*Contact, error) {
 	return s.repo.ListContacts(ctx, f)
 }
 
+// Export returns contacts with the larger cap used for vCard downloads.
+func (s *Service) Export(ctx context.Context, userID, sortBy string) ([]*Contact, error) {
+	return s.repo.ListContacts(ctx, ListFilter{
+		UserID: userID, Limit: 2000, MaxLimit: 2000, SortBy: sortBy,
+	})
+}
+
 // Count returns the number of contacts owned by userID.
 func (s *Service) Count(ctx context.Context, userID string) (int, error) {
 	return s.repo.CountContacts(ctx, userID)
@@ -96,6 +103,14 @@ func (s *Service) Replace(ctx context.Context, userID, id string, in UpdateConta
 
 // Patch applies a partial update (PATCH semantics).
 func (s *Service) Patch(ctx context.Context, userID, id string, p ContactPatch) (*Contact, error) {
+	current, err := s.repo.GetContact(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	p, merged := normalizePatchInput(current, p)
+	if !hasAnyIdentity(merged) {
+		return nil, ErrNameRequired
+	}
 	if err := s.repo.PatchContact(ctx, userID, id, p); err != nil {
 		return nil, err
 	}
@@ -334,4 +349,96 @@ func cleanURLs(in []URL) []URL {
 		out = append(out, URL{Value: v, Type: u.Type})
 	}
 	return out
+}
+
+func normalizePatchInput(current *Contact, p ContactPatch) (ContactPatch, CreateContactInput) {
+	merged := CreateContactInput{
+		UserID: current.UserID, NamePrefix: current.NamePrefix, GivenName: current.GivenName,
+		MiddleName: current.MiddleName, FamilyName: current.FamilyName, NameSuffix: current.NameSuffix,
+		DisplayName: current.DisplayName, Nickname: current.Nickname, Company: current.Company,
+		Title: current.Title, Department: current.Department, Emails: current.Emails,
+		Phones: current.Phones, Addresses: current.Addresses, IMs: current.IMs,
+		URLs: current.URLs, Birthday: current.Birthday, Notes: current.Notes,
+		IsFavorite: current.IsFavorite,
+	}
+	if p.NamePrefix != nil {
+		*p.NamePrefix = strings.TrimSpace(*p.NamePrefix)
+		merged.NamePrefix = *p.NamePrefix
+	}
+	if p.GivenName != nil {
+		*p.GivenName = strings.TrimSpace(*p.GivenName)
+		merged.GivenName = *p.GivenName
+	}
+	if p.MiddleName != nil {
+		*p.MiddleName = strings.TrimSpace(*p.MiddleName)
+		merged.MiddleName = *p.MiddleName
+	}
+	if p.FamilyName != nil {
+		*p.FamilyName = strings.TrimSpace(*p.FamilyName)
+		merged.FamilyName = *p.FamilyName
+	}
+	if p.NameSuffix != nil {
+		*p.NameSuffix = strings.TrimSpace(*p.NameSuffix)
+		merged.NameSuffix = *p.NameSuffix
+	}
+	if p.DisplayName != nil {
+		*p.DisplayName = strings.TrimSpace(*p.DisplayName)
+		merged.DisplayName = *p.DisplayName
+	}
+	if p.Nickname != nil {
+		*p.Nickname = strings.TrimSpace(*p.Nickname)
+		merged.Nickname = *p.Nickname
+	}
+	if p.Company != nil {
+		*p.Company = strings.TrimSpace(*p.Company)
+		merged.Company = *p.Company
+	}
+	if p.Title != nil {
+		*p.Title = strings.TrimSpace(*p.Title)
+		merged.Title = *p.Title
+	}
+	if p.Department != nil {
+		*p.Department = strings.TrimSpace(*p.Department)
+		merged.Department = *p.Department
+	}
+	if p.Emails != nil {
+		cleaned := cleanEmails(*p.Emails)
+		p.Emails = &cleaned
+		merged.Emails = cleaned
+	}
+	if p.Phones != nil {
+		cleaned := cleanPhones(*p.Phones)
+		p.Phones = &cleaned
+		merged.Phones = cleaned
+	}
+	if p.Addresses != nil {
+		cleaned := cleanAddresses(*p.Addresses)
+		p.Addresses = &cleaned
+		merged.Addresses = cleaned
+	}
+	if p.IMs != nil {
+		cleaned := cleanIMs(*p.IMs)
+		p.IMs = &cleaned
+		merged.IMs = cleaned
+	}
+	if p.URLs != nil {
+		cleaned := cleanURLs(*p.URLs)
+		p.URLs = &cleaned
+		merged.URLs = cleaned
+	}
+	if p.BirthdaySet {
+		if p.Birthday != nil {
+			t := p.Birthday.UTC().Truncate(time.Second)
+			p.Birthday = &t
+		}
+		merged.Birthday = p.Birthday
+	}
+	if p.Notes != nil {
+		*p.Notes = strings.TrimSpace(*p.Notes)
+		merged.Notes = *p.Notes
+	}
+	if p.IsFavorite != nil {
+		merged.IsFavorite = *p.IsFavorite
+	}
+	return p, merged
 }

@@ -741,9 +741,7 @@ func (h *Handler) exportVCards(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	contacts, err := h.svc.List(r.Context(), contact.ListFilter{
-		UserID: sess.UserID, Limit: 2000, SortBy: r.URL.Query().Get("sort"),
-	})
+	contacts, err := h.svc.Export(r.Context(), sess.UserID, r.URL.Query().Get("sort"))
 	if err != nil {
 		writeErr(w, err)
 		return

@@ -65,8 +65,15 @@ func (r *Repository) GetContact(ctx context.Context, userID, id string) (*Contac
 
 // ListContacts returns contacts matching the filter, sorted.
 func (r *Repository) ListContacts(ctx context.Context, f ListFilter) ([]*Contact, error) {
-	if f.Limit <= 0 || f.Limit > 200 {
+	maxLimit := 200
+	if f.MaxLimit > 0 {
+		maxLimit = f.MaxLimit
+	}
+	if f.Limit <= 0 {
 		f.Limit = 100
+	}
+	if f.Limit > maxLimit {
+		f.Limit = maxLimit
 	}
 	if f.Offset < 0 {
 		f.Offset = 0
@@ -345,7 +352,7 @@ func (r *Repository) GroupIDsForContacts(ctx context.Context, userID string, con
 	if len(contactIDs) == 0 {
 		return out, nil
 	}
-	placeholders := strings.Repeat("?", len(contactIDs))
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(contactIDs)), ",")
 	args := make([]any, 0, len(contactIDs)+1)
 	args = append(args, userID)
 	for _, id := range contactIDs {

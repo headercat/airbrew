@@ -210,4 +210,5 @@ type ListFilter struct {
 	SortDesc bool
 	Limit    int
 	Offset   int
+	MaxLimit int // optional server-side cap override; 0 = default API cap
 }

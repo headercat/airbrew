@@ -443,10 +443,12 @@
       "backup": "Database backup",
       "backupDesc": "Download a snapshot of the SQLite database.",
       "verifyBackup": "Verify backup",
+      "restoreDryRun": "Restore dry-run",
       "backupVerification": "Last verification",
       "backupOK": "Backup snapshot passed integrity checks.",
       "backupFailed": "Backup snapshot failed integrity checks.",
       "backupChecks": "integrity={{integrity}}, quick={{quick}}",
+      "backupMigration": "migration={{version}}",
       "downloadBackup": "Download backup",
       "export": "Export",
       "featureFlags": "Feature flags"

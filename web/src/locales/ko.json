@@ -443,10 +443,12 @@
       "backup": "데이터베이스 백업",
       "backupDesc": "SQLite 데이터베이스 스냅샷을 다운로드합니다.",
       "verifyBackup": "백업 검증",
+      "restoreDryRun": "복구 리허설",
       "backupVerification": "최근 검증",
       "backupOK": "백업 스냅샷이 무결성 검사를 통과했습니다.",
       "backupFailed": "백업 스냅샷이 무결성 검사를 통과하지 못했습니다.",
       "backupChecks": "integrity={{integrity}}, quick={{quick}}",
+      "backupMigration": "migration={{version}}",
       "downloadBackup": "백업 다운로드",
       "export": "내보내기",
       "featureFlags": "기능 플래그"

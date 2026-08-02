@@ -158,6 +158,7 @@ export type BackupVerification = {
   size_bytes: number;
   sha256: string;
   generated_at: string;
+  migration_version: string;
 };
 
 export type ProfileUpdate = {

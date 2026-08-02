@@ -1,5 +1,10 @@
-import { useEffect, useState } from "react";
-import { CheckCircle2, Download, Settings as SettingsIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  CheckCircle2,
+  Download,
+  FileCheck2,
+  Settings as SettingsIcon,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +20,7 @@ export default function AdminSystem() {
     null,
   );
   const [verifying, setVerifying] = useState(false);
+  const restoreInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     api
       .get<SystemInfo>("/api/admin/system")
@@ -31,6 +37,21 @@ export default function AdminSystem() {
       setBackupCheck(res);
     } finally {
       setVerifying(false);
+    }
+  }
+
+  async function restoreDryRun(file?: File) {
+    if (!file) return;
+    setVerifying(true);
+    try {
+      const res = await api.upload<BackupVerification>(
+        "/api/admin/system/backup/restore-dry-run",
+        file,
+      );
+      setBackupCheck(res);
+    } finally {
+      setVerifying(false);
+      if (restoreInput.current) restoreInput.current.value = "";
     }
   }
 
@@ -132,6 +153,22 @@ export default function AdminSystem() {
                   {t("admin.system.downloadBackup")}
                 </a>
               </Button>
+              <input
+                ref={restoreInput}
+                type="file"
+                accept=".sqlite,.sqlite3,.db,application/vnd.sqlite3"
+                className="hidden"
+                onChange={(e) => void restoreDryRun(e.currentTarget.files?.[0])}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={verifying}
+                onClick={() => restoreInput.current?.click()}
+              >
+                <FileCheck2 className="h-4 w-4" />
+                {t("admin.system.restoreDryRun")}
+              </Button>
             </div>
           </SettingRow>
           {backupCheck && (
@@ -149,6 +186,11 @@ export default function AdminSystem() {
                   {t("admin.system.backupChecks", {
                     integrity: backupCheck.integrity_check,
                     quick: backupCheck.quick_check,
+                  })}
+                </div>
+                <div>
+                  {t("admin.system.backupMigration", {
+                    version: backupCheck.migration_version || "—",
                   })}
                 </div>
                 <div className="font-mono break-all">{backupCheck.sha256}</div>

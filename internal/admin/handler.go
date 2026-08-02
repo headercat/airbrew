@@ -1247,6 +1247,7 @@ type backupVerifyDTO struct {
 	SizeBytes      int64  `json:"size_bytes"`
 	SHA256         string `json:"sha256"`
 	GeneratedAt    string `json:"generated_at"`
+	Migration      string `json:"migration_version"`
 }
 
 func (h *Handler) verifyDatabaseBackup(w http.ResponseWriter, r *http.Request) {
@@ -1296,7 +1297,49 @@ func (h *Handler) verifyDatabaseBackup(w http.ResponseWriter, r *http.Request) {
 		SizeBytes:      size,
 		SHA256:         hash,
 		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
+		Migration:      sqliteQueryString(backupDB, r.Context(), "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"),
 	})
+}
+
+func (h *Handler) restoreDryRun(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<30)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", "backup file is required")
+		return
+	}
+	defer file.Close()
+	tmp, err := os.CreateTemp("", "airbrew-restore-dry-run-*.sqlite")
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	tmpPath := tmp.Name()
+	if _, err := io.Copy(tmp, file); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	_ = tmp.Close()
+	defer os.Remove(tmpPath)
+
+	result, err := verifySQLiteFile(r.Context(), tmpPath)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "backup_failed", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "system.backup_restore_dry_run", ActorUserID: callerUserID(r),
+		TargetType: "system", TargetID: "uploaded_backup",
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"ok": result.OK, "size_bytes": result.SizeBytes, "sha256": result.SHA256},
+	})
+	response.JSON(w, http.StatusOK, result)
 }
 
 func fileSHA256(path string) (string, int64, error) {
@@ -1314,11 +1357,38 @@ func fileSHA256(path string) (string, int64, error) {
 }
 
 func sqlitePragmaString(db *sql.DB, ctx context.Context, query string) string {
+	return sqliteQueryString(db, ctx, query)
+}
+
+func sqliteQueryString(db *sql.DB, ctx context.Context, query string) string {
 	var out string
 	if err := db.QueryRowContext(ctx, query).Scan(&out); err != nil {
 		return err.Error()
 	}
 	return out
+}
+
+func verifySQLiteFile(ctx context.Context, path string) (backupVerifyDTO, error) {
+	hash, size, err := fileSHA256(path)
+	if err != nil {
+		return backupVerifyDTO{}, err
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_time_format=sqlite")
+	if err != nil {
+		return backupVerifyDTO{}, err
+	}
+	defer db.Close()
+	integrity := sqlitePragmaString(db, ctx, "PRAGMA integrity_check")
+	quick := sqlitePragmaString(db, ctx, "PRAGMA quick_check")
+	return backupVerifyDTO{
+		OK:             integrity == "ok" && quick == "ok" && size > 0,
+		IntegrityCheck: integrity,
+		QuickCheck:     quick,
+		SizeBytes:      size,
+		SHA256:         hash,
+		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
+		Migration:      sqliteQueryString(db, ctx, "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"),
+	}, nil
 }
 
 func (h *Handler) databasePath(ctx context.Context) (string, error) {

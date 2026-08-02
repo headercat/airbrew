@@ -333,7 +333,9 @@ export async function streamChat(opts: {
       if (ev) {
         onEvent(ev);
         if (ev.kind === "done") {
-          sawDone = true;
+          if (ev.message_id) {
+            sawDone = true;
+          }
         }
         if (ev.kind === "error") {
           const err: ApiError = {

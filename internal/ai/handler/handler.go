@@ -387,9 +387,12 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 			continue
 		case ev, ok := <-events:
 			if !ok {
-				// Channel closed without an explicit done/error — emit one so the
-				// client EventSource always terminates.
-				_ = sse.Event("done", map[string]bool{"ok": true})
+				// Channel closed without an explicit done/error. Treat this as a
+				// failed stream so optimistic client state reconciles from storage.
+				_ = sse.Event("error", map[string]string{
+					"code":        "stream_closed",
+					"description": "agent stream closed before done",
+				})
 				return
 			}
 

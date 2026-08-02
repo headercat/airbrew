@@ -91,6 +91,38 @@ func TestStreamEmitsSSEFrames(t *testing.T) {
 	}
 }
 
+func TestStreamClosedWithoutDoneEmitsError(t *testing.T) {
+	rt := &stubRuntime{events: []agent.Event{
+		{Kind: agent.EventMetadata, Content: "fake-1"},
+	}}
+	svc, uid, agentID := newTestConvService(t)
+	conv0, err := svc.Create(context.Background(), conv.CreateInput{
+		UserID: uid, AgentID: agentID, SnapModel: "fake-1",
+	})
+	if err != nil {
+		t.Fatalf("create conv: %v", err)
+	}
+	h := &Handler{conv: svc, runtime: rt}
+	req := httptest.NewRequest(http.MethodPost,
+		fmt.Sprintf("/api/ai/conversations/%s/stream", conv0.ID),
+		strings.NewReader(`{"message":"hi"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", conv0.ID)
+	req = req.WithContext(session.WithContext(req.Context(), &session.Session{UserID: uid}))
+	rec := httptest.NewRecorder()
+
+	h.stream(rec, req)
+
+	body := rec.Body.String()
+	if strings.Contains(body, "event: done") {
+		t.Fatalf("unexpected synthetic done frame: %s", body)
+	}
+	if !strings.Contains(body, "event: error") || !strings.Contains(body, `"code":"stream_closed"`) {
+		t.Fatalf("missing stream_closed error frame: %s", body)
+	}
+}
+
 func TestStreamWaitsBrieflyForAutoTitle(t *testing.T) {
 	rt := &stubRuntime{events: []agent.Event{
 		{Kind: agent.EventMetadata, Content: "fake-1"},

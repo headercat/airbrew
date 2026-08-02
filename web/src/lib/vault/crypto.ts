@@ -172,6 +172,12 @@ function buf(u: Uint8Array): BufferSource {
   return u as unknown as BufferSource;
 }
 
+function gcm(nonce: Uint8Array, aad?: string): AesGcmParams {
+  const params: AesGcmParams = { name: "AES-GCM", iv: buf(nonce) };
+  if (aad) params.additionalData = buf(enc.encode(aad));
+  return params;
+}
+
 async function importAesKey(raw: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", buf(raw), { name: "AES-GCM" }, false, [
     "encrypt",
@@ -186,11 +192,12 @@ export type Cipher = { cipher: string; nonce: string };
 export async function encryptString(
   key: Uint8Array,
   plaintext: string,
+  aad?: string,
 ): Promise<Cipher> {
   const cryptoKey = await importAesKey(key);
   const nonce = randomBytes(12);
   const ct = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: buf(nonce) },
+    gcm(nonce, aad),
     cryptoKey,
     buf(enc.encode(plaintext)),
   );
@@ -201,10 +208,11 @@ export async function decryptString(
   key: Uint8Array,
   cipher: string,
   nonce: string,
+  aad?: string,
 ): Promise<string> {
   const cryptoKey = await importAesKey(key);
   const pt = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: buf(b64ToBytes(nonce)) },
+    gcm(b64ToBytes(nonce), aad),
     cryptoKey,
     buf(b64ToBytes(cipher)),
   );
@@ -216,11 +224,12 @@ export async function decryptString(
 export async function encryptBytes(
   key: Uint8Array,
   data: Uint8Array,
+  aad?: string,
 ): Promise<Cipher> {
   const cryptoKey = await importAesKey(key);
   const nonce = randomBytes(12);
   const ct = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: buf(nonce) },
+    gcm(nonce, aad),
     cryptoKey,
     buf(data),
   );
@@ -231,10 +240,11 @@ export async function decryptBytes(
   key: Uint8Array,
   cipher: string,
   nonce: string,
+  aad?: string,
 ): Promise<Uint8Array> {
   const cryptoKey = await importAesKey(key);
   const pt = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: buf(b64ToBytes(nonce)) },
+    gcm(b64ToBytes(nonce), aad),
     cryptoKey,
     buf(b64ToBytes(cipher)),
   );
@@ -247,11 +257,12 @@ export async function decryptBytes(
 export async function seal(
   key: Uint8Array,
   data: Uint8Array,
+  aad?: string,
 ): Promise<Uint8Array> {
   const cryptoKey = await importAesKey(key);
   const nonce = randomBytes(12);
   const ct = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: buf(nonce) },
+    gcm(nonce, aad),
     cryptoKey,
     buf(data),
   );
@@ -267,13 +278,14 @@ export async function seal(
 export async function open(
   key: Uint8Array,
   sealed: Uint8Array,
+  aad?: string,
 ): Promise<Uint8Array> {
   if (sealed.length < 13) throw new Error("open: payload too short");
   const cryptoKey = await importAesKey(key);
   const nonce = sealed.slice(0, 12);
   const cipherBytes = sealed.slice(12);
   const pt = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: buf(nonce) },
+    gcm(nonce, aad),
     cryptoKey,
     buf(cipherBytes),
   );

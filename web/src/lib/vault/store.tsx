@@ -176,12 +176,66 @@ export class WrongMasterPassword extends Error {
 
 // ---- crypto <-> api glue ----
 
+const AAD = {
+  envelope: "airbrew:vault:envelope-key:v1",
+  folderName: "airbrew:vault:folder-name:v1",
+  itemName: "airbrew:vault:item-name:v1",
+  itemData: "airbrew:vault:item-data:v1",
+  itemNotes: "airbrew:vault:item-notes:v1",
+  attachmentName: "airbrew:vault:attachment-name:v1",
+  attachmentFileKey: "airbrew:vault:attachment-file-key:v1",
+  attachmentPayload: "airbrew:vault:attachment-payload:v1",
+} as const;
+
+async function decryptStringCompat(
+  key: Uint8Array,
+  cipher: string,
+  nonce: string,
+  aad: string,
+): Promise<string> {
+  try {
+    return await decryptString(key, cipher, nonce, aad);
+  } catch {
+    return decryptString(key, cipher, nonce);
+  }
+}
+
+async function decryptBytesCompat(
+  key: Uint8Array,
+  cipher: string,
+  nonce: string,
+  aad: string,
+): Promise<Uint8Array> {
+  try {
+    return await decryptBytes(key, cipher, nonce, aad);
+  } catch {
+    return decryptBytes(key, cipher, nonce);
+  }
+}
+
+async function openCompat(
+  key: Uint8Array,
+  sealed: Uint8Array,
+  aad: string,
+): Promise<Uint8Array> {
+  try {
+    return await open(key, sealed, aad);
+  } catch {
+    return open(key, sealed);
+  }
+}
+
 async function decryptItem(
   key: Uint8Array,
   it: VaultItem,
   options: { includeSensitive?: boolean } = {},
 ): Promise<DecryptedItem> {
-  const name = await decryptString(key, it.name_cipher, it.name_nonce);
+  const name = await decryptStringCompat(
+    key,
+    it.name_cipher,
+    it.name_nonce,
+    AAD.itemName,
+  );
   if (it.reprompt && !options.includeSensitive) {
     return {
       id: it.id,
@@ -197,7 +251,12 @@ async function decryptItem(
       updatedAt: it.updated_at,
     };
   }
-  const dataJson = await decryptString(key, it.data_cipher, it.data_nonce);
+  const dataJson = await decryptStringCompat(
+    key,
+    it.data_cipher,
+    it.data_nonce,
+    AAD.itemData,
+  );
   let fields: Field[] = [];
   try {
     const parsed = JSON.parse(dataJson) as Partial<ItemData> &
@@ -218,7 +277,12 @@ async function decryptItem(
   let notes = "";
   if (it.notes_cipher && it.notes_nonce) {
     try {
-      notes = await decryptString(key, it.notes_cipher, it.notes_nonce);
+      notes = await decryptStringCompat(
+        key,
+        it.notes_cipher,
+        it.notes_nonce,
+        AAD.itemNotes,
+      );
     } catch {
       notes = "";
     }
@@ -254,13 +318,13 @@ export async function encryptItemInput(
   key: Uint8Array,
   draft: DraftItem,
 ): Promise<ItemInput> {
-  const name = await encryptString(key, draft.name);
+  const name = await encryptString(key, draft.name, AAD.itemName);
   const data: ItemData = { fields: draft.fields };
-  const dataEnc = await encryptString(key, JSON.stringify(data));
+  const dataEnc = await encryptString(key, JSON.stringify(data), AAD.itemData);
   let notesCipher = "";
   let notesNonce = "";
   if (draft.notes) {
-    const notes = await encryptString(key, draft.notes);
+    const notes = await encryptString(key, draft.notes, AAD.itemNotes);
     notesCipher = notes.cipher;
     notesNonce = notes.nonce;
   }
@@ -438,7 +502,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           continue;
         }
         try {
-          const name = await decryptString(key, f.name_cipher, f.name_nonce);
+          const name = await decryptStringCompat(
+            key,
+            f.name_cipher,
+            f.name_nonce,
+            AAD.folderName,
+          );
           folderMap.set(f.id, { id: f.id, name, revision: f.revision });
         } catch {
           folderMap.set(f.id, { id: f.id, name: "•••", revision: f.revision });
@@ -483,7 +552,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     }
     for (const f of cached.folders as VApi.VaultFolder[]) {
       try {
-        const name = await decryptString(key, f.name_cipher, f.name_nonce);
+        const name = await decryptStringCompat(
+          key,
+          f.name_cipher,
+          f.name_nonce,
+          AAD.folderName,
+        );
         folderMap.set(f.id, { id: f.id, name, revision: f.revision });
       } catch {
         folderMap.set(f.id, { id: f.id, name: "•••", revision: f.revision });
@@ -535,7 +609,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         const salt = generateSalt();
         const masterKey = await deriveMasterKey(masterPassword, salt, params);
         const vaultKey = generateVaultKey();
-        const wrapped = await encryptBytes(masterKey, vaultKey);
+        const wrapped = await encryptBytes(masterKey, vaultKey, AAD.envelope);
         const env: VApi.EnvelopeInput = {
           kdf_algorithm: "argon2id",
           kdf_salt: salt,
@@ -601,10 +675,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           // AES-GCM auth-tag verification is the sole integrity check: a wrong
           // master password yields a tag mismatch here, surfaced as
           // WrongMasterPassword. (The derived key is never sent to the server.)
-          vaultKey = await decryptBytes(
+          vaultKey = await decryptBytesCompat(
             masterKey,
             envNow.protected_vault_key,
             envNow.protected_vault_nonce,
+            AAD.envelope,
           );
         } catch {
           zeroize(masterKey);
@@ -719,7 +794,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       for (const m of metas) {
         let name = "attachment";
         try {
-          name = await decryptString(key, m.name_cipher, m.name_nonce);
+          name = await decryptStringCompat(
+            key,
+            m.name_cipher,
+            m.name_nonce,
+            AAD.attachmentName,
+          );
         } catch {
           name = "attachment";
         }
@@ -745,9 +825,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       // Fresh per-file key, sealed content (nonce||ciphertext), wrapped key and
       // encrypted filename — all under the vault key.
       const fileKey = randomBytes(32);
-      const sealed = await seal(fileKey, plain);
-      const wrapped = await encryptBytes(key, fileKey);
-      const nameEnc = await encryptString(key, file.name || "attachment");
+      const sealed = await seal(fileKey, plain, AAD.attachmentPayload);
+      const wrapped = await encryptBytes(key, fileKey, AAD.attachmentFileKey);
+      const nameEnc = await encryptString(
+        key,
+        file.name || "attachment",
+        AAD.attachmentName,
+      );
       const meta: AttachmentMeta = await VApi.uploadAttachment(itemId, sealed, {
         fileKeyCipher: wrapped.cipher,
         fileKeyNonce: wrapped.nonce,
@@ -782,12 +866,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const key = keyRef.current;
       if (!key) throw new Error("vault locked");
       const sealed = await VApi.fetchAttachmentBlob(itemId, att.id);
-      const fileKey = await decryptBytes(
+      const fileKey = await decryptBytesCompat(
         key,
         att.fileKeyCipher,
         att.fileKeyNonce,
+        AAD.attachmentFileKey,
       );
-      const plain = await open(fileKey, sealed);
+      const plain = await openCompat(fileKey, sealed, AAD.attachmentPayload);
       return { blob: new Blob([plain as unknown as BlobPart]), name: att.name };
     },
     [],
@@ -809,10 +894,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       };
       const masterKey = await deriveMasterKey(password, env.kdf_salt, params);
       try {
-        const candidate = await decryptBytes(
+        const candidate = await decryptBytesCompat(
           masterKey,
           env.protected_vault_key,
           env.protected_vault_nonce,
+          AAD.envelope,
         );
         zeroize(masterKey);
         if (candidate.length !== live.length) return false;
@@ -870,10 +956,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           params,
         );
         try {
-          sourceKey = await decryptBytes(
+          sourceKey = await decryptBytesCompat(
             sourceMaster,
             bundle.envelope.protected_vault_key,
             bundle.envelope.protected_vault_nonce,
+            AAD.envelope,
           );
         } catch {
           throw new WrongMasterPassword();
@@ -884,8 +971,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const folders = [];
       try {
         for (const f of bundle.folders ?? []) {
-          const name = await decryptString(sourceKey, f.name_cipher, f.name_nonce);
-          const enc = await encryptString(key, name);
+          const name = await decryptStringCompat(
+            sourceKey,
+            f.name_cipher,
+            f.name_nonce,
+            AAD.folderName,
+          );
+          const enc = await encryptString(key, name, AAD.folderName);
           folders.push({
             id: f.id,
             name_cipher: enc.cipher,
@@ -898,19 +990,30 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           deleted_at?: string | null;
         })[] = [];
         for (const it of bundle.items ?? []) {
-          const name = await decryptString(sourceKey, it.name_cipher, it.name_nonce);
-          const data = await decryptString(sourceKey, it.data_cipher, it.data_nonce);
-          const nameEnc = await encryptString(key, name);
-          const dataEnc = await encryptString(key, data);
+          const name = await decryptStringCompat(
+            sourceKey,
+            it.name_cipher,
+            it.name_nonce,
+            AAD.itemName,
+          );
+          const data = await decryptStringCompat(
+            sourceKey,
+            it.data_cipher,
+            it.data_nonce,
+            AAD.itemData,
+          );
+          const nameEnc = await encryptString(key, name, AAD.itemName);
+          const dataEnc = await encryptString(key, data, AAD.itemData);
           let notes_cipher = "";
           let notes_nonce = "";
           if (it.notes_cipher && it.notes_nonce) {
-            const notes = await decryptString(
+            const notes = await decryptStringCompat(
               sourceKey,
               it.notes_cipher,
               it.notes_nonce,
+              AAD.itemNotes,
             );
-            const notesEnc = await encryptString(key, notes);
+            const notesEnc = await encryptString(key, notes, AAD.itemNotes);
             notes_cipher = notesEnc.cipher;
             notes_nonce = notesEnc.nonce;
           }
@@ -931,21 +1034,27 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         }
         const attachments: VApi.ExportAttachment[] = [];
         for (const att of bundle.attachments ?? []) {
-          const fileKey = await decryptBytes(
+          const fileKey = await decryptBytesCompat(
             sourceKey,
             att.file_key_cipher,
             att.file_key_nonce,
+            AAD.attachmentFileKey,
           );
-          const verifiedPayload = await open(fileKey, b64ToBytes(att.payload));
+          const verifiedPayload = await openCompat(
+            fileKey,
+            b64ToBytes(att.payload),
+            AAD.attachmentPayload,
+          );
           zeroize(verifiedPayload);
-          const wrapped = await encryptBytes(key, fileKey);
+          const wrapped = await encryptBytes(key, fileKey, AAD.attachmentFileKey);
           zeroize(fileKey);
-          const name = await decryptString(
+          const name = await decryptStringCompat(
             sourceKey,
             att.name_cipher,
             att.name_nonce,
+            AAD.attachmentName,
           );
-          const nameEnc = await encryptString(key, name);
+          const nameEnc = await encryptString(key, name, AAD.attachmentName);
           attachments.push({
             id: att.id,
             item_id: att.item_id,
@@ -974,7 +1083,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     async (name: string): Promise<DecryptedFolder> => {
       const key = keyRef.current;
       if (!key) throw new Error("vault locked");
-      const enc = await encryptString(key, name);
+      const enc = await encryptString(key, name, AAD.folderName);
       const raw = await VApi.createFolder(enc.cipher, enc.nonce);
       rawFoldersRef.current.set(raw.id, raw);
       const folder: DecryptedFolder = {
@@ -1000,7 +1109,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (!key) throw new Error("vault locked");
       const existing = foldersRef.current.find((f) => f.id === id);
       if (!existing) throw new Error("folder not found");
-      const enc = await encryptString(key, name);
+      const enc = await encryptString(key, name, AAD.folderName);
       const raw = await VApi.updateFolder(
         id,
         enc.cipher,
@@ -1059,7 +1168,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       };
       const newSalt = generateSalt();
       const newMaster = await deriveMasterKey(newPassword, newSalt, params);
-      const wrapped = await encryptBytes(newMaster, liveKey);
+      const wrapped = await encryptBytes(newMaster, liveKey, AAD.envelope);
       zeroize(newMaster);
       await VApi.rotateKeys({
         kdf_algorithm: env.kdf_algorithm || "argon2id",
@@ -1100,14 +1209,24 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       let name = "—";
       let hasNotes = Boolean(r.notes_cipher && r.notes_nonce);
       try {
-        name = await decryptString(key, r.name_cipher, r.name_nonce);
+        name = await decryptStringCompat(
+          key,
+          r.name_cipher,
+          r.name_nonce,
+          AAD.itemName,
+        );
       } catch {
         name = "—";
       }
       if (r.notes_cipher && r.notes_nonce) {
         try {
           hasNotes = Boolean(
-            await decryptString(key, r.notes_cipher, r.notes_nonce),
+            await decryptStringCompat(
+              key,
+              r.notes_cipher,
+              r.notes_nonce,
+              AAD.itemNotes,
+            ),
           );
         } catch {
           hasNotes = true;

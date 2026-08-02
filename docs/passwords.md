@@ -13,7 +13,7 @@ sync the encrypted vault and, with the user's master password, decrypt locally.
 | Master password guessed             | Argon2id KDF (tunable memory/time), client-side              |
 | New device login                    | Pulls encrypted envelope + ciphertext, decrypts locally       |
 | Concurrent edits from two devices   | Per-row optimistic concurrency via `revision` + sync cursor  |
-| Master password lost                | **No recovery.** Encrypted export is the backup path if the master password is still known |
+| Master password lost                | **No recovery.** Encrypted export can be restored only while the backup master password is known |
 
 The master password is **distinct from the login password** (Milestone 1 auth).
 Reusing it would break zero-knowledge because the existing login flow receives
@@ -43,6 +43,9 @@ master password ──Argon2id(salt, m/t/p)──▶ master key (32 B, client on
 - **Wrap**: AES-256-GCM gives confidentiality + authenticity in one primitive,
   so no separate HMAC key is needed (unlike CBC+HMAC). Each ciphertext stores its
   own 12 B random nonce alongside.
+- **AAD**: new envelope, item, folder, and attachment ciphertexts bind an
+  operation-specific associated-data label to AES-GCM. Older ciphertext without
+  AAD still decrypts through a compatibility fallback.
 - **Vault key**: 32 random bytes, generated once at setup, constant for the
   account lifetime. Rotating it (rare) means re-encrypting all items.
 - **Per-attachment keys**: each attachment gets its own 32 B file key, itself
@@ -212,8 +215,15 @@ GET    /api/vault/items/:id/attachments/:aid download
 DELETE /api/vault/items/:id/attachments/:aid
 
 GET    /api/vault/export                     encrypted export bundle (items + attachments)
-POST   /api/vault/import                     restore
+POST   /api/vault/import                     restore after client-side re-encryption
 ```
+
+Export bundles include the source key envelope plus encrypted folders, items,
+tombstones, attachment metadata, and encrypted attachment payloads. During
+import, the client asks for the backup master password, unwraps the source vault
+key locally, verifies attachment payloads, and re-encrypts everything into the
+currently unlocked vault before upload. The server refuses export bundles whose
+embedded attachment payloads would exceed the import JSON cap.
 
 ## Search
 

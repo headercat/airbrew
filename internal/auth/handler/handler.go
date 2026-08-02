@@ -366,6 +366,7 @@ func (h *Handler) changeExpiredPassword(w http.ResponseWriter, r *http.Request) 
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	h.recordLoginAttempt(r, u.Email, u.ID, true, "")
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType:   "user.password_changed",
 		ActorUserID: u.ID,

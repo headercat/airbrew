@@ -1227,8 +1227,14 @@ func (h *Handler) verifyDatabaseBackup(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
 		return
 	}
-	integrity := sqlitePragmaString(h.db, r.Context(), "PRAGMA integrity_check")
-	quick := sqlitePragmaString(h.db, r.Context(), "PRAGMA quick_check")
+	backupDB, err := sql.Open("sqlite", "file:"+tmpPath+"?mode=ro&_time_format=sqlite")
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	defer backupDB.Close()
+	integrity := sqlitePragmaString(backupDB, r.Context(), "PRAGMA integrity_check")
+	quick := sqlitePragmaString(backupDB, r.Context(), "PRAGMA quick_check")
 	ok := integrity == "ok" && quick == "ok" && size > 0
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "system.backup_verified", ActorUserID: callerUserID(r),

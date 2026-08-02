@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -20,6 +21,9 @@ type Config struct {
 	SessionSecret  []byte
 	SessionMaxAge  time.Duration
 	LogLevel       string
+	// CookieSecure marks the session cookie Secure (HTTPS-only). Defaults to
+	// false for local HTTP dev; set AIRBREW_COOKIE_SECURE=true in production.
+	CookieSecure bool
 
 	BootstrapAdminEmail    string
 	BootstrapAdminPassword string
@@ -54,6 +58,7 @@ func Load() (Config, error) {
 		WebProxyTarget: envStr("AIRBREW_WEB_PROXY_TARGET", ""),
 		LogLevel:       envStr("AIRBREW_LOG_LEVEL", "info"),
 		SessionMaxAge:  envDuration("AIRBREW_SESSION_MAX_AGE", 14*24*time.Hour),
+		CookieSecure:   envBool("AIRBREW_COOKIE_SECURE", false),
 
 		BootstrapAdminEmail:    envStr("AIRBREW_BOOTSTRAP_ADMIN_EMAIL", "admin@airbrew.local"),
 		BootstrapAdminPassword: os.Getenv("AIRBREW_BOOTSTRAP_ADMIN_PASSWORD"),
@@ -81,6 +86,18 @@ func envDuration(key string, def time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
+		}
+	}
+	return def
+}
+
+func envBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		switch strings.ToLower(v) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
 		}
 	}
 	return def

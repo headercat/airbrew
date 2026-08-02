@@ -77,12 +77,14 @@ func main() {
 		WebProxyTarget: cfg.WebProxyTarget,
 		Blobs:          blobs,
 		Ctx:            ctx,
+		CookieSecure:   cfg.CookieSecure,
 	})
 
 	srv := httpserver.New(httpserver.Deps{
-		Addr:   cfg.HTTPAddr,
-		Mux:    mux,
-		Logger: logger,
+		Addr:           cfg.HTTPAddr,
+		Mux:            mux,
+		Logger:         logger,
+		StrictSecurity: cfg.WebProxyTarget == "", // strict CSP only for the built SPA, not the Vite proxy
 	})
 
 	go func() {

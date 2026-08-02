@@ -22,6 +22,9 @@ type Config struct {
 	SessionMaxAge time.Duration
 	Blobs         blob.Store
 	Audit         *audit.Service
+	// CookieSecure marks the session cookie Secure (HTTPS-only). Required for
+	// production deployments; defaults to false for local HTTP dev.
+	CookieSecure bool
 }
 
 // Module bundles the user/session/OAuth services and HTTP handlers.
@@ -40,11 +43,12 @@ func New(db *sql.DB, cfg Config) *Module {
 	sessRepo := session.NewRepository(db)
 	sessSvc := session.NewService(sessRepo, cfg.SessionMaxAge)
 	h := handler.New(handler.Deps{
-		UserRepo: userRepo,
-		UserSvc:  userSvc,
-		SessSvc:  sessSvc,
-		Blobs:    cfg.Blobs,
-		Audit:    cfg.Audit,
+		UserRepo:     userRepo,
+		UserSvc:      userSvc,
+		SessSvc:      sessSvc,
+		Blobs:        cfg.Blobs,
+		Audit:        cfg.Audit,
+		CookieSecure: cfg.CookieSecure,
 	})
 	return &Module{
 		UserRepo: userRepo,

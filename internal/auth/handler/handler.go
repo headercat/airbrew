@@ -18,11 +18,12 @@ import (
 
 // Handler exposes the auth JSON endpoints.
 type Handler struct {
-	users    *user.Repository
-	userSvc  *user.Service
-	sessions *session.Service
-	blobs    blob.Store
-	audit    *audit.Service
+	users        *user.Repository
+	userSvc      *user.Service
+	sessions     *session.Service
+	blobs        blob.Store
+	audit        *audit.Service
+	cookieSecure bool
 }
 
 // Deps wires handler dependencies.
@@ -32,11 +33,18 @@ type Deps struct {
 	SessSvc  *session.Service
 	Blobs    blob.Store
 	Audit    *audit.Service
+	// CookieSecure, when true, marks the session cookie with the Secure
+	// attribute so it is only ever sent over HTTPS. Required for production;
+	// false is fine for local HTTP dev.
+	CookieSecure bool
 }
 
 // New builds a Handler.
 func New(d Deps) *Handler {
-	return &Handler{users: d.UserRepo, userSvc: d.UserSvc, sessions: d.SessSvc, blobs: d.Blobs, audit: d.Audit}
+	return &Handler{
+		users: d.UserRepo, userSvc: d.UserSvc, sessions: d.SessSvc,
+		blobs: d.Blobs, audit: d.Audit, cookieSecure: d.CookieSecure,
+	}
 }
 
 // RegisterRoutes mounts the JSON endpoints on mux. All routes are under /api/auth.
@@ -137,7 +145,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	setSessionCookie(w, token, h.sessions.MaxAge())
+	h.setSessionCookie(w, token, h.sessions.MaxAge())
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType:  "session.login",
 		ActorUserID: u.ID,
@@ -161,7 +169,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	setSessionCookie(w, "", -1)
+	h.setSessionCookie(w, "", -1)
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -339,12 +347,13 @@ func decodeJSON(r *http.Request, v any) error {
 	return dec.Decode(v)
 }
 
-func setSessionCookie(w http.ResponseWriter, value string, maxAge int) {
+func (h *Handler) setSessionCookie(w http.ResponseWriter, value string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     session.CookieName,
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   h.cookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   maxAge,
 	})

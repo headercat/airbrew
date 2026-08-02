@@ -16,6 +16,11 @@ type Deps struct {
 	Addr   string
 	Mux    *http.ServeMux
 	Logger *slog.Logger
+	// StrictSecurity, when true, emits a strict Content-Security-Policy (and is
+	// appropriate for the production SPA build). In dev (Vite proxy) it should
+	// be false so HMR inline scripts/WebSocket are not blocked. Baseline
+	// defensive headers and the CSRF check are always applied.
+	StrictSecurity bool
 }
 
 // Server is a configured *http.Server with graceful shutdown.
@@ -28,6 +33,8 @@ type Server struct {
 func New(d Deps) *Server {
 	handler := middleware.Chain(
 		d.Mux,
+		middleware.SecurityHeaders(d.StrictSecurity),
+		middleware.CSRF,
 		middleware.RequestID,
 		middleware.Recover(d.Logger),
 		middleware.AccessLog(d.Logger),

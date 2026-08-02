@@ -34,6 +34,9 @@ type Deps struct {
 	// Ctx is the process lifecycle context. Modules use it to start background
 	// loops (e.g. the vault janitor) that should stop on shutdown.
 	Ctx context.Context
+	// CookieSecure marks the session cookie Secure (HTTPS-only). Required for
+	// production; false for local HTTP dev.
+	CookieSecure bool
 }
 
 // Build returns the root *http.ServeMux wired with every module.
@@ -53,7 +56,7 @@ func Build(d Deps) *http.ServeMux {
 	adminMod := admin.New(d.DB.DB)
 	adminMod.RegisterPublicRoutes(mux) // public: GET /api/branding, GET /api/admin/status
 
-	authMod := auth.New(d.DB.DB, auth.Config{SessionMaxAge: d.SessionMax, Blobs: d.Blobs, Audit: adminMod.Audit()})
+	authMod := auth.New(d.DB.DB, auth.Config{SessionMaxAge: d.SessionMax, Blobs: d.Blobs, Audit: adminMod.Audit(), CookieSecure: d.CookieSecure})
 	authSub := http.NewServeMux()
 	authMod.Handler.RegisterRoutes(authSub)
 	mux.Handle("/api/auth/", authMod.SessionMiddleware(authSub))
@@ -64,7 +67,21 @@ func Build(d Deps) *http.ServeMux {
 
 	// Other feature modules. Each registers /api/<name>/status.
 	stubState := adminMod.State()
-	mail.New(stubState).RegisterRoutes(mux)
+
+	// Mail module. Status + inbound webhooks are public; mailbox/message/send
+	// endpoints require a session; provider config lives under the admin tree.
+	mailMod := mail.New(d.DB, stubState, adminMod.Audit(), d.Blobs)
+	mailMod.RegisterPublicRoutes(mux) // GET /api/mail/status, POST /api/mail/inbound/{driver}
+	mailSub := http.NewServeMux()
+	mailMod.RegisterRoutes(mailSub)
+	mux.Handle("/api/mail/", authMod.SessionMiddleware(mailSub))
+	// Admin provider config: mount under a RequireAdmin-wrapped mux alongside
+	// the rest of the admin tree (which is itself SessionMiddleware-wrapped).
+	mailAdminSub := http.NewServeMux()
+	mailMod.RegisterAdminRoutes(mailAdminSub)
+	adminSub.Handle("/api/admin/mail/", admin.RequireAdmin(authMod.UserRepo)(mailAdminSub))
+	mailMod.Start(d.Ctx) // inbound poll coordinator
+
 	drive.New(stubState).RegisterRoutes(mux)
 	contacts.New(stubState).RegisterRoutes(mux)
 	chat.New(stubState).RegisterRoutes(mux)

@@ -15,6 +15,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { SectionHeader, SettingRow } from "./shared";
 import {
   api,
+  isApiError,
   type BackupVerification,
   type StoredBackup,
   type SystemInfo,
@@ -29,6 +30,8 @@ export default function AdminSystem() {
   const [storedBackups, setStoredBackups] = useState<StoredBackup[]>([]);
   const [verifying, setVerifying] = useState(false);
   const [creatingBackup, setCreatingBackup] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const restoreInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     api
@@ -54,14 +57,31 @@ export default function AdminSystem() {
     try {
       await api.post<StoredBackup>("/api/admin/system/backups");
       await refreshStoredBackups();
+      setNotice(t("admin.system.storedBackupCreated"));
+      setError(null);
+    } catch (err) {
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : "error",
+      );
     } finally {
       setCreatingBackup(false);
     }
   }
 
   async function deleteStoredBackup(name: string) {
-    await api.del(`/api/admin/system/backups/${encodeURIComponent(name)}`);
-    await refreshStoredBackups();
+    if (!window.confirm(t("admin.system.confirmDeleteBackup", { name }))) {
+      return;
+    }
+    try {
+      await api.del(`/api/admin/system/backups/${encodeURIComponent(name)}`);
+      await refreshStoredBackups();
+      setNotice(t("admin.system.storedBackupDeleted"));
+      setError(null);
+    } catch (err) {
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : "error",
+      );
+    }
   }
 
   async function verifyBackup() {
@@ -98,6 +118,8 @@ export default function AdminSystem() {
         titleKey="admin.system.title"
         descKey="admin.system.description"
       />
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {notice && <p className="text-sm text-emerald-600">{notice}</p>}
 
       <Card>
         <CardContent className="divide-y divide-border p-0">

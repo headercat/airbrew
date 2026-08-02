@@ -53,6 +53,13 @@ type ClientCreateResult struct {
 	ClientSecret string
 }
 
+// ClientAuthentication is the token endpoint's client authentication input.
+type ClientAuthentication struct {
+	ClientID     string
+	ClientSecret string
+	Method       TokenEndpointAuthMethod
+}
+
 // Create validates and persists a client. Confidential client secrets are
 // returned once and stored as SHA-256 hashes.
 func (s *ClientService) Create(ctx context.Context, in ClientCreate) (*ClientCreateResult, error) {
@@ -157,14 +164,32 @@ func (s *ClientService) RotateSecret(ctx context.Context, id string) (string, er
 	return secret, nil
 }
 
-// VerifyClientSecret authenticates a confidential client for the token
-// endpoint. It resolves the client by client_id and, for confidential clients,
-// checks the presented secret with a constant-time comparison. Unknown
-// client_ids, inactive clients, and bad secrets are all collapsed into
-// ErrInvalidClient so the endpoint cannot be used to enumerate client_ids.
-// Public clients cannot present a secret and yield ErrPublicClientSecret.
+// VerifyClientSecret authenticates a confidential client using
+// client_secret_basic semantics. It is kept as a compact helper for callers
+// that already know the auth method; token endpoints should prefer
+// AuthenticateTokenClient with ClientAuthenticationFromRequest.
 func (s *ClientService) VerifyClientSecret(ctx context.Context, clientID, secret string) (*Client, error) {
-	c, err := s.repo.GetByClientID(ctx, clientID)
+	return s.AuthenticateTokenClient(ctx, ClientAuthentication{
+		ClientID:     clientID,
+		ClientSecret: secret,
+		Method:       TokenEndpointAuthBasic,
+	})
+}
+
+// AuthenticateTokenClient applies OAuth token endpoint client authentication
+// policy. It accepts unauthenticated public clients, requires confidential
+// clients to use their registered auth method, and collapses unknown clients,
+// inactive clients, method mismatches, and bad secrets into ErrInvalidClient.
+func (s *ClientService) AuthenticateTokenClient(ctx context.Context, in ClientAuthentication) (*Client, error) {
+	method := in.Method
+	if method == "" {
+		method = TokenEndpointAuthBasic
+	}
+	if !validAuthMethod(method) {
+		return nil, ErrInvalidClient
+	}
+
+	c, err := s.repo.GetByClientID(ctx, strings.TrimSpace(in.ClientID))
 	if err != nil {
 		if errors.Is(err, ErrClientNotFound) {
 			return nil, ErrInvalidClient
@@ -172,12 +197,35 @@ func (s *ClientService) VerifyClientSecret(ctx context.Context, clientID, secret
 		return nil, err
 	}
 	if c.ClientType == ClientTypePublic {
-		return nil, ErrPublicClientSecret
+		if method != TokenEndpointAuthNone || in.ClientSecret != "" {
+			return nil, ErrPublicClientSecret
+		}
+		return c, nil
 	}
-	if c.ClientSecretHash == "" || !secretMatches(secret, c.ClientSecretHash) {
+	if c.TokenEndpointAuthMethod != method {
+		return nil, ErrInvalidClient
+	}
+	if strings.TrimSpace(in.ClientSecret) == "" {
+		return nil, ErrInvalidClient
+	}
+	if c.ClientSecretHash == "" || !secretMatches(in.ClientSecret, c.ClientSecretHash) {
 		return nil, ErrInvalidClient
 	}
 	return c, nil
+}
+
+// ValidatePublicTokenClient resolves an unauthenticated public client for the
+// token endpoint. It is a convenience wrapper for PKCE authorization-code
+// exchanges where public clients must not send a secret.
+func (s *ClientService) ValidatePublicTokenClient(ctx context.Context, clientID string) (*Client, error) {
+	c, err := s.AuthenticateTokenClient(ctx, ClientAuthentication{
+		ClientID: clientID,
+		Method:   TokenEndpointAuthNone,
+	})
+	if errors.Is(err, ErrPublicClientSecret) {
+		return nil, ErrPublicClientSecret
+	}
+	return c, err
 }
 
 // ValidateRedirectURI enforces exact-string matching of the requested

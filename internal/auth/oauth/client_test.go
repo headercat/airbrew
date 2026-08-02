@@ -3,7 +3,11 @@ package oauth
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,6 +133,91 @@ func TestClientServiceGetByClientIDRequiresActiveClient(t *testing.T) {
 	_, err = svc.GetByClientID(context.Background(), res.Client.ClientID)
 	if !errors.Is(err, ErrClientNotFound) {
 		t.Fatalf("expected ErrClientNotFound, got %v", err)
+	}
+}
+
+func TestClientServiceAuthenticateTokenClientRespectsRegisteredMethod(t *testing.T) {
+	svc := testClientService(t)
+	res, err := svc.Create(context.Background(), ClientCreate{
+		Name:                    "Post Auth App",
+		ClientType:              ClientTypeConfidential,
+		TokenEndpointAuthMethod: TokenEndpointAuthPost,
+		RedirectURIs:            []string{"https://example.com/callback"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.AuthenticateTokenClient(context.Background(), ClientAuthentication{
+		ClientID:     res.Client.ClientID,
+		ClientSecret: res.ClientSecret,
+		Method:       TokenEndpointAuthBasic,
+	})
+	if !errors.Is(err, ErrInvalidClient) {
+		t.Fatalf("expected ErrInvalidClient for method mismatch, got %v", err)
+	}
+
+	client, err := svc.AuthenticateTokenClient(context.Background(), ClientAuthentication{
+		ClientID:     res.Client.ClientID,
+		ClientSecret: res.ClientSecret,
+		Method:       TokenEndpointAuthPost,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.ID != res.Client.ID {
+		t.Fatalf("expected client %q, got %q", res.Client.ID, client.ID)
+	}
+}
+
+func TestClientServiceAuthenticateTokenClientAllowsPublicWithoutSecret(t *testing.T) {
+	svc := testClientService(t)
+	res, err := svc.Create(context.Background(), ClientCreate{
+		Name:         "Public App",
+		ClientType:   ClientTypePublic,
+		RedirectURIs: []string{"https://example.com/callback"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := svc.ValidatePublicTokenClient(context.Background(), res.Client.ClientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.ID != res.Client.ID {
+		t.Fatalf("expected client %q, got %q", res.Client.ID, client.ID)
+	}
+	_, err = svc.AuthenticateTokenClient(context.Background(), ClientAuthentication{
+		ClientID:     res.Client.ClientID,
+		ClientSecret: "not-allowed",
+		Method:       TokenEndpointAuthPost,
+	})
+	if !errors.Is(err, ErrPublicClientSecret) {
+		t.Fatalf("expected ErrPublicClientSecret, got %v", err)
+	}
+}
+
+func TestClientAuthenticationFromRequest(t *testing.T) {
+	body := url.Values{
+		"client_id":     {"airbrew_post"},
+		"client_secret": {"secret"},
+	}.Encode()
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	auth, err := ClientAuthenticationFromRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth.ClientID != "airbrew_post" || auth.ClientSecret != "secret" || auth.Method != TokenEndpointAuthPost {
+		t.Fatalf("unexpected auth: %#v", auth)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader("client_id=airbrew_public"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("airbrew_basic", "secret")
+	_, err = ClientAuthenticationFromRequest(req)
+	if !errors.Is(err, ErrInvalidClient) {
+		t.Fatalf("expected ErrInvalidClient for duplicate auth, got %v", err)
 	}
 }
 

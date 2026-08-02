@@ -42,6 +42,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/vault/keys/rotate", h.rotateKeys)
 
 	mux.HandleFunc("GET /api/vault/sync", h.sync)
+	mux.HandleFunc("GET /api/vault/export", h.exportVault)
+	mux.HandleFunc("POST /api/vault/import", h.importVault)
 
 	mux.HandleFunc("POST /api/vault/folders", h.createFolder)
 	mux.HandleFunc("PUT /api/vault/folders/{id}", h.updateFolder)
@@ -51,6 +53,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/vault/items/{id}", h.getItem)
 	mux.HandleFunc("PUT /api/vault/items/{id}", h.updateItem)
 	mux.HandleFunc("DELETE /api/vault/items/{id}", h.deleteItem)
+	mux.HandleFunc("GET /api/vault/items/{id}/revisions", h.listRevisions)
+	mux.HandleFunc("POST /api/vault/items/{id}/revisions/{rid}/restore", h.restoreRevision)
 
 	mux.HandleFunc("GET /api/vault/items/{id}/attachments", h.listAttachments)
 	mux.HandleFunc("POST /api/vault/items/{id}/attachments", h.uploadAttachment)
@@ -409,7 +413,11 @@ type syncResp struct {
 	Cursor  int64        `json:"cursor"`
 	Folders []folderResp `json:"folders"`
 	Items   []itemResp   `json:"items"`
+	HasMore bool         `json:"has_more"`
 }
+
+const defaultSyncLimit = 500
+const maxSyncLimit = 2000
 
 func (h *Handler) sync(w http.ResponseWriter, r *http.Request) {
 	sess, ok := requireSession(w, r)
@@ -417,12 +425,19 @@ func (h *Handler) sync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
-	res, err := h.svc.Sync(r.Context(), sess.UserID, since)
+	limit, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
+	if limit <= 0 {
+		limit = defaultSyncLimit
+	}
+	if limit > maxSyncLimit {
+		limit = maxSyncLimit
+	}
+	res, err := h.svc.Sync(r.Context(), sess.UserID, since, limit)
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	out := syncResp{Cursor: res.Cursor, Folders: []folderResp{}, Items: []itemResp{}}
+	out := syncResp{Cursor: res.Cursor, HasMore: res.HasMore, Folders: []folderResp{}, Items: []itemResp{}}
 	for _, f := range res.Folders {
 		out.Folders = append(out.Folders, toFolderResp(f))
 	}
@@ -430,6 +445,132 @@ func (h *Handler) sync(w http.ResponseWriter, r *http.Request) {
 		out.Items = append(out.Items, toItemResp(it))
 	}
 	response.JSON(w, http.StatusOK, out)
+}
+
+// --- history ----------------------------------------------------------------
+
+type itemRevisionResp struct {
+	ID         string `json:"id"`
+	NameCipher string `json:"name_cipher"`
+	NameNonce  string `json:"name_nonce"`
+	DataCipher string `json:"data_cipher"`
+	DataNonce  string `json:"data_nonce"`
+	Revision   int64  `json:"revision"`
+	CreatedAt  string `json:"created_at"`
+}
+
+func (h *Handler) listRevisions(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	itemID := r.PathValue("id")
+	revs, err := h.svc.ListItemRevisions(r.Context(), sess.UserID, itemID)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	out := make([]itemRevisionResp, 0, len(revs))
+	for _, rv := range revs {
+		out = append(out, itemRevisionResp{
+			ID: rv.ID, NameCipher: rv.NameCipher, NameNonce: rv.NameNonce,
+			DataCipher: rv.DataCipher, DataNonce: rv.DataNonce,
+			Revision: rv.Revision, CreatedAt: rv.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	response.JSON(w, http.StatusOK, map[string]any{"revisions": out})
+}
+
+func (h *Handler) restoreRevision(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	itemID := r.PathValue("id")
+	revID := r.PathValue("rid")
+	ifRev, _ := strconv.ParseInt(r.URL.Query().Get("if_revision"), 10, 64)
+	it, err := h.svc.RestoreItemRevision(r.Context(), sess.UserID, itemID, revID, ifRev)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	h.auditVault(r, "vault.item_restored", it.ID, map[string]any{"revision_id": revID})
+	response.JSON(w, http.StatusOK, toItemResp(it))
+}
+
+// --- export / import --------------------------------------------------------
+
+type exportResp struct {
+	Envelope envelopeResp `json:"envelope"`
+	Folders  []folderResp `json:"folders"`
+	Items    []itemResp   `json:"items"`
+}
+
+func (h *Handler) exportVault(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	env, folders, items, err := h.svc.ExportBundle(r.Context(), sess.UserID)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	out := exportResp{Envelope: toEnvelopeResp(env), Folders: []folderResp{}, Items: []itemResp{}}
+	for _, f := range folders {
+		out.Folders = append(out.Folders, toFolderResp(f))
+	}
+	for _, it := range items {
+		out.Items = append(out.Items, toItemResp(it))
+	}
+	h.auditVault(r, "vault.export", sess.UserID, nil)
+	response.JSON(w, http.StatusOK, out)
+}
+
+type importReq struct {
+	Folders []folderReq `json:"folders"`
+	Items   []itemReq   `json:"items"`
+}
+
+func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	var req importReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	folders := make([]vault.Folder, 0, len(req.Folders))
+	for _, f := range req.Folders {
+		folders = append(folders, vault.Folder{
+			NameCipher: f.NameCipher, NameNonce: f.NameNonce,
+		})
+	}
+	items := make([]vault.Item, 0, len(req.Items))
+	for _, it := range req.Items {
+		if !it.Type.Valid() {
+			response.Error(w, http.StatusBadRequest, "invalid_request", "invalid item type in import bundle")
+			return
+		}
+		// Tombstones round-trip: a deleted_at in the request marks the row as
+		// already-deleted so a re-import faithfully reproduces the vault.
+		items = append(items, vault.Item{
+			Type: it.Type, FolderID: it.FolderID,
+			NameCipher: it.NameCipher, NameNonce: it.NameNonce,
+			DataCipher: it.DataCipher, DataNonce: it.DataNonce,
+			NotesCipher: it.NotesCipher, NotesNonce: it.NotesNonce,
+			Favorite: it.Favorite, Reprompt: it.Reprompt,
+		})
+	}
+	fc, ic, err := h.svc.ImportBundle(r.Context(), sess.UserID, folders, items)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	h.auditVault(r, "vault.import", sess.UserID, map[string]any{"count": fc + ic})
+	response.JSON(w, http.StatusCreated, map[string]int64{"folders": fc, "items": ic})
 }
 
 // --- helpers ---------------------------------------------------------------

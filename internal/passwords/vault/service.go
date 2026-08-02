@@ -112,12 +112,34 @@ func (s *Service) DeleteItem(ctx context.Context, userID, id string, ifRevision 
 	return s.repo.SoftDeleteItem(ctx, userID, id, ifRevision)
 }
 
-// Sync returns delta (or full, when since=0) changes since the cursor.
-func (s *Service) Sync(ctx context.Context, userID string, since int64) (SyncResult, error) {
+// Sync returns delta (or full, when since=0) changes since the cursor. When
+// limit > 0, at most that many folders and items are returned per call and
+// HasMore signals the client to continue from the returned Cursor.
+func (s *Service) Sync(ctx context.Context, userID string, since, limit int64) (SyncResult, error) {
 	if since < 0 {
 		since = 0
 	}
-	return s.repo.Sync(ctx, userID, since)
+	if limit < 0 {
+		limit = 0
+	}
+	return s.repo.Sync(ctx, userID, since, limit)
+}
+
+// ListItemRevisions returns the archived history of an item, newest first.
+func (s *Service) ListItemRevisions(ctx context.Context, userID, itemID string) ([]ItemRevision, error) {
+	return s.repo.ListItemRevisions(ctx, userID, itemID)
+}
+
+// RestoreItemRevision re-stamps an archived snapshot as the current item. The
+// server already holds the snapshot's ciphertext, so no re-encryption is
+// needed: the current row is archived and then overwritten with the snapshot's
+// name/data, guarded by ifRevision. The item's notes/folder/type/favorite/
+// reprompt are left as-is (the history snapshot only captures name+data).
+func (s *Service) RestoreItemRevision(ctx context.Context, userID, itemID, revID string, ifRevision int64) (Item, error) {
+	if ifRevision <= 0 {
+		return Item{}, fmt.Errorf("%w: if_revision required", ErrInvalidInput)
+	}
+	return s.repo.RestoreItemRevision(ctx, userID, itemID, revID, ifRevision)
 }
 
 func validateEnvelope(env *KeyEnvelope) error {
@@ -210,4 +232,25 @@ func (s *Service) GetAttachment(ctx context.Context, userID, itemID, attachID st
 // deleting the underlying blob afterwards.
 func (s *Service) DeleteAttachment(ctx context.Context, userID, itemID, attachID string) error {
 	return s.repo.DeleteAttachment(ctx, userID, itemID, attachID)
+}
+
+// ExportBundle returns the full encrypted vault (folders + items, including
+// tombstones) plus the key envelope, so the client can download a
+// self-contained ciphertext backup. The server cannot decrypt any of it.
+func (s *Service) ExportBundle(ctx context.Context, userID string) (KeyEnvelope, []Folder, []Item, error) {
+	env, err := s.repo.GetEnvelope(ctx, userID)
+	if err != nil {
+		return KeyEnvelope{}, nil, nil, err
+	}
+	res, err := s.repo.Sync(ctx, userID, 0, 0)
+	if err != nil {
+		return KeyEnvelope{}, nil, nil, err
+	}
+	return env, res.Folders, res.Items, nil
+}
+
+// ImportBundle re-inserts the given ciphertext folders and items with fresh IDs
+// and bumped revisions, returning the count of each.
+func (s *Service) ImportBundle(ctx context.Context, userID string, folders []Folder, items []Item) (int64, int64, error) {
+	return s.repo.ImportBundle(ctx, userID, folders, items)
 }

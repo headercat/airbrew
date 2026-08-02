@@ -436,23 +436,36 @@ func (r *Repository) SoftDeleteItem(ctx context.Context, userID, id string, ifRe
 
 // SyncResult is the payload returned to the client for a delta sync.
 type SyncResult struct {
-	Cursor  int64
-	Folders []Folder
-	Items   []Item
+	Cursor   int64
+	Folders  []Folder
+	Items    []Item
+	HasMore  bool
 }
 
-// Sync returns every folder and item whose revision is greater than since,
-// including soft-deleted tombstones. since=0 yields the full vault — the path
-// a new device takes on first unlock.
-func (r *Repository) Sync(ctx context.Context, userID string, since int64) (SyncResult, error) {
+// Sync returns the folders and items changed since the cursor, ordered by
+// revision. When limit > 0, at most limit folders and limit items are returned
+// per call; HasMore is true if either side hit the cap, in which case the
+// client should continue with since = the highest revision returned. A cold
+// sync (since=0) yields the entire vault, paginated.
+func (r *Repository) Sync(ctx context.Context, userID string, since, limit int64) (SyncResult, error) {
 	cursor, err := r.currentRev(ctx, userID)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("vault: read cursor: %w", err)
 	}
 	res := SyncResult{Cursor: cursor}
 
-	rows, err := r.db.QueryContext(ctx, folderSelect+`
-		WHERE user_id = ? AND revision > ? ORDER BY revision ASC`, userID, since)
+	folderQuery := folderSelect + `
+		WHERE user_id = ? AND revision > ? ORDER BY revision ASC`
+	itemQuery := itemSelect + `
+		WHERE user_id = ? AND revision > ? ORDER BY revision ASC`
+	args := []any{userID, since}
+	if limit > 0 {
+		folderQuery += ` LIMIT ?`
+		itemQuery += ` LIMIT ?`
+		args = []any{userID, since, limit}
+	}
+
+	rows, err := r.db.QueryContext(ctx, folderQuery, args...)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("vault: sync folders: %w", err)
 	}
@@ -468,8 +481,11 @@ func (r *Repository) Sync(ctx context.Context, userID string, since int64) (Sync
 		return SyncResult{}, err
 	}
 
-	rows, err = r.db.QueryContext(ctx, itemSelect+`
-		WHERE user_id = ? AND revision > ? ORDER BY revision ASC`, userID, since)
+	itemArgs := []any{userID, since}
+	if limit > 0 {
+		itemArgs = []any{userID, since, limit}
+	}
+	rows, err = r.db.QueryContext(ctx, itemQuery, itemArgs...)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("vault: sync items: %w", err)
 	}
@@ -484,7 +500,193 @@ func (r *Repository) Sync(ctx context.Context, userID string, since int64) (Sync
 	if err := rows.Close(); err != nil {
 		return SyncResult{}, err
 	}
+	if limit > 0 && (int64(len(res.Folders)) >= limit || int64(len(res.Items)) >= limit) {
+		res.HasMore = true
+		// The continue cursor is the highest revision we returned; the client
+		// resumes from there on the next call.
+		var maxRev int64
+		for _, f := range res.Folders {
+			if f.Revision > maxRev {
+				maxRev = f.Revision
+			}
+		}
+		for _, it := range res.Items {
+			if it.Revision > maxRev {
+				maxRev = it.Revision
+			}
+		}
+		res.Cursor = maxRev
+	}
 	return res, rows.Err()
+}
+
+// ListItemRevisions returns the archived history snapshots of an item, newest
+// first, scoped to the owning user via a join.
+func (r *Repository) ListItemRevisions(ctx context.Context, userID, itemID string) ([]ItemRevision, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT r.id, r.item_id, r.name_cipher, r.name_nonce,
+		       r.data_cipher, r.data_nonce, r.revision, r.created_at
+		FROM vault_item_revisions r
+		JOIN vault_items i ON i.id = r.item_id
+		WHERE i.user_id = ? AND r.item_id = ?
+		ORDER BY r.created_at DESC`, userID, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("vault: list item revisions: %w", err)
+	}
+	defer rows.Close()
+	var out []ItemRevision
+	for rows.Next() {
+		var rev ItemRevision
+		if err := rows.Scan(&rev.ID, &rev.ItemID, &rev.NameCipher, &rev.NameNonce,
+			&rev.DataCipher, &rev.DataNonce, &rev.Revision, &rev.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, rev)
+	}
+	return out, rows.Err()
+}
+
+// GetItemRevision returns one archived snapshot, ownership-scoped.
+func (r *Repository) GetItemRevision(ctx context.Context, userID, itemID, revID string) (ItemRevision, error) {
+	var rev ItemRevision
+	err := r.db.QueryRowContext(ctx, `
+		SELECT r.id, r.item_id, r.name_cipher, r.name_nonce,
+		       r.data_cipher, r.data_nonce, r.revision, r.created_at
+		FROM vault_item_revisions r
+		JOIN vault_items i ON i.id = r.item_id
+		WHERE i.user_id = ? AND r.item_id = ? AND r.id = ?`, userID, itemID, revID,
+	).Scan(&rev.ID, &rev.ItemID, &rev.NameCipher, &rev.NameNonce,
+		&rev.DataCipher, &rev.DataNonce, &rev.Revision, &rev.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ItemRevision{}, ErrNotFound
+	}
+	return rev, err
+}
+
+// RestoreItemRevision archives the current row, then overwrites it with the
+// name/data ciphertext from an archived snapshot. Ownership is enforced via the
+// item lock; ifRevision guards against clobbering a concurrent edit. The
+// snapshot must belong to the item.
+func (r *Repository) RestoreItemRevision(ctx context.Context, userID, itemID, revID string, ifRevision int64) (Item, error) {
+	var out Item
+	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
+		cur, err := lockItemForWrite(ctx, tx, userID, itemID)
+		if err != nil {
+			return err
+		}
+		if cur.Revision != ifRevision {
+			c := cur
+			return &ConflictError{CurrentRow: &c}
+		}
+		var snap ItemRevision
+		if err := tx.QueryRowContext(ctx, `
+			SELECT r.id, r.name_cipher, r.name_nonce, r.data_cipher, r.data_nonce
+			FROM vault_item_revisions r
+			JOIN vault_items i ON i.id = r.item_id
+			WHERE i.user_id = ? AND r.item_id = ? AND r.id = ?`,
+			userID, itemID, revID,
+		).Scan(&snap.ID, &snap.NameCipher, &snap.NameNonce, &snap.DataCipher, &snap.DataNonce); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO vault_item_revisions
+			  (id, item_id, name_cipher, name_nonce, data_cipher, data_nonce, revision, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			id.New(), cur.ID, cur.NameCipher, cur.NameNonce, cur.DataCipher, cur.DataNonce, cur.Revision, cur.UpdatedAt); err != nil {
+			return fmt.Errorf("vault: archive before restore: %w", err)
+		}
+		rev, err := bumpRev(ctx, tx, userID)
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC().Truncate(time.Second)
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE vault_items SET
+			  name_cipher = ?, name_nonce = ?, data_cipher = ?, data_nonce = ?,
+			  revision = ?, updated_at = ?
+			WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+			snap.NameCipher, snap.NameNonce, snap.DataCipher, snap.DataNonce,
+			rev, now, itemID, userID); err != nil {
+			return fmt.Errorf("vault: restore item: %w", err)
+		}
+		out = cur
+		out.NameCipher = snap.NameCipher
+		out.NameNonce = snap.NameNonce
+		out.DataCipher = snap.DataCipher
+		out.DataNonce = snap.DataNonce
+		out.Revision = rev
+		out.UpdatedAt = now
+		return nil
+	})
+	if err != nil {
+		return Item{}, err
+	}
+	return out, nil
+}
+
+// --- import -----------------------------------------------------------------
+
+// ImportBundle re-inserts folders and items with fresh IDs and bumped
+// revisions, returning the count of each. The input is ciphertext the client
+// prepared (possibly re-encrypted for this vault). Tombstones are preserved as
+// tombstones so a restore round-trip is faithful.
+func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []Folder, items []Item) (folderCount, itemCount int64, err error) {
+	err = inTx(ctx, r.db, func(tx *sql.Tx) error {
+		now := time.Now().UTC().Truncate(time.Second)
+		for _, f := range folders {
+			rev, err := bumpRev(ctx, tx, userID)
+			if err != nil {
+				return err
+			}
+			f.ID = id.New()
+			f.UserID = userID
+			f.Revision = rev
+			f.CreatedAt = now
+			f.UpdatedAt = now
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO vault_folders
+				  (id, user_id, name_cipher, name_nonce, revision, created_at, updated_at, deleted_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				f.ID, f.UserID, f.NameCipher, f.NameNonce, rev, now, now,
+				nullableTime(f.DeletedAt)); err != nil {
+				return fmt.Errorf("vault: import folder: %w", err)
+			}
+			folderCount++
+		}
+		for _, it := range items {
+			if !it.Type.Valid() {
+				return fmt.Errorf("%w: invalid item type in import bundle", ErrInvalidInput)
+			}
+			rev, err := bumpRev(ctx, tx, userID)
+			if err != nil {
+				return err
+			}
+			it.ID = id.New()
+			it.UserID = userID
+			it.Revision = rev
+			it.CreatedAt = now
+			it.UpdatedAt = now
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO vault_items
+				  (id, user_id, type, folder_id, name_cipher, name_nonce,
+				   data_cipher, data_nonce, notes_cipher, notes_nonce,
+				   favorite, reprompt, revision, created_at, updated_at, deleted_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				it.ID, it.UserID, string(it.Type), nullable(it.FolderID),
+				it.NameCipher, it.NameNonce, it.DataCipher, it.DataNonce,
+				nullable(it.NotesCipher), nullable(it.NotesNonce),
+				boolToInt(it.Favorite), boolToInt(it.Reprompt), rev, now, now,
+				nullableTime(it.DeletedAt)); err != nil {
+				return fmt.Errorf("vault: import item: %w", err)
+			}
+			itemCount++
+		}
+		return nil
+	})
+	return folderCount, itemCount, err
 }
 
 // --- attachments -----------------------------------------------------------
@@ -739,6 +941,14 @@ func nullable(s string) any {
 		return nil
 	}
 	return s
+}
+
+// nullableTime returns the SQL representation of a *time.Time (NULL when nil).
+func nullableTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.UTC()
 }
 
 func boolToInt(b bool) int {

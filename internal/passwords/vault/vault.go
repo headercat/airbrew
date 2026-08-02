@@ -137,3 +137,17 @@ type Attachment struct {
 	NameNonce     string
 	CreatedAt     time.Time
 }
+
+// ItemRevision is an archived historical snapshot of an item's encrypted
+// fields, captured each time the item is updated. The client decrypts it with
+// the vault key to show "previous versions" and to restore.
+type ItemRevision struct {
+	ID         string
+	ItemID     string
+	NameCipher string
+	NameNonce  string
+	DataCipher string
+	DataNonce  string
+	Revision   int64
+	CreatedAt  time.Time
+}

@@ -55,41 +55,20 @@ export default function AdminAudit() {
     void refresh();
   }, [refresh]);
 
-  async function exportCSV() {
-    const entries = await fetchAllAuditEntries({
+  function exportCSV() {
+    const params = auditParams({
       actor,
       eventType,
       from,
+      limit: auditPageSize,
+      offset: 0,
       targetID,
       targetType,
       to,
     });
-    downloadCSV("airbrew-audit.csv", [
-      [
-        "created_at",
-        "event_type",
-        "actor_user_id",
-        "actor_client_id",
-        "actor_email",
-        "target_type",
-        "target_id",
-        "ip_address",
-        "user_agent",
-        "metadata",
-      ],
-      ...entries.map((e) => [
-        e.created_at,
-        e.event_type,
-        e.actor_user_id,
-        e.actor_client_id,
-        e.actor_email,
-        e.target_type,
-        e.target_id,
-        e.ip_address,
-        e.user_agent,
-        e.metadata,
-      ]),
-    ]);
+    params.delete("limit");
+    params.delete("offset");
+    window.location.assign(`/api/admin/audit/export?${params.toString()}`);
   }
 
   const pageStart = total === 0 ? 0 : offset + 1;
@@ -297,54 +276,10 @@ function auditParams(input: AuditParamInput) {
   return params;
 }
 
-async function fetchAllAuditEntries(input: {
-  actor: string;
-  eventType: string;
-  from: string;
-  targetID: string;
-  targetType: string;
-  to: string;
-}) {
-  const out: AuditEntry[] = [];
-  let offset = 0;
-  let total = Number.POSITIVE_INFINITY;
-  while (offset < total) {
-    const params = auditParams({
-      ...input,
-      limit: 200,
-      offset,
-    });
-    const res = await api.get<{ entries: AuditEntry[]; total: number }>(
-      `/api/admin/audit?${params.toString()}`,
-    );
-    out.push(...res.entries);
-    total = res.total;
-    if (res.entries.length === 0) break;
-    offset += res.entries.length;
-  }
-  return out;
-}
-
 function formatMetadata(raw: string) {
   try {
     return JSON.stringify(JSON.parse(raw || "{}"), null, 2);
   } catch {
     return raw || "{}";
   }
-}
-
-function downloadCSV(filename: string, rows: string[][]) {
-  const csv = rows
-    .map((row) =>
-      row
-        .map((cell) => `"${String(cell ?? "").replaceAll(`"`, `""`)}"`)
-        .join(","),
-    )
-    .join("\n");
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }

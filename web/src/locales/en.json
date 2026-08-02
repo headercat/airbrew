@@ -448,6 +448,7 @@
       "backupOK": "Backup snapshot passed integrity checks.",
       "backupFailed": "Backup snapshot failed integrity checks.",
       "backupChecks": "integrity={{integrity}}, quick={{quick}}",
+      "backupSchema": "schema={{schema}}",
       "backupMigration": "migration={{version}}",
       "downloadBackup": "Download backup",
       "export": "Export",

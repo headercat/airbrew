@@ -165,33 +165,20 @@ export default function AdminSecurity() {
     }
   }
 
-  async function exportLoginHistoryCSV() {
-    const entries = await fetchAllLoginAttempts({
+  function exportLoginHistoryCSV() {
+    const params = loginHistoryParams({
       email: loginEmail,
       from: loginFrom,
+      limit: loginPageSize,
+      offset: 0,
       result: loginResult,
       to: loginTo,
     });
-    downloadCSV("airbrew-login-history.csv", [
-      [
-        "created_at",
-        "success",
-        "email",
-        "user_id",
-        "ip_address",
-        "user_agent",
-        "failure",
-      ],
-      ...entries.map((a) => [
-        a.created_at,
-        String(a.success),
-        a.email,
-        a.user_id,
-        a.ip_address,
-        a.user_agent,
-        a.failure ?? "",
-      ]),
-    ]);
+    params.delete("limit");
+    params.delete("offset");
+    window.location.assign(
+      `/api/admin/security/login-history/export?${params.toString()}`,
+    );
   }
 
   const loginStart = loginTotal === 0 ? 0 : loginOffset + 1;
@@ -624,48 +611,6 @@ function loginHistoryParams(input: LoginHistoryParamInput) {
   if (input.from) params.set("from", new Date(input.from).toISOString());
   if (input.to) params.set("to", new Date(input.to).toISOString());
   return params;
-}
-
-async function fetchAllLoginAttempts(input: {
-  email: string;
-  from: string;
-  result: string;
-  to: string;
-}) {
-  const out: LoginAttempt[] = [];
-  let offset = 0;
-  let total = Number.POSITIVE_INFINITY;
-  while (offset < total) {
-    const params = loginHistoryParams({
-      ...input,
-      limit: 200,
-      offset,
-    });
-    const res = await api.get<{ entries: LoginAttempt[]; total: number }>(
-      `/api/admin/security/login-history?${params.toString()}`,
-    );
-    out.push(...res.entries);
-    total = res.total;
-    if (res.entries.length === 0) break;
-    offset += res.entries.length;
-  }
-  return out;
-}
-
-function downloadCSV(filename: string, rows: string[][]) {
-  const csv = rows
-    .map((row) =>
-      row
-        .map((cell) => `"${String(cell ?? "").replaceAll(`"`, `""`)}"`)
-        .join(","),
-    )
-    .join("\n");
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 function PolicySwitch({

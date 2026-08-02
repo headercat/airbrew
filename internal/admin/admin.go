@@ -77,6 +77,7 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("DELETE /api/admin/users/{id}/sessions", m.handler.revokeUserSessions)
 	admin.HandleFunc("GET /api/admin/users/{id}/activity", m.handler.userActivity)
 	admin.HandleFunc("GET /api/admin/audit", m.handler.listAudit)
+	admin.HandleFunc("GET /api/admin/audit/export", m.handler.exportAudit)
 	admin.HandleFunc("GET /api/admin/oauth/clients", m.handler.listOAuthClients)
 	admin.HandleFunc("POST /api/admin/oauth/clients", m.handler.createOAuthClient)
 	admin.HandleFunc("GET /api/admin/oauth/clients/{id}", m.handler.getOAuthClient)
@@ -96,6 +97,7 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("GET /api/admin/security/ip-allowlist", m.handler.getIPAllowlist)
 	admin.HandleFunc("PUT /api/admin/security/ip-allowlist", m.handler.putIPAllowlist)
 	admin.HandleFunc("GET /api/admin/security/login-history", m.handler.loginHistory)
+	admin.HandleFunc("GET /api/admin/security/login-history/export", m.handler.exportLoginHistory)
 
 	mux.Handle("/api/admin/", RequireAdmin(m.userRepo)(admin))
 }

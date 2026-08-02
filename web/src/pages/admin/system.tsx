@@ -189,6 +189,11 @@ export default function AdminSystem() {
                   })}
                 </div>
                 <div>
+                  {t("admin.system.backupSchema", {
+                    schema: backupCheck.schema_check || "—",
+                  })}
+                </div>
+                <div>
                   {t("admin.system.backupMigration", {
                     version: backupCheck.migration_version || "—",
                   })}

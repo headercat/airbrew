@@ -448,6 +448,7 @@
       "backupOK": "백업 스냅샷이 무결성 검사를 통과했습니다.",
       "backupFailed": "백업 스냅샷이 무결성 검사를 통과하지 못했습니다.",
       "backupChecks": "integrity={{integrity}}, quick={{quick}}",
+      "backupSchema": "schema={{schema}}",
       "backupMigration": "migration={{version}}",
       "downloadBackup": "백업 다운로드",
       "export": "내보내기",

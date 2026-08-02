@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -542,6 +543,36 @@ func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
 // ---- Audit Log ----
 
 func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
+	f := auditFilterFromRequest(r)
+	entries, total, err := h.audit.List(r.Context(), f)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]any{
+		"entries": entries, "total": total,
+		"limit": f.Limit, "offset": f.Offset,
+	})
+}
+
+func (h *Handler) exportAudit(w http.ResponseWriter, r *http.Request) {
+	f := auditFilterFromRequest(r)
+	if f.To.IsZero() {
+		f.To = time.Now().UTC()
+	}
+	total, err := h.writeAuditCSV(w, r, f)
+	if err != nil {
+		return
+	}
+	h.audit.Log(context.Background(), audit.Entry{
+		EventType: "audit.exported", ActorUserID: callerUserID(r),
+		TargetType: "audit_log", TargetID: "csv",
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"rows": total, "to": f.To.Format(time.RFC3339)},
+	})
+}
+
+func auditFilterFromRequest(r *http.Request) audit.ListFilter {
 	q := r.URL.Query()
 	f := audit.ListFilter{
 		EventType:  q.Get("event_type"),
@@ -561,15 +592,51 @@ func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	f.Limit, _ = strconv.Atoi(q.Get("limit"))
 	f.Offset, _ = strconv.Atoi(q.Get("offset"))
-	entries, total, err := h.audit.List(r.Context(), f)
-	if err != nil {
-		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
-		return
+	return f
+}
+
+func (h *Handler) writeAuditCSV(w http.ResponseWriter, r *http.Request, f audit.ListFilter) (int, error) {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="airbrew-audit.csv"`)
+	cw := csv.NewWriter(w)
+	if err := cw.Write([]string{
+		"created_at", "event_type", "actor_user_id", "actor_client_id", "actor_email",
+		"target_type", "target_id", "ip_address", "user_agent", "metadata",
+	}); err != nil {
+		return 0, err
 	}
-	response.JSON(w, http.StatusOK, map[string]any{
-		"entries": entries, "total": total,
-		"limit": f.Limit, "offset": f.Offset,
-	})
+	exported := 0
+	for offset := 0; ; {
+		f.Limit = 200
+		f.Offset = offset
+		entries, _, err := h.audit.List(r.Context(), f)
+		if err != nil {
+			return exported, err
+		}
+		for _, e := range entries {
+			if err := cw.Write([]string{
+				e.CreatedAt.UTC().Format(time.RFC3339),
+				e.EventType,
+				e.ActorUserID,
+				e.ActorClientID,
+				e.ActorEmail,
+				e.TargetType,
+				e.TargetID,
+				e.IPAddress,
+				e.UserAgent,
+				e.Metadata,
+			}); err != nil {
+				return exported, err
+			}
+			exported++
+		}
+		if len(entries) == 0 {
+			break
+		}
+		offset += len(entries)
+	}
+	cw.Flush()
+	return exported, cw.Error()
 }
 
 // ---- OAuth Clients ----
@@ -1244,6 +1311,7 @@ type backupVerifyDTO struct {
 	OK             bool   `json:"ok"`
 	IntegrityCheck string `json:"integrity_check"`
 	QuickCheck     string `json:"quick_check"`
+	SchemaCheck    string `json:"schema_check"`
 	SizeBytes      int64  `json:"size_bytes"`
 	SHA256         string `json:"sha256"`
 	GeneratedAt    string `json:"generated_at"`
@@ -1283,21 +1351,24 @@ func (h *Handler) verifyDatabaseBackup(w http.ResponseWriter, r *http.Request) {
 	defer backupDB.Close()
 	integrity := sqlitePragmaString(backupDB, r.Context(), "PRAGMA integrity_check")
 	quick := sqlitePragmaString(backupDB, r.Context(), "PRAGMA quick_check")
-	ok := integrity == "ok" && quick == "ok" && size > 0
+	schema := airbrewSchemaCheck(backupDB, r.Context())
+	migration := sqliteQueryString(backupDB, r.Context(), "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1")
+	ok := backupChecksOK(integrity, quick, schema, migration, size)
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "system.backup_verified", ActorUserID: callerUserID(r),
 		TargetType: "system", TargetID: filepath.Base(dbPath),
 		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
-		Metadata: map[string]any{"ok": ok, "size_bytes": size, "sha256": hash},
+		Metadata: map[string]any{"ok": ok, "size_bytes": size, "sha256": hash, "schema_check": schema},
 	})
 	response.JSON(w, http.StatusOK, backupVerifyDTO{
 		OK:             ok,
 		IntegrityCheck: integrity,
 		QuickCheck:     quick,
+		SchemaCheck:    schema,
 		SizeBytes:      size,
 		SHA256:         hash,
 		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
-		Migration:      sqliteQueryString(backupDB, r.Context(), "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"),
+		Migration:      migration,
 	})
 }
 
@@ -1380,15 +1451,41 @@ func verifySQLiteFile(ctx context.Context, path string) (backupVerifyDTO, error)
 	defer db.Close()
 	integrity := sqlitePragmaString(db, ctx, "PRAGMA integrity_check")
 	quick := sqlitePragmaString(db, ctx, "PRAGMA quick_check")
+	schema := airbrewSchemaCheck(db, ctx)
+	migration := sqliteQueryString(db, ctx, "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1")
 	return backupVerifyDTO{
-		OK:             integrity == "ok" && quick == "ok" && size > 0,
+		OK:             backupChecksOK(integrity, quick, schema, migration, size),
 		IntegrityCheck: integrity,
 		QuickCheck:     quick,
+		SchemaCheck:    schema,
 		SizeBytes:      size,
 		SHA256:         hash,
 		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
-		Migration:      sqliteQueryString(db, ctx, "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"),
+		Migration:      migration,
 	}, nil
+}
+
+func backupChecksOK(integrity, quick, schema, migration string, size int64) bool {
+	return integrity == "ok" && quick == "ok" && schema == "ok" && strings.TrimSpace(migration) != "" && size > 0
+}
+
+func airbrewSchemaCheck(db *sql.DB, ctx context.Context) string {
+	required := []string{"schema_migrations", "users", "sessions", "audit_logs", "module_states", "server_settings"}
+	missing := make([]string, 0)
+	for _, table := range required {
+		var n int
+		err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n)
+		if err != nil {
+			return err.Error()
+		}
+		if n == 0 {
+			missing = append(missing, table)
+		}
+	}
+	if len(missing) > 0 {
+		return "missing tables: " + strings.Join(missing, ", ")
+	}
+	return "ok"
 }
 
 func (h *Handler) databasePath(ctx context.Context) (string, error) {
@@ -1562,6 +1659,35 @@ func (h *Handler) putIPAllowlist(w http.ResponseWriter, r *http.Request) {
 // ---- Security: login history ----
 
 func (h *Handler) loginHistory(w http.ResponseWriter, r *http.Request) {
+	f := loginHistoryFilterFromRequest(r)
+	rows, total, err := h.security.ListLoginAttempts(r.Context(), f)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]any{
+		"entries": rows, "total": total, "limit": f.Limit, "offset": f.Offset,
+	})
+}
+
+func (h *Handler) exportLoginHistory(w http.ResponseWriter, r *http.Request) {
+	f := loginHistoryFilterFromRequest(r)
+	if f.To.IsZero() {
+		f.To = time.Now().UTC()
+	}
+	total, err := h.writeLoginHistoryCSV(w, r, f)
+	if err != nil {
+		return
+	}
+	h.audit.Log(context.Background(), audit.Entry{
+		EventType: "security.login_history_exported", ActorUserID: callerUserID(r),
+		TargetType: "login_history", TargetID: "csv",
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"rows": total, "to": f.To.Format(time.RFC3339)},
+	})
+}
+
+func loginHistoryFilterFromRequest(r *http.Request) security.LoginHistoryFilter {
 	q := r.URL.Query()
 	f := security.LoginHistoryFilter{
 		Email:  q.Get("email"),
@@ -1580,12 +1706,43 @@ func (h *Handler) loginHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	f.Limit, _ = strconv.Atoi(q.Get("limit"))
 	f.Offset, _ = strconv.Atoi(q.Get("offset"))
-	rows, total, err := h.security.ListLoginAttempts(r.Context(), f)
-	if err != nil {
-		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
-		return
+	return f
+}
+
+func (h *Handler) writeLoginHistoryCSV(w http.ResponseWriter, r *http.Request, f security.LoginHistoryFilter) (int, error) {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="airbrew-login-history.csv"`)
+	cw := csv.NewWriter(w)
+	if err := cw.Write([]string{"created_at", "success", "email", "user_id", "ip_address", "user_agent", "failure"}); err != nil {
+		return 0, err
 	}
-	response.JSON(w, http.StatusOK, map[string]any{
-		"entries": rows, "total": total, "limit": f.Limit, "offset": f.Offset,
-	})
+	exported := 0
+	for offset := 0; ; {
+		f.Limit = 200
+		f.Offset = offset
+		entries, _, err := h.security.ListLoginAttempts(r.Context(), f)
+		if err != nil {
+			return exported, err
+		}
+		for _, e := range entries {
+			if err := cw.Write([]string{
+				e.CreatedAt.UTC().Format(time.RFC3339),
+				strconv.FormatBool(e.Success),
+				e.Email,
+				e.UserID,
+				e.IPAddress,
+				e.UserAgent,
+				e.Failure,
+			}); err != nil {
+				return exported, err
+			}
+			exported++
+		}
+		if len(entries) == 0 {
+			break
+		}
+		offset += len(entries)
+	}
+	cw.Flush()
+	return exported, cw.Error()
 }

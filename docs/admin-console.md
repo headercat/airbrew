@@ -39,7 +39,7 @@ Admin
 ├── OAuth Clients        ← (phase 2) OAuth 2.1 client registry
 ├── Audit Log            ← admin actions, auth events, module events
 ├── Branding             ← workspace name, logo, colors
-└── System               ← backup/export, env info, feature flags
+└── System               ← backup, restore dry-run, runtime diagnostics
 ```
 
 ---
@@ -63,27 +63,29 @@ Admin
 **Already implemented:** list, role toggle (user ↔ admin), status toggle
 (active ↔ suspended). Self-lockout guards in place.
 
-**Phase 1 additions:**
+**Implemented additions:**
 - Search by email/display name
+- Paginated list with total counts
 - Create user (admin-initiated, not self-register)
 - Reset password (admin generates temp password, printed once)
 - View user detail: profile fields, sessions, recent activity
-- Soft-delete with recovery window (30 days)
+- Soft-delete with restore support
 
-**Data model:** `users` already has `status='deleted'`; add `deleted_at`
-to distinguish soft-delete timestamp from hard purge. `password_credentials`
-already has the hash; add a `password_changed_at` column.
+**Data model:** `users` has `status='deleted'` and `deleted_at`.
+`password_credentials` tracks `password_changed_at` for expiry checks.
 
 ### Modules
 
 **Already implemented:** enable/disable toggle, status endpoint reflects
 state.
 
-**Phase 1 additions:**
+**Implemented additions:**
+- Module health check covers DB reachability, data-volume capacity, and
+  AI provider configuration.
+
+**Future additions:**
 - Per-module configuration form (schema-driven from a `ModuleConfig` interface
   each module can implement)
-- Module health check (not just enabled/disabled, but "can connect to
-  upstream SMTP?", "has API key?", etc.)
 
 **Data model:** `server_settings` key-value store. Config stored as
 `module.<key>.config` (JSON string).
@@ -105,8 +107,13 @@ state.
   - `oauth.client_created`, `oauth.token_issued`, `oauth.token_revoked`
   - `profile.updated`, `avatar.uploaded`
 
-**Data model:** `audit_logs` table already has the right columns. Add a
-`before` and `after` JSON column for diffing changes.
+**Implemented additions:**
+- Filter by event type, actor/email, target, date range, and pagination
+- CSV export through backend endpoints with audit logging
+- Metadata, IP address, and user agent display
+
+**Future additions:** optional `before` and `after` JSON columns for diffing
+changes.
 
 ---
 
@@ -211,9 +218,12 @@ CREATE TABLE group_members (
 **Google analogue:** Account → Company profile, custom logos, BIMI.
 
 **Airbrew scope:**
-- Workspace name (shown in sidebar, browser title, emails)
-- Logo upload (replaces Coffee icon)
+- Workspace name (shown in sidebar and browser title)
+- Logo URL with http/https/root-relative validation
 - Primary color (CSS variable override)
+
+**Future additions:**
+- Logo upload (replaces Coffee icon)
 - Email from-name/address (when mail module exists)
 - Custom CSS (advanced, optional)
 
@@ -228,8 +238,13 @@ CREATE TABLE group_members (
 **Google analogue:** not directly analogous (closest: Account → Profile).
 
 **Airbrew scope:**
-- Instance info: version, Go version, DB size, data dir path, uptime
+- Instance info: version, Go version, DB size, data dir path, uptime,
+  migration version, disk free/total capacity
 - Backup: download DB snapshot (SQLite `VACUUM INTO`)
+- Stored DB backup snapshots: create/list/download/delete, retaining newest 10
+- Restore dry-run: validate uploaded SQLite backup integrity and Airbrew schema
+
+**Future additions:**
 - Export: full workspace export (DB + files as tar.gz)
 - Feature flags: toggle experimental features
 - Env info: show current config (secrets masked)
@@ -269,9 +284,10 @@ DELETE /api/admin/groups/{id}/members/{userId}
 
 ### Security
 ```
-GET    /api/admin/security/sessions               all active sessions
-DELETE /api/admin/security/sessions/{id}          revoke session
+GET    /api/admin/sessions                        all active sessions
+DELETE /api/admin/sessions/{id}                   revoke session
 GET    /api/admin/security/login-history          recent attempts
+GET    /api/admin/security/login-history/export   CSV export
 GET    /api/admin/security/password-policy
 PUT    /api/admin/security/password-policy
 GET    /api/admin/security/ip-allowlist
@@ -282,6 +298,10 @@ PUT    /api/admin/security/ip-allowlist
 ```
 GET    /api/admin/modules                         list + enabled + config
 PATCH  /api/admin/modules/{key}                   toggle enabled
+```
+
+Future:
+```
 GET    /api/admin/modules/{key}/config            per-module config schema + values
 PUT    /api/admin/modules/{key}/config            update config
 GET    /api/admin/modules/{key}/health            deep health check
@@ -301,19 +321,34 @@ DELETE /api/admin/oauth/tokens/{id}               revoke specific token
 ### Audit Log
 ```
 GET    /api/admin/audit?event_type=&actor=&from=&to=&limit=&offset=
+GET    /api/admin/audit/export?event_type=&actor=&from=&to=
 ```
 
 ### Branding
 ```
 GET    /api/admin/branding
 PUT    /api/admin/branding
+```
+
+Future:
+```
 POST   /api/admin/branding/logo                   upload logo
 ```
 
 ### System
 ```
-GET    /api/admin/system/info                     version, paths, sizes
-POST   /api/admin/system/backup                   trigger DB snapshot
+GET    /api/admin/system                          version, paths, sizes
+GET    /api/admin/system/backup                   download ephemeral DB snapshot
+GET    /api/admin/system/backup/verify            verify generated backup snapshot
+POST   /api/admin/system/backup/restore-dry-run   validate uploaded backup
+GET    /api/admin/system/backups                  list retained DB snapshots
+POST   /api/admin/system/backups                  create retained DB snapshot
+GET    /api/admin/system/backups/{name}           download retained snapshot
+DELETE /api/admin/system/backups/{name}           delete retained snapshot
+```
+
+Future:
+```
 GET    /api/admin/system/feature-flags
 PUT    /api/admin/system/feature-flags
 ```
@@ -324,8 +359,7 @@ PUT    /api/admin/system/feature-flags
 
 | Migration | Adds                                              | Phase |
 | --------- | ------------------------------------------------- | ----- |
-| 0004      | `users.deleted_at`, `password_credentials.password_changed_at` | 1 |
-| 0005      | `login_attempts` table                            | 2     |
+| 0001      | core admin/auth tables including deleted users, password timestamps, login attempts | 1/2 |
 | 0006      | `groups`, `group_members`                         | 3     |
 
 No migration needed for branding/modules — those use `server_settings`.

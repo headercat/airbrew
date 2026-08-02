@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/headercat/airbrew/internal/auth/session"
+	"github.com/headercat/airbrew/internal/httpserver/requestip"
 	"github.com/headercat/airbrew/internal/workflow/run"
 )
 
@@ -61,11 +62,5 @@ func parseInt(s string) int {
 }
 
 func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		if i := strings.Index(f, ","); i > 0 {
-			return strings.TrimSpace(f[:i])
-		}
-		return strings.TrimSpace(f)
-	}
-	return r.RemoteAddr
+	return requestip.DirectClientIP(r)
 }

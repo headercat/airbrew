@@ -10,6 +10,7 @@ import (
 
 	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/auth/session"
+	"github.com/headercat/airbrew/internal/httpserver/requestip"
 	"github.com/headercat/airbrew/internal/httpserver/response"
 	"github.com/headercat/airbrew/internal/modules"
 )
@@ -297,18 +298,7 @@ func writeSSE(w http.ResponseWriter, event string, v any) {
 }
 
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := len(xff); idx > 0 {
-			for i, c := range xff {
-				if c == ',' {
-					idx = i
-					break
-				}
-			}
-			return xff[:idx]
-		}
-	}
-	return r.RemoteAddr
+	return requestip.DirectClientIP(r)
 }
 
 func boolStr(b bool) string {

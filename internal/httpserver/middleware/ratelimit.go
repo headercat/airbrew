@@ -11,18 +11,19 @@ package middleware
 
 import (
 	"net/http"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/headercat/airbrew/internal/httpserver/requestip"
 )
 
 // RateLimiter is a fixed-window per-key limiter. The zero value is not usable;
 // use NewRateLimiter.
 type RateLimiter struct {
-	mu      sync.Mutex
-	count   map[string]*bucket
-	limit   int
-	window  time.Duration
+	mu     sync.Mutex
+	count  map[string]*bucket
+	limit  int
+	window time.Duration
 }
 
 type bucket struct {
@@ -83,19 +84,7 @@ func RateLimit(limiter *RateLimiter, key func(*http.Request) string) func(http.H
 	}
 }
 
-// ClientIPKey extracts a stable client-IP bucket key from a request, preferring
-// the first address in X-Forwarded-For (set by trusted reverse proxies) and
-// falling back to the remote address without its port.
+// ClientIPKey extracts a stable direct client-IP bucket key from a request.
 func ClientIPKey(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		if i := strings.Index(f, ","); i > 0 {
-			return strings.TrimSpace(f[:i])
-		}
-		return strings.TrimSpace(f)
-	}
-	host := r.RemoteAddr
-	if i := strings.LastIndex(host, ":"); i > 0 {
-		host = host[:i]
-	}
-	return host
+	return requestip.DirectClientIP(r)
 }

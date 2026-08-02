@@ -12,6 +12,7 @@ import (
 
 	"github.com/headercat/airbrew/internal/auth/session"
 	"github.com/headercat/airbrew/internal/contacts/contact"
+	"github.com/headercat/airbrew/internal/httpserver/requestip"
 )
 
 const timeRFC3339 = "2006-01-02T15:04:05Z07:00"
@@ -76,11 +77,5 @@ func parseBool(s string) bool {
 }
 
 func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		if i := strings.Index(f, ","); i > 0 {
-			return strings.TrimSpace(f[:i])
-		}
-		return strings.TrimSpace(f)
-	}
-	return r.RemoteAddr
+	return requestip.DirectClientIP(r)
 }

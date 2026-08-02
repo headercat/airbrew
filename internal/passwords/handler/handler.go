@@ -22,6 +22,7 @@ import (
 	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/auth/session"
 	"github.com/headercat/airbrew/internal/blob"
+	"github.com/headercat/airbrew/internal/httpserver/requestip"
 	"github.com/headercat/airbrew/internal/httpserver/response"
 	"github.com/headercat/airbrew/internal/passwords/vault"
 )
@@ -840,13 +841,7 @@ func cleanupBlobs(ctx context.Context, store blob.Store, paths []string) {
 }
 
 func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		if i := strings.Index(f, ","); i > 0 {
-			return strings.TrimSpace(f[:i])
-		}
-		return strings.TrimSpace(f)
-	}
-	return r.RemoteAddr
+	return requestip.DirectClientIP(r)
 }
 
 // --- attachments -----------------------------------------------------------

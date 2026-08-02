@@ -360,14 +360,17 @@ func (s *Service) EmptyTrash(ctx context.Context, userID string) error {
 
 // --- shares ----------------------------------------------------------------
 
-// CreateShare creates a public share link for a node, optionally password
-// protected and/or expiring.
+// CreateShare creates a public share link for a file node, optionally password
+// protected and/or expiring. Folders cannot be shared (share open resolves a
+// single file).
 func (s *Service) CreateShare(ctx context.Context, in CreateShareInput) (*Share, error) {
 	n, err := s.repo.GetNode(ctx, in.UserID, in.NodeID)
 	if err != nil {
 		return nil, err
 	}
-	_ = n
+	if n.IsFolder() {
+		return nil, fmt.Errorf("%w: folders cannot be shared", ErrInvalidInput)
+	}
 	var pwHash string
 	if in.Password != "" {
 		h, err := password.Hash(in.Password)

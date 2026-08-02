@@ -1,0 +1,465 @@
+package files
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"hash"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/headercat/airbrew/internal/auth/password"
+	"github.com/headercat/airbrew/internal/blob"
+	"github.com/headercat/airbrew/internal/id"
+)
+
+// Namespace is the blob-store namespace used for drive file bytes.
+const Namespace = "drive"
+
+// Config tunes drive behaviour.
+type Config struct {
+	// MaxUploadBytes caps a single upload; 0 means unlimited.
+	MaxUploadBytes int64
+	// QuotaBytes caps a user's total live storage; 0 means unlimited.
+	QuotaBytes int64
+}
+
+// Service contains drive business logic.
+type Service struct {
+	repo  *Repository
+	blobs blob.Store
+	cfg   Config
+}
+
+// NewService returns a Service backed by repo. blobs stores file bytes.
+func NewService(repo *Repository, blobs blob.Store, cfg Config) *Service {
+	return &Service{repo: repo, blobs: blobs, cfg: cfg}
+}
+
+// CreateFolder creates a folder under parentID ("" = root).
+func (s *Service) CreateFolder(ctx context.Context, in CreateFolderInput) (*Node, error) {
+	name := cleanName(in.Name)
+	if name == "" {
+		return nil, ErrNameRequired
+	}
+	if in.ParentID != "" {
+		p, err := s.repo.GetNode(ctx, in.UserID, in.ParentID)
+		if err != nil {
+			return nil, err
+		}
+		if !p.IsFolder() {
+			return nil, fmt.Errorf("%w: parent is not a folder", ErrInvalidInput)
+		}
+	}
+	n := &Node{
+		ID:       nextID(),
+		UserID:   in.UserID,
+		ParentID: in.ParentID,
+		Kind:     KindFolder,
+		Name:     name,
+	}
+	if err := s.repo.CreateNode(ctx, n); err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
+// Upload stores a file under parentID ("" = root). The content is hashed
+// (sha256) and counted while streaming into the blob store; the per-upload and
+// quota limits are enforced.
+func (s *Service) Upload(ctx context.Context, in UploadInput) (*Node, error) {
+	name := cleanName(in.Name)
+	if name == "" {
+		return nil, ErrNameRequired
+	}
+	if in.ParentID != "" {
+		p, err := s.repo.GetNode(ctx, in.UserID, in.ParentID)
+		if err != nil {
+			return nil, err
+		}
+		if !p.IsFolder() {
+			return nil, fmt.Errorf("%w: parent is not a folder", ErrInvalidInput)
+		}
+	}
+	if in.ContentType == "" {
+		in.ContentType = "application/octet-stream"
+	}
+
+	// Enforce per-upload cap while streaming, and hash + count simultaneously.
+	h := sha256.New()
+	var size int64
+	limited := &limitReader{r: in.Content, max: s.cfg.MaxUploadBytes}
+	tee := io.TeeReader(limited, &countWriter{h: h, n: &size})
+
+	var blobPath string
+	if s.blobs != nil {
+		p, err := s.blobs.Save(ctx, Namespace, in.ContentType, tee)
+		if err != nil {
+			if errors.Is(err, errLimitExceeded) {
+				return nil, ErrTooLarge
+			}
+			return nil, fmt.Errorf("drive: save blob: %w", err)
+		}
+		blobPath = p
+	}
+
+	// Quota check against the freshly-counted size.
+	if s.cfg.QuotaBytes > 0 {
+		used, err := s.repo.TotalSize(ctx, in.UserID)
+		if err != nil {
+			s.deleteBlob(ctx, blobPath)
+			return nil, err
+		}
+		if used+size > s.cfg.QuotaBytes {
+			s.deleteBlob(ctx, blobPath)
+			return nil, fmt.Errorf("%w: used %d + %d > quota %d", ErrQuotaExceeded, used, size, s.cfg.QuotaBytes)
+		}
+	}
+
+	n := &Node{
+		ID:          nextID(),
+		UserID:      in.UserID,
+		ParentID:    in.ParentID,
+		Kind:        KindFile,
+		Name:        name,
+		BlobPath:    blobPath,
+		ContentType: in.ContentType,
+		SizeBytes:   size,
+		SHA256:      hex.EncodeToString(h.Sum(nil)),
+	}
+	if err := s.repo.CreateNode(ctx, n); err != nil {
+		s.deleteBlob(ctx, blobPath)
+		return nil, err
+	}
+	return n, nil
+}
+
+// Download opens a file's blob for reading. The caller must close the reader.
+func (s *Service) Download(ctx context.Context, userID, id string) (io.ReadCloser, *Node, error) {
+	n, err := s.repo.GetNode(ctx, userID, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if n.IsFolder() {
+		return nil, nil, fmt.Errorf("%w: cannot download a folder", ErrInvalidInput)
+	}
+	if n.BlobPath == "" || s.blobs == nil {
+		return nil, nil, fmt.Errorf("%w: file content missing", ErrNotFound)
+	}
+	body, _, err := s.blobs.Open(ctx, n.BlobPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: file content missing", ErrNotFound)
+	}
+	return body, n, nil
+}
+
+// Get returns one live node.
+func (s *Service) Get(ctx context.Context, userID, id string) (*Node, error) {
+	return s.repo.GetNode(ctx, userID, id)
+}
+
+// List returns nodes matching the filter.
+func (s *Service) List(ctx context.Context, f ListFilter) ([]*Node, error) {
+	return s.repo.ListNodes(ctx, f)
+}
+
+// Count returns the number of direct children of parentID.
+func (s *Service) Count(ctx context.Context, userID, parentID string) (int, error) {
+	return s.repo.CountNodes(ctx, userID, parentID)
+}
+
+// Usage returns the user's current live storage usage in bytes.
+func (s *Service) Usage(ctx context.Context, userID string) (used, quota int64, err error) {
+	used, err = s.repo.TotalSize(ctx, userID)
+	if err != nil {
+		return 0, 0, err
+	}
+	return used, s.cfg.QuotaBytes, nil
+}
+
+// Rename changes a node's name.
+func (s *Service) Rename(ctx context.Context, userID, id, name string) (*Node, error) {
+	name = cleanName(name)
+	if name == "" {
+		return nil, ErrNameRequired
+	}
+	if err := s.repo.UpdateNode(ctx, userID, id, UpdateNodeFields{Name: &name}); err != nil {
+		return nil, err
+	}
+	return s.repo.GetNode(ctx, userID, id)
+}
+
+// Move relocates a node under newParentID ("" = root). It rejects moving a
+// node into itself or one of its own descendants.
+func (s *Service) Move(ctx context.Context, userID, id, newParentID string) (*Node, error) {
+	n, err := s.repo.GetNode(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if newParentID != "" {
+		p, err := s.repo.GetNode(ctx, userID, newParentID)
+		if err != nil {
+			return nil, err
+		}
+		if !p.IsFolder() {
+			return nil, fmt.Errorf("%w: target is not a folder", ErrInvalidInput)
+		}
+	}
+	if newParentID == n.ParentID {
+		return n, nil // no-op
+	}
+	// Circular-move guard: the new parent must not be the node itself or a
+	// descendant of it.
+	if desc, err := s.repo.IsDescendant(ctx, userID, id, newParentID); err != nil {
+		return nil, err
+	} else if desc {
+		return nil, ErrCircularMove
+	}
+	if err := s.repo.UpdateNode(ctx, userID, id, UpdateNodeFields{ParentID: &newParentID}); err != nil {
+		return nil, err
+	}
+	return s.repo.GetNode(ctx, userID, id)
+}
+
+// Copy duplicates a file node under newParentID, giving it a new blob-backed
+// row. Folders are not copied (kept simple for v1).
+func (s *Service) Copy(ctx context.Context, userID, id, newParentID, newName string) (*Node, error) {
+	src, err := s.repo.GetNode(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if src.IsFolder() {
+		return nil, fmt.Errorf("%w: copying folders is not supported", ErrInvalidInput)
+	}
+	if newParentID != "" {
+		p, err := s.repo.GetNode(ctx, userID, newParentID)
+		if err != nil {
+			return nil, err
+		}
+		if !p.IsFolder() {
+			return nil, fmt.Errorf("%w: target is not a folder", ErrInvalidInput)
+		}
+	}
+	name := cleanName(newName)
+	if name == "" {
+		name = src.Name
+	}
+	var blobPath string
+	if src.BlobPath != "" && s.blobs != nil {
+		body, ct, err := s.blobs.Open(ctx, src.BlobPath)
+		if err != nil {
+			return nil, fmt.Errorf("drive: open source blob: %w", err)
+		}
+		p, err := s.blobs.Save(ctx, Namespace, ct, body)
+		body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("drive: copy blob: %w", err)
+		}
+		blobPath = p
+	}
+	dup := &Node{
+		ID:          nextID(),
+		UserID:      userID,
+		ParentID:    newParentID,
+		Kind:        KindFile,
+		Name:        name,
+		BlobPath:    blobPath,
+		ContentType: src.ContentType,
+		SizeBytes:   src.SizeBytes,
+		SHA256:      src.SHA256,
+	}
+	if err := s.repo.CreateNode(ctx, dup); err != nil {
+		s.deleteBlob(ctx, blobPath)
+		return nil, err
+	}
+	return dup, nil
+}
+
+// SetStarred toggles the starred flag.
+func (s *Service) SetStarred(ctx context.Context, userID, id string, starred bool) error {
+	return s.repo.PatchStar(ctx, userID, id, starred)
+}
+
+// Trash soft-deletes a node (and, for folders, its subtree).
+func (s *Service) Trash(ctx context.Context, userID, id string) error {
+	return s.repo.Trash(ctx, userID, id)
+}
+
+// Restore clears the soft-delete flag (and, for folders, its subtree).
+func (s *Service) Restore(ctx context.Context, userID, id string) error {
+	return s.repo.Restore(ctx, userID, id)
+}
+
+// DeletePermanent removes a node and its subtree for good, purging its blobs.
+func (s *Service) DeletePermanent(ctx context.Context, userID, id string) error {
+	paths, err := s.repo.DeletePermanent(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	for _, p := range paths {
+		s.deleteBlob(ctx, p)
+	}
+	return nil
+}
+
+// EmptyTrash permanently removes every trashed node and purges their blobs.
+func (s *Service) EmptyTrash(ctx context.Context, userID string) error {
+	paths, err := s.repo.EmptyTrash(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, p := range paths {
+		s.deleteBlob(ctx, p)
+	}
+	return nil
+}
+
+// --- shares ----------------------------------------------------------------
+
+// CreateShare creates a public share link for a node, optionally password
+// protected and/or expiring.
+func (s *Service) CreateShare(ctx context.Context, in CreateShareInput) (*Share, error) {
+	n, err := s.repo.GetNode(ctx, in.UserID, in.NodeID)
+	if err != nil {
+		return nil, err
+	}
+	_ = n
+	var pwHash string
+	if in.Password != "" {
+		h, err := password.Hash(in.Password)
+		if err != nil {
+			return nil, err
+		}
+		pwHash = h
+	}
+	// Retry on the (astronomically unlikely) token collision.
+	for attempt := 0; attempt < 4; attempt++ {
+		sh := &Share{
+			ID:        nextID(),
+			NodeID:    in.NodeID,
+			UserID:    in.UserID,
+			Token:     id.New(),
+			IsActive:  true,
+			ExpiresAt: in.ExpiresAt,
+		}
+		if err := s.repo.CreateShare(ctx, sh, pwHash); err != nil {
+			if errors.Is(err, ErrShareTokenTaken) {
+				continue
+			}
+			return nil, err
+		}
+		sh.HasPassword = in.Password != ""
+		return sh, nil
+	}
+	return nil, fmt.Errorf("drive: could not allocate share token")
+}
+
+// ListShares returns the user's shares.
+func (s *Service) ListShares(ctx context.Context, userID string) ([]*Share, error) {
+	return s.repo.ListShares(ctx, userID)
+}
+
+// ListSharesByNode returns the shares for a node.
+func (s *Service) ListSharesByNode(ctx context.Context, userID, nodeID string) ([]*Share, error) {
+	return s.repo.ListSharesByNode(ctx, userID, nodeID)
+}
+
+// DeleteShare revokes a share.
+func (s *Service) DeleteShare(ctx context.Context, userID, id string) error {
+	return s.repo.DeleteShare(ctx, userID, id)
+}
+
+// OpenShare resolves a public share by token. It enforces active/expiry and
+// (if set) the password, returning the node to serve.
+func (s *Service) OpenShare(ctx context.Context, token, passwordAttempt string) (*Node, error) {
+	sh, err := s.repo.GetShareByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if !sh.IsActive {
+		return nil, ErrShareNotFound
+	}
+	if sh.ExpiresAt != nil && sh.ExpiresAt.Before(time.Now().UTC()) {
+		return nil, ErrExpired
+	}
+	if sh.HasPassword {
+		if passwordAttempt == "" {
+			return nil, ErrPasswordRequired
+		}
+		hashed, err := s.repo.SharePasswordHash(ctx, sh.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err := password.Verify(passwordAttempt, hashed); err != nil {
+			return nil, ErrPasswordRequired
+		}
+	}
+	return s.repo.GetShareNode(ctx, sh)
+}
+
+// IncDownload bumps a share's download counter.
+func (s *Service) IncDownload(ctx context.Context, token string) {
+	_ = s.repo.IncrementShareDownloads(ctx, token)
+}
+
+// --- internal --------------------------------------------------------------
+
+func (s *Service) deleteBlob(ctx context.Context, path string) {
+	if s.blobs != nil && path != "" {
+		_ = s.blobs.Delete(ctx, path)
+	}
+}
+
+// cleanName trims and rejects names containing path separators or the . / ..
+// sentinels.
+func cleanName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." {
+		return ""
+	}
+	if strings.ContainsAny(name, "/\\\x00") {
+		return ""
+	}
+	// Cap length to keep the UI and DB sane.
+	if len(name) > 255 {
+		name = name[:255]
+	}
+	return name
+}
+
+// limitReader returns errLimitExceeded from Read once more than max bytes have
+// been read (max <= 0 disables the limit).
+type limitReader struct {
+	r   io.Reader
+	max int64
+	n   int64
+}
+
+var errLimitExceeded = errors.New("drive: limit exceeded")
+
+func (l *limitReader) Read(p []byte) (int, error) {
+	if l.max > 0 && l.n >= l.max {
+		return 0, errLimitExceeded
+	}
+	n, err := l.r.Read(p)
+	l.n += int64(n)
+	if l.max > 0 && l.n > l.max {
+		// Report how far over we are; signal the caller to abort.
+		return n, errLimitExceeded
+	}
+	return n, err
+}
+
+// countWriter feeds bytes into a hash and tracks the total size.
+type countWriter struct {
+	h hash.Hash
+	n *int64
+}
+
+func (c *countWriter) Write(p []byte) (int, error) {
+	*c.n += int64(len(p))
+	return c.h.Write(p)
+}

@@ -59,6 +59,11 @@
       "subtitle": "Sign in to your workspace",
       "email": "Email",
       "password": "Password",
+      "currentPassword": "Current password",
+      "newPassword": "New password",
+      "confirmPassword": "Confirm new password",
+      "passwordExpired": "Your password has expired. Set a new password to continue.",
+      "changePassword": "Change password",
       "submit": "Sign in",
       "needAccount": "Need an account?",
       "createOne": "Create one"

@@ -58,6 +58,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/me", h.me)
 	mux.HandleFunc("PATCH /api/auth/me", h.updateProfile)
 	mux.HandleFunc("POST /api/auth/password", h.changePassword)
+	mux.HandleFunc("POST /api/auth/password/expired", h.changeExpiredPassword)
 	mux.HandleFunc("POST /api/auth/avatar", h.uploadAvatar)
 }
 
@@ -306,6 +307,43 @@ func (h *Handler) updateProfile(w http.ResponseWriter, r *http.Request) {
 type changePasswordReq struct {
 	CurrentPassword string `json:"current_password"`
 	NewPassword     string `json:"new_password"`
+}
+
+type expiredPasswordReq struct {
+	Email           string `json:"email"`
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+func (h *Handler) changeExpiredPassword(w http.ResponseWriter, r *http.Request) {
+	var req expiredPasswordReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	email := strings.TrimSpace(req.Email)
+	u, err := h.userSvc.Authenticate(r.Context(), email, req.CurrentPassword)
+	if err != nil {
+		h.recordLoginAttempt(r, email, "", false, "invalid_credentials")
+		response.Error(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
+		return
+	}
+	if err := h.userSvc.ChangePassword(r.Context(), u.ID, req.CurrentPassword, req.NewPassword); err != nil {
+		if errors.Is(err, user.ErrInvalidCredentials) {
+			response.Error(w, http.StatusUnauthorized, "invalid_credentials", "current password is incorrect")
+			return
+		}
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType:   "user.password_changed",
+		ActorUserID: u.ID,
+		TargetType:  "user", TargetID: u.ID,
+		IPAddress: clientIP(r),
+		UserAgent: r.UserAgent(),
+	})
+	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {

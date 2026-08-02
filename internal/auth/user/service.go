@@ -249,6 +249,13 @@ func (s *Service) rejectPasswordReuse(ctx context.Context, userID, plain string,
 	if historyCount <= 0 {
 		return nil
 	}
+	current, err := s.repo.GetPasswordHash(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := password.Verify(plain, current); err == nil {
+		return errors.New("password was used recently")
+	}
 	hashes, err := s.repo.RecentPasswordHashes(ctx, userID, historyCount)
 	if err != nil {
 		if IsPasswordHistoryUnavailable(err) {

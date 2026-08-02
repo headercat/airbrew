@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -753,6 +754,26 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+// validateCIDR returns an error when raw is not a parseable IPv4/IPv6 CIDR.
+// A bare IP (no mask) is accepted and treated as a /32 (v4) or /128 (v6).
+func validateCIDR(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return errors.New("empty CIDR")
+	}
+	if !strings.Contains(raw, "/") {
+		ip := net.ParseIP(raw)
+		if ip == nil {
+			return fmt.Errorf("invalid IP or CIDR: %s", raw)
+		}
+		return nil
+	}
+	if _, _, err := net.ParseCIDR(raw); err != nil {
+		return fmt.Errorf("invalid CIDR %q: %w", raw, err)
+	}
+	return nil
+}
+
 func generateTempPassword() (string, error) {
 	b := make([]byte, 18)
 	if _, err := rand.Read(b); err != nil {
@@ -1099,3 +1120,184 @@ func (h *Handler) databasePath(ctx context.Context) (string, error) {
 		}
 	}
 	return "", rows.Err()
+}
+
+// ---- Security: password policy ----
+
+func (h *Handler) getPasswordPolicy(w http.ResponseWriter, r *http.Request) {
+	p, err := h.security.PasswordPolicy(r.Context())
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	response.JSON(w, http.StatusOK, p)
+}
+
+type putPasswordPolicyReq struct {
+	MinLength        *int  `json:"min_length,omitempty"`
+	RequireUppercase *bool `json:"require_uppercase,omitempty"`
+	RequireLowercase *bool `json:"require_lowercase,omitempty"`
+	RequireDigit     *bool `json:"require_digit,omitempty"`
+	RequireSymbol    *bool `json:"require_symbol,omitempty"`
+	MaxAgeDays       *int  `json:"max_age_days,omitempty"`
+	HistoryCount     *int  `json:"history_count,omitempty"`
+}
+
+func (h *Handler) putPasswordPolicy(w http.ResponseWriter, r *http.Request) {
+	current, err := h.security.PasswordPolicy(r.Context())
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	var req putPasswordPolicyReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if req.MinLength != nil {
+		current.MinLength = *req.MinLength
+	}
+	if req.RequireUppercase != nil {
+		current.RequireUppercase = *req.RequireUppercase
+	}
+	if req.RequireLowercase != nil {
+		current.RequireLowercase = *req.RequireLowercase
+	}
+	if req.RequireDigit != nil {
+		current.RequireDigit = *req.RequireDigit
+	}
+	if req.RequireSymbol != nil {
+		current.RequireSymbol = *req.RequireSymbol
+	}
+	if req.MaxAgeDays != nil {
+		current.MaxAgeDays = *req.MaxAgeDays
+	}
+	if req.HistoryCount != nil {
+		current.HistoryCount = *req.HistoryCount
+	}
+	if err := h.security.SetPasswordPolicy(r.Context(), current); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "security.password_policy_changed", ActorUserID: callerUserID(r),
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{
+			"min_length": current.MinLength,
+		},
+	})
+	normalized, _ := h.security.PasswordPolicy(r.Context())
+	response.JSON(w, http.StatusOK, normalized)
+}
+
+// ---- Security: IP allowlist ----
+
+func (h *Handler) getIPAllowlist(w http.ResponseWriter, r *http.Request) {
+	a, err := h.security.IPAllowlist(r.Context())
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	response.JSON(w, http.StatusOK, a)
+}
+
+type putIPAllowlistReq struct {
+	Enabled *bool    `json:"enabled,omitempty"`
+	CIDRs   []string `json:"cidrs,omitempty"`
+}
+
+func (h *Handler) putIPAllowlist(w http.ResponseWriter, r *http.Request) {
+	current, err := h.security.IPAllowlist(r.Context())
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	var req putIPAllowlistReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	for _, c := range req.CIDRs {
+		if err := validateCIDR(c); err != nil {
+			response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+	}
+	if req.Enabled != nil {
+		current.Enabled = *req.Enabled
+	}
+	if req.CIDRs != nil {
+		current.CIDRs = req.CIDRs
+	}
+	if current.Enabled && !ipAllowedByCIDRs(clientIP(r), current.CIDRs) {
+		response.Error(w, http.StatusBadRequest, "would_lock_out_current_ip", "current request IP must be included before enabling the allowlist")
+		return
+	}
+	if err := h.security.SetIPAllowlist(r.Context(), current); err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "security.ip_allowlist_changed", ActorUserID: callerUserID(r),
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"enabled": current.Enabled, "count": len(current.CIDRs)},
+	})
+	saved, _ := h.security.IPAllowlist(r.Context())
+	response.JSON(w, http.StatusOK, saved)
+}
+
+func ipAllowedByCIDRs(rawIP string, cidrs []string) bool {
+	host, _, err := net.SplitHostPort(rawIP)
+	if err == nil {
+		rawIP = host
+	}
+	ip := net.ParseIP(strings.TrimSpace(rawIP))
+	if ip == nil {
+		return false
+	}
+	for _, c := range cidrs {
+		c = strings.TrimSpace(c)
+		if strings.Contains(c, "/") {
+			_, network, err := net.ParseCIDR(c)
+			if err == nil && network.Contains(ip) {
+				return true
+			}
+			continue
+		}
+		if other := net.ParseIP(c); other != nil && other.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// ---- Security: login history ----
+
+func (h *Handler) loginHistory(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := security.LoginHistoryFilter{
+		Email:  q.Get("email"),
+		UserID: q.Get("user_id"),
+		Only:   q.Get("result"),
+	}
+	if v := q.Get("from"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			f.From = t
+		}
+	}
+	if v := q.Get("to"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			f.To = t
+		}
+	}
+	f.Limit, _ = strconv.Atoi(q.Get("limit"))
+	f.Offset, _ = strconv.Atoi(q.Get("offset"))
+	rows, total, err := h.security.ListLoginAttempts(r.Context(), f)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]any{
+		"entries": rows, "total": total, "limit": f.Limit, "offset": f.Offset,
+	})
+}

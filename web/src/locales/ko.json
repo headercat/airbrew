@@ -59,6 +59,11 @@
       "subtitle": "워크스페이스에 로그인하세요",
       "email": "이메일",
       "password": "비밀번호",
+      "currentPassword": "현재 비밀번호",
+      "newPassword": "새 비밀번호",
+      "confirmPassword": "새 비밀번호 확인",
+      "passwordExpired": "비밀번호가 만료되었습니다. 계속하려면 새 비밀번호를 설정하세요.",
+      "changePassword": "비밀번호 변경",
       "submit": "로그인",
       "needAccount": "계정이 필요하신가요?",
       "createOne": "만들기"

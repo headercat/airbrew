@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth";
-import { isApiError } from "@/lib/api";
+import { api, isApiError } from "@/lib/api";
 
 type LocationState = { from?: string };
 
@@ -21,6 +21,9 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [expiredPassword, setExpiredPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -30,6 +33,38 @@ export default function LoginPage() {
     setBusy(true);
     try {
       await signIn(email, password);
+      navigate(from, { replace: true });
+    } catch (err) {
+      if (isApiError(err) && err.error === "password_expired") {
+        setExpiredPassword(true);
+        setError(t("auth.login.passwordExpired"));
+        return;
+      }
+      setError(
+        isApiError(err)
+          ? (err.error_description ?? err.error)
+          : t("common.error"),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitExpiredPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (newPassword !== confirmPassword) {
+      setError(t("auth.register.passwordsDoNotMatch"));
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post("/api/auth/password/expired", {
+        email,
+        current_password: password,
+        new_password: newPassword,
+      });
+      await signIn(email, newPassword);
       navigate(from, { replace: true });
     } catch (err) {
       setError(
@@ -61,7 +96,10 @@ export default function LoginPage() {
 
         <Card>
           <CardContent className="p-5">
-            <form onSubmit={submit} className="space-y-3.5">
+            <form
+              onSubmit={expiredPassword ? submitExpiredPassword : submit}
+              className="space-y-3.5"
+            >
               <div className="space-y-1.5">
                 <Label htmlFor="email" className="text-[13px]">
                   {t("auth.login.email")}
@@ -79,7 +117,9 @@ export default function LoginPage() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="password" className="text-[13px]">
-                  {t("auth.login.password")}
+                  {expiredPassword
+                    ? t("auth.login.currentPassword")
+                    : t("auth.login.password")}
                 </Label>
                 <Input
                   id="password"
@@ -90,6 +130,36 @@ export default function LoginPage() {
                   required
                 />
               </div>
+              {expiredPassword && (
+                <>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="new-password" className="text-[13px]">
+                      {t("auth.login.newPassword")}
+                    </Label>
+                    <Input
+                      id="new-password"
+                      type="password"
+                      autoComplete="new-password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="confirm-password" className="text-[13px]">
+                      {t("auth.login.confirmPassword")}
+                    </Label>
+                    <Input
+                      id="confirm-password"
+                      type="password"
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+                </>
+              )}
               {error && (
                 <p className="text-[13px] text-destructive" role="alert">
                   {error}
@@ -97,7 +167,9 @@ export default function LoginPage() {
               )}
               <Button type="submit" className="w-full" disabled={busy}>
                 {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-                {t("auth.login.submit")}
+                {expiredPassword
+                  ? t("auth.login.changePassword")
+                  : t("auth.login.submit")}
               </Button>
             </form>
           </CardContent>

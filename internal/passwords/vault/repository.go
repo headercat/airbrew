@@ -773,10 +773,11 @@ func archiveItemSnapshot(ctx context.Context, tx *sql.Tx, it Item) error {
 // revisions, returning the count of each. The input is ciphertext the client
 // prepared (possibly re-encrypted for this vault). Tombstones are preserved as
 // tombstones so a restore round-trip is faithful.
-func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []Folder, items []Item) (folderCount, itemCount int64, err error) {
+func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []Folder, items []Item, attachments []Attachment) (folderCount, itemCount, attachmentCount int64, err error) {
 	err = inTx(ctx, r.db, func(tx *sql.Tx) error {
 		now := time.Now().UTC().Truncate(time.Second)
 		folderIDs := make(map[string]string, len(folders))
+		itemIDs := make(map[string]string, len(items))
 		for _, f := range folders {
 			oldID := f.ID
 			rev, err := bumpRev(ctx, tx, userID)
@@ -802,6 +803,7 @@ func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []
 			folderCount++
 		}
 		for _, it := range items {
+			oldID := it.ID
 			if !it.Type.Valid() {
 				return fmt.Errorf("%w: invalid item type in import bundle", ErrInvalidInput)
 			}
@@ -834,11 +836,30 @@ func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []
 				nullableTime(it.DeletedAt)); err != nil {
 				return fmt.Errorf("vault: import item: %w", err)
 			}
+			if oldID != "" {
+				itemIDs[oldID] = it.ID
+			}
 			itemCount++
+		}
+		for _, a := range attachments {
+			itemID, ok := itemIDs[a.ItemID]
+			if !ok {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO vault_attachments
+				  (id, item_id, blob_path, size_bytes,
+				   file_key_cipher, file_key_nonce, name_cipher, name_nonce, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				id.New(), itemID, a.BlobPath, a.SizeBytes,
+				a.FileKeyCipher, a.FileKeyNonce, a.NameCipher, a.NameNonce, now); err != nil {
+				return fmt.Errorf("vault: import attachment: %w", err)
+			}
+			attachmentCount++
 		}
 		return nil
 	})
-	return folderCount, itemCount, err
+	return folderCount, itemCount, attachmentCount, err
 }
 
 // --- attachments -----------------------------------------------------------
@@ -888,6 +909,31 @@ func (r *Repository) ListAttachments(ctx context.Context, userID, itemID string)
 	rows, err := r.db.QueryContext(ctx, attachmentSelect+` ORDER BY a.created_at ASC`, userID, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("vault: list attachments: %w", err)
+	}
+	defer rows.Close()
+	var out []Attachment
+	for rows.Next() {
+		a, err := scanAttachment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ListAllAttachments returns every attachment for a user's non-deleted items.
+func (r *Repository) ListAllAttachments(ctx context.Context, userID string) ([]Attachment, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT a.id, a.item_id, a.blob_path, a.size_bytes,
+		       a.file_key_cipher, a.file_key_nonce,
+		       a.name_cipher, a.name_nonce, a.created_at
+		FROM vault_attachments a
+		JOIN vault_items i ON i.id = a.item_id
+		WHERE i.user_id = ? AND i.deleted_at IS NULL
+		ORDER BY a.created_at ASC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("vault: list all attachments: %w", err)
 	}
 	defer rows.Close()
 	var out []Attachment

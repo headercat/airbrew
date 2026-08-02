@@ -7,8 +7,11 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -501,9 +504,21 @@ func (h *Handler) restoreRevision(w http.ResponseWriter, r *http.Request) {
 // --- export / import --------------------------------------------------------
 
 type exportResp struct {
-	Envelope envelopeResp `json:"envelope"`
-	Folders  []folderResp `json:"folders"`
-	Items    []itemResp   `json:"items"`
+	Envelope    envelopeResp           `json:"envelope"`
+	Folders     []folderResp           `json:"folders"`
+	Items       []itemResp             `json:"items"`
+	Attachments []exportAttachmentResp `json:"attachments"`
+}
+
+type exportAttachmentResp struct {
+	ID            string `json:"id"`
+	ItemID        string `json:"item_id"`
+	NameCipher    string `json:"name_cipher"`
+	NameNonce     string `json:"name_nonce"`
+	FileKeyCipher string `json:"file_key_cipher"`
+	FileKeyNonce  string `json:"file_key_nonce"`
+	SizeBytes     int64  `json:"size_bytes"`
+	Payload       string `json:"payload"`
 }
 
 func (h *Handler) exportVault(w http.ResponseWriter, r *http.Request) {
@@ -511,25 +526,54 @@ func (h *Handler) exportVault(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	env, folders, items, err := h.svc.ExportBundle(r.Context(), sess.UserID)
+	env, folders, items, attachments, err := h.svc.ExportBundle(r.Context(), sess.UserID)
 	if err != nil {
 		writeVaultError(w, err)
 		return
 	}
-	out := exportResp{Envelope: toEnvelopeResp(env), Folders: []folderResp{}, Items: []itemResp{}}
+	out := exportResp{Envelope: toEnvelopeResp(env), Folders: []folderResp{}, Items: []itemResp{}, Attachments: []exportAttachmentResp{}}
 	for _, f := range folders {
 		out.Folders = append(out.Folders, toFolderResp(f))
 	}
 	for _, it := range items {
 		out.Items = append(out.Items, toItemResp(it))
 	}
+	if len(attachments) > 0 && h.blobs == nil {
+		response.Error(w, http.StatusServiceUnavailable, "unavailable", "blob store not configured")
+		return
+	}
+	for _, a := range attachments {
+		body, _, err := h.blobs.Open(r.Context(), a.BlobPath)
+		if err != nil {
+			writeVaultError(w, fmt.Errorf("%w: attachment blob missing", vault.ErrNotFound))
+			return
+		}
+		payload, err := io.ReadAll(io.LimitReader(body, maxAttachmentBytes+1))
+		_ = body.Close()
+		if err != nil {
+			response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+			return
+		}
+		if len(payload) > maxAttachmentBytes {
+			response.Error(w, http.StatusInternalServerError, "internal_error", "attachment exceeds export cap")
+			return
+		}
+		out.Attachments = append(out.Attachments, exportAttachmentResp{
+			ID: a.ID, ItemID: a.ItemID,
+			NameCipher: a.NameCipher, NameNonce: a.NameNonce,
+			FileKeyCipher: a.FileKeyCipher, FileKeyNonce: a.FileKeyNonce,
+			SizeBytes: a.SizeBytes,
+			Payload:   base64.StdEncoding.EncodeToString(payload),
+		})
+	}
 	h.auditVault(r, "vault.export", sess.UserID, nil)
 	response.JSON(w, http.StatusOK, out)
 }
 
 type importReq struct {
-	Folders []importFolderReq `json:"folders"`
-	Items   []itemReq         `json:"items"`
+	Folders     []importFolderReq     `json:"folders"`
+	Items       []importItemReq       `json:"items"`
+	Attachments []importAttachmentReq `json:"attachments"`
 }
 
 type importFolderReq struct {
@@ -538,13 +582,38 @@ type importFolderReq struct {
 	NameNonce  string `json:"name_nonce"`
 }
 
+type importItemReq struct {
+	ID          string         `json:"id"`
+	Type        vault.ItemType `json:"type"`
+	FolderID    string         `json:"folder_id"`
+	NameCipher  string         `json:"name_cipher"`
+	NameNonce   string         `json:"name_nonce"`
+	DataCipher  string         `json:"data_cipher"`
+	DataNonce   string         `json:"data_nonce"`
+	NotesCipher string         `json:"notes_cipher"`
+	NotesNonce  string         `json:"notes_nonce"`
+	Favorite    bool           `json:"favorite"`
+	Reprompt    bool           `json:"reprompt"`
+}
+
+type importAttachmentReq struct {
+	ID            string `json:"id"`
+	ItemID        string `json:"item_id"`
+	NameCipher    string `json:"name_cipher"`
+	NameNonce     string `json:"name_nonce"`
+	FileKeyCipher string `json:"file_key_cipher"`
+	FileKeyNonce  string `json:"file_key_nonce"`
+	SizeBytes     int64  `json:"size_bytes"`
+	Payload       string `json:"payload"`
+}
+
 func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
 	sess, ok := requireSession(w, r)
 	if !ok {
 		return
 	}
 	var req importReq
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSONLimit(r, &req, maxImportJSONBody); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -563,20 +632,51 @@ func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
 		// Tombstones round-trip: a deleted_at in the request marks the row as
 		// already-deleted so a re-import faithfully reproduces the vault.
 		items = append(items, vault.Item{
-			Type: it.Type, FolderID: it.FolderID,
+			ID: it.ID, Type: it.Type, FolderID: it.FolderID,
 			NameCipher: it.NameCipher, NameNonce: it.NameNonce,
 			DataCipher: it.DataCipher, DataNonce: it.DataNonce,
 			NotesCipher: it.NotesCipher, NotesNonce: it.NotesNonce,
 			Favorite: it.Favorite, Reprompt: it.Reprompt,
 		})
 	}
-	fc, ic, err := h.svc.ImportBundle(r.Context(), sess.UserID, folders, items)
+	var attachments []vault.Attachment
+	var savedBlobPaths []string
+	if len(req.Attachments) > 0 && h.blobs == nil {
+		response.Error(w, http.StatusServiceUnavailable, "unavailable", "blob store not configured")
+		return
+	}
+	for _, a := range req.Attachments {
+		payload, err := base64.StdEncoding.Strict().DecodeString(a.Payload)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, "invalid_request", "attachment payload must be base64")
+			return
+		}
+		if len(payload) > maxAttachmentBytes {
+			response.Error(w, http.StatusBadRequest, "invalid_request", "attachment payload too large")
+			return
+		}
+		blobPath, err := h.blobs.Save(r.Context(), "vault-attachments", "application/octet-stream", bytes.NewReader(payload))
+		if err != nil {
+			response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+			return
+		}
+		savedBlobPaths = append(savedBlobPaths, blobPath)
+		attachments = append(attachments, vault.Attachment{
+			ID: a.ID, ItemID: a.ItemID, BlobPath: blobPath, SizeBytes: a.SizeBytes,
+			FileKeyCipher: a.FileKeyCipher, FileKeyNonce: a.FileKeyNonce,
+			NameCipher: a.NameCipher, NameNonce: a.NameNonce,
+		})
+	}
+	fc, ic, ac, err := h.svc.ImportBundle(r.Context(), sess.UserID, folders, items, attachments)
 	if err != nil {
+		for _, p := range savedBlobPaths {
+			_ = h.blobs.Delete(r.Context(), p)
+		}
 		writeVaultError(w, err)
 		return
 	}
-	h.auditVault(r, "vault.import", sess.UserID, map[string]any{"count": fc + ic})
-	response.JSON(w, http.StatusCreated, map[string]int64{"folders": fc, "items": ic})
+	h.auditVault(r, "vault.import", sess.UserID, map[string]any{"count": fc + ic + ac})
+	response.JSON(w, http.StatusCreated, map[string]int64{"folders": fc, "items": ic, "attachments": ac})
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -643,13 +743,18 @@ func writeVaultError(w http.ResponseWriter, err error) {
 // malicious oversized body from exhausting server memory. Attachment uploads
 // are handled separately (multipart) with their own cap.
 const maxJSONBody = 256 << 10
+const maxImportJSONBody = 50 << 20
 
 func decodeJSON(r *http.Request, v any) error {
+	return decodeJSONLimit(r, v, maxJSONBody)
+}
+
+func decodeJSONLimit(r *http.Request, v any, limit int64) error {
 	ct := r.Header.Get("Content-Type")
 	if !strings.Contains(ct, "application/json") {
 		return errors.New("content-type must be application/json")
 	}
-	r.Body = http.MaxBytesReader(nil, r.Body, maxJSONBody)
+	r.Body = http.MaxBytesReader(nil, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)

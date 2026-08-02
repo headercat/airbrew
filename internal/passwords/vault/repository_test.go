@@ -396,12 +396,12 @@ func TestImportBundleReinsertsWithFreshIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fc, ic, err := repo.ImportBundle(ctx, "u1",
+	fc, ic, _, err := repo.ImportBundle(ctx, "u1",
 		[]Folder{{NameCipher: cipherFixture(24, 12), NameNonce: nonceFixture(22)}},
 		[]Item{{
 			Type: ItemLogin, NameCipher: cipherFixture(24, 13), NameNonce: nonceFixture(23),
 			DataCipher: cipherFixture(32, 33), DataNonce: nonceFixture(43),
-		}})
+		}}, nil)
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -420,13 +420,13 @@ func TestImportBundleReinsertsWithFreshIDs(t *testing.T) {
 func TestImportBundleRemapsFolderIDs(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
-	_, _, err := repo.ImportBundle(ctx, "u1",
+	_, _, _, err := repo.ImportBundle(ctx, "u1",
 		[]Folder{{ID: "old-folder", NameCipher: cipherFixture(24, 16), NameNonce: nonceFixture(26)}},
 		[]Item{{
 			Type: ItemLogin, FolderID: "old-folder",
 			NameCipher: cipherFixture(24, 17), NameNonce: nonceFixture(27),
 			DataCipher: cipherFixture(32, 37), DataNonce: nonceFixture(47),
-		}})
+		}}, nil)
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -445,6 +445,42 @@ func TestImportBundleRemapsFolderIDs(t *testing.T) {
 	}
 	if res.Items[0].FolderID != res.Folders[0].ID {
 		t.Fatalf("item folder_id = %q, want imported folder %q", res.Items[0].FolderID, res.Folders[0].ID)
+	}
+}
+
+func TestImportBundleRemapsAttachmentItemIDs(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	_, ic, ac, err := repo.ImportBundle(ctx, "u1", nil,
+		[]Item{{
+			ID: "old-item", Type: ItemLogin,
+			NameCipher: cipherFixture(24, 160), NameNonce: nonceFixture(161),
+			DataCipher: cipherFixture(32, 162), DataNonce: nonceFixture(163),
+		}},
+		[]Attachment{{
+			ItemID: "old-item", BlobPath: "vault-attachments/imported.bin", SizeBytes: 12,
+			FileKeyCipher: cipherFixture(48, 164), FileKeyNonce: nonceFixture(165),
+			NameCipher: cipherFixture(24, 166), NameNonce: nonceFixture(167),
+		}})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if ic != 1 || ac != 1 {
+		t.Fatalf("counts = items %d attachments %d, want 1/1", ic, ac)
+	}
+	res, err := repo.Sync(ctx, "u1", 0, 0)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	atts, err := repo.ListAttachments(ctx, "u1", res.Items[0].ID)
+	if err != nil {
+		t.Fatalf("list attachments: %v", err)
+	}
+	if len(atts) != 1 {
+		t.Fatalf("attachments = %d, want 1", len(atts))
+	}
+	if atts[0].ItemID != res.Items[0].ID {
+		t.Fatalf("attachment item_id = %q, want %q", atts[0].ItemID, res.Items[0].ID)
 	}
 }
 

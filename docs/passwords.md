@@ -13,7 +13,7 @@ sync the encrypted vault and, with the user's master password, decrypt locally.
 | Master password guessed             | Argon2id KDF (tunable memory/time), client-side              |
 | New device login                    | Pulls encrypted envelope + ciphertext, decrypts locally       |
 | Concurrent edits from two devices   | Per-row optimistic concurrency via `revision` + sync cursor  |
-| Master password lost                | **No recovery.** Encrypted export is the backup path         |
+| Master password lost                | **No recovery.** Encrypted export is the backup path if the master password is still known |
 
 The master password is **distinct from the login password** (Milestone 1 auth).
 Reusing it would break zero-knowledge because the existing login flow receives
@@ -211,7 +211,7 @@ POST   /api/vault/items/:id/attachments      upload encrypted blob
 GET    /api/vault/items/:id/attachments/:aid download
 DELETE /api/vault/items/:id/attachments/:aid
 
-POST   /api/vault/export                     encrypted export bundle
+GET    /api/vault/export                     encrypted export bundle (items + attachments)
 POST   /api/vault/import                     restore
 ```
 

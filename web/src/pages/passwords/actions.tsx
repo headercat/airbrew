@@ -1,9 +1,9 @@
 // Vault-level actions: export/import the encrypted backup bundle, change the
 // master password, and create folders. Reached from the vault list header.
 //
-// Export/import move ciphertext only: the downloaded bundle is encrypted with
-// the vault key, so it is safe to store anywhere; importing re-inserts the
-// ciphertext (re-encrypted by the client if it came from another vault).
+// Export/import move ciphertext only. Import first proves the bundle decrypts
+// with the currently unlocked vault key, then re-encrypts metadata with fresh
+// nonces before uploading it again.
 
 import { useRef, useState } from "react";
 import { Download, FolderPlus, KeyRound, Loader2, Upload } from "lucide-react";
@@ -79,6 +79,7 @@ export function VaultActions() {
         t("passwords.actions.imported", {
           folders: counts.folders,
           items: counts.items,
+          attachments: counts.attachments ?? 0,
         }),
       );
     } catch (err) {

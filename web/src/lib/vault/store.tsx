@@ -294,7 +294,7 @@ type VaultContextValue = {
   // matches the key currently in memory. Used by the "reprompt" feature so a
   // sensitive item is only revealed after re-entering the master password.
   verifyMasterPassword: (password: string) => Promise<boolean>;
-  // exportBundle / importBundle wrap the encrypted backup/restore endpoints.
+  // exportBundle / importBundle wrap same-vault encrypted backup/restore.
   exportBundle: () => Promise<VApi.ExportBundle>;
   importBundle: (bundle: VApi.ExportBundle) => Promise<VApi.ImportCounts>;
   // Folder CRUD (encrypts the folder name with the vault key).
@@ -809,7 +809,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           name_nonce: enc.nonce,
         });
       }
-      const items: VApi.ItemInput[] = [];
+      const items: (VApi.ItemInput & { id?: string })[] = [];
       for (const it of bundle.items ?? []) {
         const name = await decryptString(key, it.name_cipher, it.name_nonce);
         const data = await decryptString(key, it.data_cipher, it.data_nonce);
@@ -828,6 +828,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           notes_nonce = notesEnc.nonce;
         }
         items.push({
+          id: it.id,
           type: it.type,
           folder_id: it.folder_id,
           name_cipher: nameEnc.cipher,
@@ -840,7 +841,29 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           reprompt: it.reprompt,
         });
       }
-      const counts = await VApi.importVault(folders, items);
+      const attachments: VApi.ExportAttachment[] = [];
+      for (const att of bundle.attachments ?? []) {
+        const fileKey = await decryptBytes(
+          key,
+          att.file_key_cipher,
+          att.file_key_nonce,
+        );
+        const wrapped = await encryptBytes(key, fileKey);
+        zeroize(fileKey);
+        const name = await decryptString(key, att.name_cipher, att.name_nonce);
+        const nameEnc = await encryptString(key, name);
+        attachments.push({
+          id: att.id,
+          item_id: att.item_id,
+          name_cipher: nameEnc.cipher,
+          name_nonce: nameEnc.nonce,
+          file_key_cipher: wrapped.cipher,
+          file_key_nonce: wrapped.nonce,
+          size_bytes: att.size_bytes,
+          payload: att.payload,
+        });
+      }
+      const counts = await VApi.importVault({ folders, items, attachments });
       // Pull the freshly-imported rows into the decrypted cache.
       await syncAndDecrypt();
       return counts;

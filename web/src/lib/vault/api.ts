@@ -271,17 +271,35 @@ export type ExportBundle = {
   envelope: Envelope;
   folders: VaultFolder[];
   items: VaultItem[];
+  attachments?: ExportAttachment[];
+};
+
+export type ExportAttachment = {
+  id: string;
+  item_id: string;
+  name_cipher: string;
+  name_nonce: string;
+  file_key_cipher: string;
+  file_key_nonce: string;
+  size_bytes: number;
+  payload: string;
 };
 
 export function exportVault(): Promise<ExportBundle> {
   return api.get<ExportBundle>("/api/vault/export");
 }
 
-export type ImportCounts = { folders: number; items: number };
+export type ImportCounts = {
+  folders: number;
+  items: number;
+  attachments?: number;
+};
+export type ImportBundleInput = {
+  folders: { id?: string; name_cipher: string; name_nonce: string }[];
+  items: (ItemInput & { id?: string })[];
+  attachments?: ExportAttachment[];
+};
 
-export function importVault(
-  folders: { id?: string; name_cipher: string; name_nonce: string }[],
-  items: ItemInput[],
-): Promise<ImportCounts> {
-  return api.post<ImportCounts>("/api/vault/import", { folders, items });
+export function importVault(input: ImportBundleInput): Promise<ImportCounts> {
+  return api.post<ImportCounts>("/api/vault/import", input);
 }

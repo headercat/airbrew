@@ -320,29 +320,33 @@ func (s *Service) DeleteAttachment(ctx context.Context, userID, itemID, attachID
 }
 
 // ExportBundle returns the full encrypted vault (folders + items, including
-// tombstones) plus the key envelope, so the client can download a
+// tombstones), attachments, and the key envelope, so the client can download a
 // self-contained ciphertext backup. The server cannot decrypt any of it.
-func (s *Service) ExportBundle(ctx context.Context, userID string) (KeyEnvelope, []Folder, []Item, error) {
+func (s *Service) ExportBundle(ctx context.Context, userID string) (KeyEnvelope, []Folder, []Item, []Attachment, error) {
 	env, err := s.repo.GetEnvelope(ctx, userID)
 	if err != nil {
-		return KeyEnvelope{}, nil, nil, err
+		return KeyEnvelope{}, nil, nil, nil, err
 	}
 	res, err := s.repo.Sync(ctx, userID, 0, 0)
 	if err != nil {
-		return KeyEnvelope{}, nil, nil, err
+		return KeyEnvelope{}, nil, nil, nil, err
 	}
-	return env, res.Folders, res.Items, nil
+	atts, err := s.repo.ListAllAttachments(ctx, userID)
+	if err != nil {
+		return KeyEnvelope{}, nil, nil, nil, err
+	}
+	return env, res.Folders, res.Items, atts, nil
 }
 
 // ImportBundle re-inserts the given ciphertext folders and items with fresh IDs
 // and bumped revisions, returning the count of each.
-func (s *Service) ImportBundle(ctx context.Context, userID string, folders []Folder, items []Item) (int64, int64, error) {
+func (s *Service) ImportBundle(ctx context.Context, userID string, folders []Folder, items []Item, attachments []Attachment) (int64, int64, int64, error) {
 	for _, f := range folders {
 		if f.NameCipher == "" || f.NameNonce == "" {
-			return 0, 0, fmt.Errorf("%w: folder name ciphertext required", ErrInvalidInput)
+			return 0, 0, 0, fmt.Errorf("%w: folder name ciphertext required", ErrInvalidInput)
 		}
 		if err := validateCipherPair(f.NameCipher, f.NameNonce, "folder_name"); err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 	}
 	for _, it := range items {
@@ -353,8 +357,22 @@ func (s *Service) ImportBundle(ctx context.Context, userID string, folders []Fol
 			NotesCipher: it.NotesCipher, NotesNonce: it.NotesNonce,
 			Favorite: it.Favorite, Reprompt: it.Reprompt,
 		}); err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 	}
-	return s.repo.ImportBundle(ctx, userID, folders, items)
+	for _, a := range attachments {
+		if a.ItemID == "" || a.BlobPath == "" {
+			return 0, 0, 0, fmt.Errorf("%w: attachment item_id and blob_path required", ErrInvalidInput)
+		}
+		if a.SizeBytes < 0 || a.SizeBytes > MaxAttachmentBytes {
+			return 0, 0, 0, fmt.Errorf("%w: invalid attachment size", ErrInvalidInput)
+		}
+		if err := validateCipherPair(a.FileKeyCipher, a.FileKeyNonce, "file_key"); err != nil {
+			return 0, 0, 0, err
+		}
+		if err := validateCipherPair(a.NameCipher, a.NameNonce, "name"); err != nil {
+			return 0, 0, 0, err
+		}
+	}
+	return s.repo.ImportBundle(ctx, userID, folders, items, attachments)
 }

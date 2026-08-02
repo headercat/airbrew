@@ -37,11 +37,12 @@ type Event struct {
 type EventKind string
 
 const (
-	EventDelta    EventKind = "delta"    // assistant content fragment
-	EventTool     EventKind = "tool"     // tool call + result
-	EventDone     EventKind = "done"     // turn finished
-	EventError    EventKind = "error"    // fatal error
-	EventMetadata EventKind = "metadata" // out-of-band info (model id, etc)
+	EventDelta     EventKind = "delta"      // assistant content fragment
+	EventToolStart EventKind = "tool_start" // tool call started
+	EventTool      EventKind = "tool"       // tool call + result
+	EventDone      EventKind = "done"       // turn finished
+	EventError     EventKind = "error"      // fatal error
+	EventMetadata  EventKind = "metadata"   // out-of-band info (model id, etc)
 )
 
 // ErrorBody is the wire shape for Event.Err.
@@ -256,6 +257,10 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 		}
 
 		for _, tc := range persistedToolCalls {
+			out <- Event{
+				Kind: EventToolStart, ToolCallID: tc.id, ToolName: tc.name,
+				ToolArgs: tc.args,
+			}
 			result, _ := dispatch(ctx, rt.tools, allowedTools, tc.name, tc.args)
 			result = truncateToolResult(result)
 			out <- Event{
@@ -309,20 +314,55 @@ func truncateToolResult(s string) string {
 // most recent context (and any in-flight tool exchange) survive.
 const MaxHistoryMessages = 50
 
-// trimHistory returns the most recent n messages of hist, preserving
-// any trailing role=tool block (a tool result is meaningless without
-// the assistant tool_calls that preceded it, but if the slice begins
-// with an orphan tool row we drop it cleanly).
+// trimHistory returns the most recent n messages of hist, then repairs
+// tool-call transcript boundaries. Providers expect assistant tool_calls
+// to be followed by their matching tool result rows; partial exchanges
+// are dropped instead of replayed.
 func trimHistory(hist []provider.Message, n int) []provider.Message {
-	if n <= 0 || len(hist) <= n {
-		return hist
+	if n > 0 && len(hist) > n {
+		hist = hist[len(hist)-n:]
 	}
-	trimmed := hist[len(hist)-n:]
-	// Drop a leading tool row whose assistant tool_calls were trimmed off.
-	for len(trimmed) > 0 && trimmed[0].Role == provider.RoleTool {
-		trimmed = trimmed[1:]
+	return repairToolTranscript(hist)
+}
+
+func repairToolTranscript(hist []provider.Message) []provider.Message {
+	out := make([]provider.Message, 0, len(hist))
+	for i := 0; i < len(hist); i++ {
+		m := hist[i]
+		if m.Role == provider.RoleTool {
+			continue
+		}
+		if m.Role != provider.RoleAssistant || len(m.ToolCalls) == 0 {
+			out = append(out, m)
+			continue
+		}
+		if !hasCompleteToolResults(hist, i) {
+			for i+1 < len(hist) && hist[i+1].Role == provider.RoleTool {
+				i++
+			}
+			continue
+		}
+		out = append(out, m)
+		for range m.ToolCalls {
+			i++
+			out = append(out, hist[i])
+		}
 	}
-	return trimmed
+	return out
+}
+
+func hasCompleteToolResults(hist []provider.Message, assistantIndex int) bool {
+	calls := hist[assistantIndex].ToolCalls
+	if assistantIndex+len(calls) >= len(hist) {
+		return false
+	}
+	for i, tc := range calls {
+		next := hist[assistantIndex+1+i]
+		if next.Role != provider.RoleTool || next.ToolCallID != tc.ID {
+			return false
+		}
+	}
+	return true
 }
 
 // buildProviderMessages prepends the system prompt to history. If the

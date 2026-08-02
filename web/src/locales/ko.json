@@ -133,6 +133,7 @@
     "newConversation": "새 대화",
     "untitled": "제목 없음",
     "noConversations": "아직 대화가 없습니다.",
+    "noAgents": "사용 가능한 활성 AI 에이전트가 없습니다. 관리자에게 설정을 요청하세요.",
     "selectConversation": "대화를 선택하거나 새로 만드세요.",
     "composerPlaceholder": "메시지를 입력하세요 (Enter: 전송, Shift+Enter: 줄바꿈)",
     "send": "전송",

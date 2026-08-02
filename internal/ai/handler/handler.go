@@ -386,6 +386,12 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 			if err := sse.Event("delta", map[string]string{"content": ev.Content}); err != nil {
 				return
 			}
+		case agent.EventToolStart:
+			if err := sse.Event("tool_start", map[string]any{
+				"id": ev.ToolCallID, "name": ev.ToolName, "args": ev.ToolArgs,
+			}); err != nil {
+				return
+			}
 		case agent.EventTool:
 			if err := sse.Event("tool", map[string]any{
 				"id": ev.ToolCallID, "name": ev.ToolName,

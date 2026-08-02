@@ -177,17 +177,26 @@ export default function AIPage() {
               case "delta":
                 cur.content += ev.content;
                 break;
-              case "tool":
+              case "tool_start":
                 cur.toolNotices = [
                   ...(cur.toolNotices ?? []),
                   {
                     id: ev.id,
                     name: ev.name,
                     args: ev.args,
-                    result: ev.result,
-                    pending: false,
+                    result: "",
+                    pending: true,
                   },
                 ];
+                break;
+              case "tool":
+                cur.toolNotices = upsertToolNotice(cur.toolNotices, {
+                  id: ev.id,
+                  name: ev.name,
+                  args: ev.args,
+                  result: ev.result,
+                  pending: false,
+                });
                 break;
               case "done":
                 cur.streaming = false;
@@ -270,101 +279,6 @@ export default function AIPage() {
     );
   }
 
-  // Regenerate swaps the assistant message at idx for a fresh stream.
-  // The previous user message is reused (not re-persisted): the runtime
-  // appends a new user message on every call, so we re-send the prior
-  // user content. The replaced assistant + tool rows are dropped from
-  // the local view (they remain in history server-side; a re-fetch would
-  // surface them, but for UX a clean replace reads better).
-  async function regenerateLastAssistant(idx: number) {
-    if (!detail || busy) return;
-    // Find the most recent user message before idx.
-    let userText = "";
-    for (let i = idx - 1; i >= 0; i--) {
-      if (messages[i].role === "user") {
-        userText = messages[i].content;
-        break;
-      }
-    }
-    if (!userText) return;
-
-    const assistantId = `tmp-asst-${Date.now()}`;
-    const replacement: ChatMessage = {
-      id: assistantId,
-      conversation_id: detail.id,
-      role: "assistant",
-      content: "",
-      seq: (messages[idx]?.seq ?? messages.at(-1)?.seq ?? 0) + 1,
-      created_at: new Date().toISOString(),
-      streaming: true,
-      toolNotices: [],
-    };
-    setMessages((prev) => [...prev.slice(0, idx), replacement]);
-    setBusy(true);
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    try {
-      await streamChat({
-        conversationId: detail.id,
-        message: userText,
-        signal: ctrl.signal,
-        onEvent: (ev: StreamEvent) => {
-          setMessages((prev) => {
-            const next = [...prev];
-            const i = next.findIndex((m) => m.id === assistantId);
-            if (i === -1) return prev;
-            const cur = { ...next[i] };
-            switch (ev.kind) {
-              case "delta":
-                cur.content += ev.content;
-                break;
-              case "tool":
-                cur.toolNotices = [
-                  ...(cur.toolNotices ?? []),
-                  {
-                    id: ev.id,
-                    name: ev.name,
-                    args: ev.args,
-                    result: ev.result,
-                    pending: false,
-                  },
-                ];
-                break;
-              case "done":
-                cur.streaming = false;
-                if (ev.message_id) cur.id = ev.message_id;
-                if (ev.usage) {
-                  cur.prompt_tokens = ev.usage.prompt_tokens;
-                  cur.completion_tokens = ev.usage.completion_tokens;
-                }
-                break;
-              case "error":
-                cur.streaming = false;
-                cur.content +=
-                  (cur.content ? "\n\n" : "") +
-                  `_${t("ai.streamError", {
-                    msg: `${ev.error.code}: ${ev.error.description}`,
-                  })}_`;
-                break;
-              case "metadata":
-                break;
-            }
-            next[i] = cur;
-            return next;
-          });
-        },
-      });
-    } catch (err) {
-      if (!ctrl.signal.aborted) {
-        setError(fmtErr(err));
-      }
-    } finally {
-      setBusy(false);
-      abortRef.current = null;
-      refreshConversations();
-    }
-  }
-
   return (
     <PageWrapper className="max-w-6xl">
       <div className="flex items-center justify-between gap-4">
@@ -381,6 +295,7 @@ export default function AIPage() {
             className="h-9 rounded-md border border-border bg-background px-2 text-sm"
             value={newAgentId}
             onChange={(e) => setNewAgentId(e.target.value)}
+            disabled={agents.length === 0}
           >
             {agents.map((a) => (
               <option key={a.id} value={a.id}>
@@ -388,16 +303,21 @@ export default function AIPage() {
               </option>
             ))}
           </select>
-          <Button onClick={handleNewConversation} size="sm">
+          <Button
+            onClick={handleNewConversation}
+            size="sm"
+            disabled={agents.length === 0}
+          >
             <Plus className="mr-1 h-4 w-4" />
             {t("ai.newConversation")}
           </Button>
         </div>
       </div>
 
-      {error && (
-        <p className="text-sm text-destructive">{error}</p>
+      {agents.length === 0 && !error && (
+        <p className="text-sm text-muted-foreground">{t("ai.noAgents")}</p>
       )}
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="grid gap-4 md:grid-cols-[260px_1fr]">
         {/* Conversation list */}
@@ -494,16 +414,8 @@ export default function AIPage() {
                 aria-live="polite"
                 aria-relevant="additions"
               >
-                {messages.map((m, idx) => (
-                  <MessageBubble
-                    key={m.id}
-                    message={m}
-                    onRegenerate={
-                      m.role === "assistant" && !busy
-                        ? () => regenerateLastAssistant(idx)
-                        : undefined
-                    }
-                  />
+                {messages.map((m) => (
+                  <MessageBubble key={m.id} message={m} />
                 ))}
               </div>
 
@@ -603,4 +515,15 @@ function fmtErr(err: unknown): string {
   if (isApiError(err)) return err.error_description ?? err.error;
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+function upsertToolNotice(
+  notices: ToolNotice[] | undefined,
+  next: ToolNotice,
+): ToolNotice[] {
+  const rows = notices ? [...notices] : [];
+  const idx = rows.findIndex((n) => n.id === next.id);
+  if (idx === -1) return [...rows, next];
+  rows[idx] = next;
+  return rows;
 }

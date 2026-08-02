@@ -32,11 +32,27 @@ export function MessageBubble({
         }`}
       >
         {isUser ? (
-          <div className="whitespace-pre-wrap break-words">{message.content}</div>
+          <div className="whitespace-pre-wrap break-words">
+            {message.content}
+          </div>
         ) : (
           <div className="prose prose-sm dark:prose-invert max-w-none break-words">
             {message.content ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  a: ({ href, children }) => {
+                    if (!isSafeLink(href)) {
+                      return <span>{children}</span>;
+                    }
+                    return (
+                      <a href={href} target="_blank" rel="noreferrer noopener">
+                        {children}
+                      </a>
+                    );
+                  },
+                }}
+              >
                 {message.content}
               </ReactMarkdown>
             ) : message.streaming ? (
@@ -70,15 +86,39 @@ export function MessageBubble({
   );
 }
 
-function ToolNoticeView({ notice }: { notice: NonNullable<ChatMessage["toolNotices"]>[0] }) {
+function isSafeLink(href: string | undefined): href is string {
+  if (!href) return false;
+  try {
+    const u = new URL(href, window.location.origin);
+    return (
+      u.protocol === "http:" ||
+      u.protocol === "https:" ||
+      u.protocol === "mailto:"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function ToolNoticeView({
+  notice,
+}: {
+  notice: NonNullable<ChatMessage["toolNotices"]>[0];
+}) {
   return (
     <div className="flex items-start gap-2 text-muted-foreground">
-      <Wrench className="mt-0.5 h-3 w-3 shrink-0" />
+      {notice.pending ? (
+        <Loader2 className="mt-0.5 h-3 w-3 shrink-0 animate-spin" />
+      ) : (
+        <Wrench className="mt-0.5 h-3 w-3 shrink-0" />
+      )}
       <div className="min-w-0 flex-1">
         <div className="font-mono">{notice.name}</div>
-        <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words text-[10px]">
-          {notice.result}
-        </pre>
+        {notice.result && (
+          <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words text-[10px]">
+            {notice.result}
+          </pre>
+        )}
       </div>
     </div>
   );
@@ -112,11 +152,7 @@ function BubbleActions({
         aria-label={t("ai.copy")}
         className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
       >
-        {copied ? (
-          <Check className="h-3 w-3" />
-        ) : (
-          <Copy className="h-3 w-3" />
-        )}
+        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
       </button>
       {onRegenerate && message.role === "assistant" && (
         <button

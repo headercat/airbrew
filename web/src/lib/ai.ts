@@ -212,6 +212,12 @@ export type StreamEvent =
   | { kind: "metadata"; content: string }
   | { kind: "delta"; content: string }
   | {
+      kind: "tool_start";
+      id: string;
+      name: string;
+      args: string;
+    }
+  | {
       kind: "tool";
       id: string;
       name: string;
@@ -320,6 +326,13 @@ function parseFrame(frame: string): StreamEvent | null {
       return { kind: "metadata", content: payload.content ?? "" };
     case "delta":
       return { kind: "delta", content: payload.content ?? "" };
+    case "tool_start":
+      return {
+        kind: "tool_start",
+        id: payload.id ?? "",
+        name: payload.name ?? "",
+        args: payload.args ?? "",
+      };
     case "tool":
       return {
         kind: "tool",

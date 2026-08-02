@@ -133,6 +133,7 @@
     "newConversation": "New chat",
     "untitled": "Untitled",
     "noConversations": "No conversations yet.",
+    "noAgents": "No active AI agents are available. Ask an administrator to configure one.",
     "selectConversation": "Select or start a conversation.",
     "composerPlaceholder": "Type a message (Enter to send, Shift+Enter for newline)",
     "send": "Send",

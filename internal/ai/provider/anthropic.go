@@ -101,6 +101,14 @@ type anthropicMessage struct {
 	Content anthropicContent `json:"-"`
 }
 
+func (m anthropicMessage) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Role    string           `json:"role"`
+		Content anthropicContent `json:"content"`
+	}
+	return json.Marshal(wire{Role: m.Role, Content: m.Content})
+}
+
 // anthropicContent is either a plain string (marshal) or a slice of typed
 // blocks (tool_use / tool_result). We marshal manually so we can switch on
 // shape without forcing callers into one form.
@@ -125,6 +133,35 @@ type anthropicBlock struct {
 	ToolUseID string         `json:"tool_use_id,omitempty"`
 	Content   string         `json:"content,omitempty"`
 	IsError   bool           `json:"is_error,omitempty"`
+}
+
+func (b anthropicBlock) MarshalJSON() ([]byte, error) {
+	m := map[string]any{"type": b.Type}
+	if b.Text != "" {
+		m["text"] = b.Text
+	}
+	if b.ID != "" {
+		m["id"] = b.ID
+	}
+	if b.Name != "" {
+		m["name"] = b.Name
+	}
+	if b.Type == "tool_use" {
+		if b.Input == nil {
+			b.Input = map[string]any{}
+		}
+		m["input"] = b.Input
+	}
+	if b.ToolUseID != "" {
+		m["tool_use_id"] = b.ToolUseID
+	}
+	if b.Content != "" {
+		m["content"] = b.Content
+	}
+	if b.IsError {
+		m["is_error"] = b.IsError
+	}
+	return json.Marshal(m)
 }
 
 type anthropicTool struct {
@@ -163,7 +200,9 @@ func (c *anthropicClient) buildBody(req Request) ([]byte, error) {
 			}
 			for _, tc := range m.ToolCalls {
 				var input map[string]any
-				_ = json.Unmarshal([]byte(tc.Args), &input)
+				if err := json.Unmarshal([]byte(tc.Args), &input); err != nil || input == nil {
+					input = map[string]any{}
+				}
 				blocks = append(blocks, anthropicBlock{
 					Type: "tool_use", ID: tc.ID, Name: tc.Name, Input: input,
 				})

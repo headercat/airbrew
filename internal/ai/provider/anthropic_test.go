@@ -108,6 +108,24 @@ func TestAnthropicDriverNeedsKey(t *testing.T) {
 	}
 }
 
+func TestAnthropicBuildBodyFallsBackForMalformedToolArgs(t *testing.T) {
+	cli := &anthropicClient{cfg: Config{Model: "claude-test"}}
+	body, err := cli.buildBody(Request{
+		Messages: []Message{{
+			Role: RoleAssistant,
+			ToolCalls: []ToolCall{{
+				ID: "tool_1", Name: "clock", Args: "{not-json",
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("buildBody: %v", err)
+	}
+	if !strings.Contains(string(body), `"input":{}`) {
+		t.Fatalf("expected empty object fallback, body: %s", body)
+	}
+}
+
 func TestAnthropicDriverUnexpectedEOF(t *testing.T) {
 	const resp = `event: message_start
 data: {"type":"message_start","message":{"id":"msg_1","model":"claude","usage":{"input_tokens":7,"output_tokens":0}}}

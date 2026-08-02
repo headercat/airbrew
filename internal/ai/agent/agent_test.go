@@ -302,6 +302,41 @@ func TestBuildProviderMessagesReplacesStaleSystem(t *testing.T) {
 	}
 }
 
+func TestTrimHistoryDropsIncompleteToolExchange(t *testing.T) {
+	hist := []provider.Message{
+		{Role: provider.RoleUser, Content: "first"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{
+			{ID: "call_1", Name: "clock", Args: "{}"},
+		}},
+		{Role: provider.RoleUser, Content: "next"},
+	}
+	got := trimHistory(hist, 50)
+	if len(got) != 2 {
+		t.Fatalf("expected incomplete tool exchange to be dropped, got %+v", got)
+	}
+	if got[0].Content != "first" || got[1].Content != "next" {
+		t.Fatalf("unexpected repaired history: %+v", got)
+	}
+}
+
+func TestTrimHistoryKeepsCompleteToolExchange(t *testing.T) {
+	hist := []provider.Message{
+		{Role: provider.RoleUser, Content: "first"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{
+			{ID: "call_1", Name: "clock", Args: "{}"},
+		}},
+		{Role: provider.RoleTool, ToolCallID: "call_1", ToolName: "clock", Content: "noon"},
+		{Role: provider.RoleAssistant, Content: "done"},
+	}
+	got := trimHistory(hist, 3)
+	if len(got) != 3 {
+		t.Fatalf("expected complete exchange plus final assistant, got %+v", got)
+	}
+	if got[0].Role != provider.RoleAssistant || got[1].Role != provider.RoleTool {
+		t.Fatalf("complete exchange not preserved: %+v", got)
+	}
+}
+
 // --- helpers --------------------------------------------------------------
 
 type collected struct {

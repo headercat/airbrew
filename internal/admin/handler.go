@@ -747,11 +747,11 @@ func decodeJSON(r *http.Request, v any) error {
 }
 
 func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		parts := strings.SplitN(f, ",", 2)
-		return strings.TrimSpace(parts[0])
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
 	}
-	return r.RemoteAddr
+	return strings.TrimSpace(r.RemoteAddr)
 }
 
 // validateCIDR returns an error when raw is not a parseable IPv4/IPv6 CIDR.

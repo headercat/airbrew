@@ -109,15 +109,11 @@ func (m *Module) allowIP(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func requestIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		parts := strings.SplitN(f, ",", 2)
-		return strings.TrimSpace(parts[0])
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
 		return host
 	}
-	return r.RemoteAddr
+	return strings.TrimSpace(r.RemoteAddr)
 }
 
 func deny(w http.ResponseWriter, status int, code, desc string) {

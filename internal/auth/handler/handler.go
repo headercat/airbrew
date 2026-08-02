@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -462,11 +463,9 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, value string, maxAge i
 }
 
 func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		if i := strings.Index(f, ","); i > 0 {
-			return strings.TrimSpace(f[:i])
-		}
-		return strings.TrimSpace(f)
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
 	}
-	return r.RemoteAddr
+	return strings.TrimSpace(r.RemoteAddr)
 }

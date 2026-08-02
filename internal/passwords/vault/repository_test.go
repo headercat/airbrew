@@ -451,13 +451,20 @@ func TestImportBundleRemapsFolderIDs(t *testing.T) {
 func TestRestoreItemRevision(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
+	f1, _ := repo.CreateFolder(ctx, "u1", cipherFixture(24, 150), nonceFixture(151))
+	f2, _ := repo.CreateFolder(ctx, "u1", cipherFixture(24, 152), nonceFixture(153))
 	it, _ := repo.CreateItem(ctx, "u1", ItemInput{
-		Type: ItemLogin, NameCipher: cipherFixture(24, 14), NameNonce: nonceFixture(24),
+		Type: ItemLogin, FolderID: f1.ID,
+		NameCipher: cipherFixture(24, 14), NameNonce: nonceFixture(24),
 		DataCipher: cipherFixture(32, 34), DataNonce: nonceFixture(44),
+		NotesCipher: cipherFixture(24, 154), NotesNonce: nonceFixture(155),
+		Favorite: true, Reprompt: true,
 	})
 	upd, _ := repo.UpdateItem(ctx, "u1", it.ID, ItemInput{
-		Type: ItemLogin, NameCipher: cipherFixture(24, 15), NameNonce: nonceFixture(25),
+		Type: ItemCard, FolderID: f2.ID,
+		NameCipher: cipherFixture(24, 15), NameNonce: nonceFixture(25),
 		DataCipher: cipherFixture(32, 35), DataNonce: nonceFixture(45),
+		NotesCipher: cipherFixture(24, 156), NotesNonce: nonceFixture(157),
 	}, it.Revision)
 	revs, _ := repo.ListItemRevisions(ctx, "u1", it.ID)
 	if len(revs) != 1 {
@@ -470,6 +477,12 @@ func TestRestoreItemRevision(t *testing.T) {
 	}
 	if restored.NameCipher != cipherFixture(24, 14) || restored.DataCipher != cipherFixture(32, 34) {
 		t.Fatalf("restored = name %q data %q, want archived snapshot", restored.NameCipher, restored.DataCipher)
+	}
+	if restored.Type != ItemLogin || restored.FolderID != f1.ID || !restored.Favorite || !restored.Reprompt {
+		t.Fatalf("restored metadata = type %q folder %q favorite %v reprompt %v, want original", restored.Type, restored.FolderID, restored.Favorite, restored.Reprompt)
+	}
+	if restored.NotesCipher != cipherFixture(24, 154) || restored.NotesNonce != nonceFixture(155) {
+		t.Fatalf("restored notes = %q/%q, want archived notes", restored.NotesCipher, restored.NotesNonce)
 	}
 }
 

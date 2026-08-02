@@ -142,12 +142,18 @@ type Attachment struct {
 // fields, captured each time the item is updated. The client decrypts it with
 // the vault key to show "previous versions" and to restore.
 type ItemRevision struct {
-	ID         string
-	ItemID     string
-	NameCipher string
-	NameNonce  string
-	DataCipher string
-	DataNonce  string
-	Revision   int64
-	CreatedAt  time.Time
+	ID          string
+	ItemID      string
+	Type        ItemType
+	FolderID    string
+	NameCipher  string
+	NameNonce   string
+	DataCipher  string
+	DataNonce   string
+	NotesCipher string
+	NotesNonce  string
+	Favorite    bool
+	Reprompt    bool
+	Revision    int64
+	CreatedAt   time.Time
 }

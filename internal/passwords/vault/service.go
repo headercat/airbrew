@@ -140,8 +140,7 @@ func (s *Service) ListItemRevisions(ctx context.Context, userID, itemID string) 
 // RestoreItemRevision re-stamps an archived snapshot as the current item. The
 // server already holds the snapshot's ciphertext, so no re-encryption is
 // needed: the current row is archived and then overwritten with the snapshot's
-// name/data, guarded by ifRevision. The item's notes/folder/type/favorite/
-// reprompt are left as-is (the history snapshot only captures name+data).
+// encrypted fields and metadata, guarded by ifRevision.
 func (s *Service) RestoreItemRevision(ctx context.Context, userID, itemID, revID string, ifRevision int64) (Item, error) {
 	if ifRevision <= 0 {
 		return Item{}, fmt.Errorf("%w: if_revision required", ErrInvalidInput)

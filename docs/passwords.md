@@ -142,10 +142,16 @@ CREATE INDEX idx_vault_items_sync ON vault_items(user_id, revision);
 CREATE TABLE vault_item_revisions (
   id            TEXT PRIMARY KEY NOT NULL,
   item_id       TEXT NOT NULL,
+  type          TEXT,
+  folder_id     TEXT,
   name_cipher   TEXT NOT NULL,
   name_nonce    TEXT NOT NULL,
   data_cipher   TEXT NOT NULL,
   data_nonce    TEXT NOT NULL,
+  notes_cipher  TEXT,
+  notes_nonce   TEXT,
+  favorite      INTEGER,
+  reprompt      INTEGER,
   revision      INTEGER NOT NULL,
   created_at    DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
   FOREIGN KEY (item_id) REFERENCES vault_items(id) ON DELETE CASCADE

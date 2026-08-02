@@ -337,9 +337,13 @@ func (r *Repository) UpdateItem(ctx context.Context, userID, itemID string, in I
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO vault_item_revisions
-			  (id, item_id, name_cipher, name_nonce, data_cipher, data_nonce, revision, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, id.New(), cur.ID, cur.NameCipher, cur.NameNonce, cur.DataCipher, cur.DataNonce, cur.Revision, cur.UpdatedAt); err != nil {
+			  (id, item_id, type, folder_id, name_cipher, name_nonce, data_cipher, data_nonce,
+			   notes_cipher, notes_nonce, favorite, reprompt, revision, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, id.New(), cur.ID, string(cur.Type), nullable(cur.FolderID),
+			cur.NameCipher, cur.NameNonce, cur.DataCipher, cur.DataNonce,
+			nullable(cur.NotesCipher), nullable(cur.NotesNonce),
+			boolToInt(cur.Favorite), boolToInt(cur.Reprompt), cur.Revision, cur.UpdatedAt); err != nil {
 			return fmt.Errorf("vault: archive item revision: %w", err)
 		}
 		rev, err := bumpRev(ctx, tx, userID)
@@ -615,8 +619,11 @@ func (r *Repository) syncChangesAtRevision(ctx context.Context, userID string, r
 // first, scoped to the owning user via a join.
 func (r *Repository) ListItemRevisions(ctx context.Context, userID, itemID string) ([]ItemRevision, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT r.id, r.item_id, r.name_cipher, r.name_nonce,
-		       r.data_cipher, r.data_nonce, r.revision, r.created_at
+		SELECT r.id, r.item_id, COALESCE(r.type, i.type), COALESCE(r.folder_id, ''),
+		       r.name_cipher, r.name_nonce, r.data_cipher, r.data_nonce,
+		       COALESCE(r.notes_cipher, ''), COALESCE(r.notes_nonce, ''),
+		       COALESCE(r.favorite, i.favorite), COALESCE(r.reprompt, i.reprompt),
+		       r.revision, r.created_at
 		FROM vault_item_revisions r
 		JOIN vault_items i ON i.id = r.item_id
 		WHERE i.user_id = ? AND r.item_id = ?
@@ -628,10 +635,16 @@ func (r *Repository) ListItemRevisions(ctx context.Context, userID, itemID strin
 	var out []ItemRevision
 	for rows.Next() {
 		var rev ItemRevision
-		if err := rows.Scan(&rev.ID, &rev.ItemID, &rev.NameCipher, &rev.NameNonce,
-			&rev.DataCipher, &rev.DataNonce, &rev.Revision, &rev.CreatedAt); err != nil {
+		var typ string
+		var fav, rep int
+		if err := rows.Scan(&rev.ID, &rev.ItemID, &typ, &rev.FolderID,
+			&rev.NameCipher, &rev.NameNonce, &rev.DataCipher, &rev.DataNonce,
+			&rev.NotesCipher, &rev.NotesNonce, &fav, &rep, &rev.Revision, &rev.CreatedAt); err != nil {
 			return nil, err
 		}
+		rev.Type = ItemType(typ)
+		rev.Favorite = fav == 1
+		rev.Reprompt = rep == 1
 		out = append(out, rev)
 	}
 	return out, rows.Err()
@@ -640,24 +653,29 @@ func (r *Repository) ListItemRevisions(ctx context.Context, userID, itemID strin
 // GetItemRevision returns one archived snapshot, ownership-scoped.
 func (r *Repository) GetItemRevision(ctx context.Context, userID, itemID, revID string) (ItemRevision, error) {
 	var rev ItemRevision
-	err := r.db.QueryRowContext(ctx, `
-		SELECT r.id, r.item_id, r.name_cipher, r.name_nonce,
-		       r.data_cipher, r.data_nonce, r.revision, r.created_at
+	row := r.db.QueryRowContext(ctx, `
+		SELECT r.id, r.item_id, COALESCE(r.type, i.type), COALESCE(r.folder_id, ''),
+		       r.name_cipher, r.name_nonce, r.data_cipher, r.data_nonce,
+		       COALESCE(r.notes_cipher, ''), COALESCE(r.notes_nonce, ''),
+		       COALESCE(r.favorite, i.favorite), COALESCE(r.reprompt, i.reprompt),
+		       r.revision, r.created_at
 		FROM vault_item_revisions r
 		JOIN vault_items i ON i.id = r.item_id
 		WHERE i.user_id = ? AND r.item_id = ? AND r.id = ?`, userID, itemID, revID,
-	).Scan(&rev.ID, &rev.ItemID, &rev.NameCipher, &rev.NameNonce,
-		&rev.DataCipher, &rev.DataNonce, &rev.Revision, &rev.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ItemRevision{}, ErrNotFound
+	)
+	if err := scanItemRevision(row, &rev); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ItemRevision{}, ErrNotFound
+		}
+		return ItemRevision{}, err
 	}
-	return rev, err
+	return rev, nil
 }
 
 // RestoreItemRevision archives the current row, then overwrites it with the
-// name/data ciphertext from an archived snapshot. Ownership is enforced via the
-// item lock; ifRevision guards against clobbering a concurrent edit. The
-// snapshot must belong to the item.
+// encrypted fields and metadata from an archived snapshot. Ownership is
+// enforced via the item lock; ifRevision guards against clobbering a concurrent
+// edit. The snapshot must belong to the item.
 func (r *Repository) RestoreItemRevision(ctx context.Context, userID, itemID, revID string, ifRevision int64) (Item, error) {
 	var out Item
 	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
@@ -670,13 +688,18 @@ func (r *Repository) RestoreItemRevision(ctx context.Context, userID, itemID, re
 			return &ConflictError{CurrentRow: &c}
 		}
 		var snap ItemRevision
-		if err := tx.QueryRowContext(ctx, `
-			SELECT r.id, r.name_cipher, r.name_nonce, r.data_cipher, r.data_nonce
+		row := tx.QueryRowContext(ctx, `
+			SELECT r.id, r.item_id, COALESCE(r.type, i.type), COALESCE(r.folder_id, ''),
+			       r.name_cipher, r.name_nonce, r.data_cipher, r.data_nonce,
+			       COALESCE(r.notes_cipher, ''), COALESCE(r.notes_nonce, ''),
+			       COALESCE(r.favorite, i.favorite), COALESCE(r.reprompt, i.reprompt),
+			       r.revision, r.created_at
 			FROM vault_item_revisions r
 			JOIN vault_items i ON i.id = r.item_id
 			WHERE i.user_id = ? AND r.item_id = ? AND r.id = ?`,
 			userID, itemID, revID,
-		).Scan(&snap.ID, &snap.NameCipher, &snap.NameNonce, &snap.DataCipher, &snap.DataNonce); err != nil {
+		)
+		if err := scanItemRevision(row, &snap); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
@@ -684,9 +707,13 @@ func (r *Repository) RestoreItemRevision(ctx context.Context, userID, itemID, re
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO vault_item_revisions
-			  (id, item_id, name_cipher, name_nonce, data_cipher, data_nonce, revision, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			id.New(), cur.ID, cur.NameCipher, cur.NameNonce, cur.DataCipher, cur.DataNonce, cur.Revision, cur.UpdatedAt); err != nil {
+			  (id, item_id, type, folder_id, name_cipher, name_nonce, data_cipher, data_nonce,
+			   notes_cipher, notes_nonce, favorite, reprompt, revision, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id.New(), cur.ID, string(cur.Type), nullable(cur.FolderID),
+			cur.NameCipher, cur.NameNonce, cur.DataCipher, cur.DataNonce,
+			nullable(cur.NotesCipher), nullable(cur.NotesNonce),
+			boolToInt(cur.Favorite), boolToInt(cur.Reprompt), cur.Revision, cur.UpdatedAt); err != nil {
 			return fmt.Errorf("vault: archive before restore: %w", err)
 		}
 		rev, err := bumpRev(ctx, tx, userID)
@@ -694,20 +721,32 @@ func (r *Repository) RestoreItemRevision(ctx context.Context, userID, itemID, re
 			return err
 		}
 		now := time.Now().UTC().Truncate(time.Second)
+		folderID, err := r.restoreFolderID(ctx, tx, userID, snap.FolderID)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE vault_items SET
-			  name_cipher = ?, name_nonce = ?, data_cipher = ?, data_nonce = ?,
-			  revision = ?, updated_at = ?
+			  type = ?, folder_id = ?, name_cipher = ?, name_nonce = ?,
+			  data_cipher = ?, data_nonce = ?, notes_cipher = ?, notes_nonce = ?,
+			  favorite = ?, reprompt = ?, revision = ?, updated_at = ?
 			WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
-			snap.NameCipher, snap.NameNonce, snap.DataCipher, snap.DataNonce,
-			rev, now, itemID, userID); err != nil {
+			string(snap.Type), nullable(folderID), snap.NameCipher, snap.NameNonce,
+			snap.DataCipher, snap.DataNonce, nullable(snap.NotesCipher), nullable(snap.NotesNonce),
+			boolToInt(snap.Favorite), boolToInt(snap.Reprompt), rev, now, itemID, userID); err != nil {
 			return fmt.Errorf("vault: restore item: %w", err)
 		}
 		out = cur
+		out.Type = snap.Type
+		out.FolderID = folderID
 		out.NameCipher = snap.NameCipher
 		out.NameNonce = snap.NameNonce
 		out.DataCipher = snap.DataCipher
 		out.DataNonce = snap.DataNonce
+		out.NotesCipher = snap.NotesCipher
+		out.NotesNonce = snap.NotesNonce
+		out.Favorite = snap.Favorite
+		out.Reprompt = snap.Reprompt
 		out.Revision = rev
 		out.UpdatedAt = now
 		return nil
@@ -716,6 +755,19 @@ func (r *Repository) RestoreItemRevision(ctx context.Context, userID, itemID, re
 		return Item{}, err
 	}
 	return out, nil
+}
+
+func (r *Repository) restoreFolderID(ctx context.Context, tx *sql.Tx, userID, folderID string) (string, error) {
+	if folderID == "" {
+		return "", nil
+	}
+	if err := ensureFolderOwned(ctx, tx, userID, folderID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return folderID, nil
 }
 
 // --- import -----------------------------------------------------------------
@@ -1055,6 +1107,20 @@ func scanItem(row scanner) (Item, error) {
 		it.DeletedAt = &t
 	}
 	return it, nil
+}
+
+func scanItemRevision(row scanner, rev *ItemRevision) error {
+	var typ string
+	var fav, rep int
+	if err := row.Scan(&rev.ID, &rev.ItemID, &typ, &rev.FolderID,
+		&rev.NameCipher, &rev.NameNonce, &rev.DataCipher, &rev.DataNonce,
+		&rev.NotesCipher, &rev.NotesNonce, &fav, &rep, &rev.Revision, &rev.CreatedAt); err != nil {
+		return err
+	}
+	rev.Type = ItemType(typ)
+	rev.Favorite = fav == 1
+	rev.Reprompt = rep == 1
+	return nil
 }
 
 func nullable(s string) any {

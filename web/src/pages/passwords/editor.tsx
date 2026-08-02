@@ -69,7 +69,7 @@ export default function PasswordEditor() {
     updateItem,
     deleteItem,
     refresh,
-    verifyMasterPassword,
+    unlockItemDetails,
   } = useVault();
 
   const existing = items.find((it) => it.id === id);
@@ -126,7 +126,7 @@ export default function PasswordEditor() {
       <RepromptEditorGate
         onCancel={() => navigate(`/passwords/${existing.id}`)}
         onVerify={async (password) => {
-          const ok = await verifyMasterPassword(password);
+          const ok = await unlockItemDetails(existing.id, password);
           if (!ok) throw new WrongMasterPassword();
           setRepromptVerified(true);
         }}

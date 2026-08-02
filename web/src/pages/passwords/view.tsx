@@ -70,7 +70,7 @@ export default function PasswordView() {
   // Reprompt gate: items flagged reprompt hide the whole decrypted detail area
   // until the user re-enters the master password. Verified state is kept only
   // for this view session and resets on navigation away.
-  const { verifyMasterPassword } = useVault();
+  const { unlockItemDetails } = useVault();
   const [repromptVerified, setRepromptVerified] = useState(false);
   const [repromptBusy, setRepromptBusy] = useState(false);
   const [repromptError, setRepromptError] = useState<string | null>(null);
@@ -181,7 +181,7 @@ export default function PasswordView() {
                     setRepromptBusy(true);
                     setRepromptError(null);
                     try {
-                      const ok = await verifyMasterPassword(repromptPw);
+                      const ok = await unlockItemDetails(item.id, repromptPw);
                       if (ok) setRepromptVerified(true);
                       else setRepromptError(t("passwords.unlock.wrong"));
                     } finally {

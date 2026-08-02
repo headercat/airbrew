@@ -179,8 +179,24 @@ export class WrongMasterPassword extends Error {
 async function decryptItem(
   key: Uint8Array,
   it: VaultItem,
+  options: { includeSensitive?: boolean } = {},
 ): Promise<DecryptedItem> {
   const name = await decryptString(key, it.name_cipher, it.name_nonce);
+  if (it.reprompt && !options.includeSensitive) {
+    return {
+      id: it.id,
+      type: it.type,
+      folderId: it.folder_id,
+      name,
+      notes: "",
+      fields: [],
+      favorite: it.favorite,
+      reprompt: it.reprompt,
+      revision: it.revision,
+      createdAt: it.created_at,
+      updatedAt: it.updated_at,
+    };
+  }
   const dataJson = await decryptString(key, it.data_cipher, it.data_nonce);
   let fields: Field[] = [];
   try {
@@ -295,6 +311,7 @@ type VaultContextValue = {
   // matches the key currently in memory. Used by the "reprompt" feature so a
   // sensitive item is only revealed after re-entering the master password.
   verifyMasterPassword: (password: string) => Promise<boolean>;
+  unlockItemDetails: (itemId: string, password: string) => Promise<boolean>;
   // exportBundle / importBundle wrap same-vault encrypted backup/restore.
   exportBundle: () => Promise<VApi.ExportBundle>;
   importBundle: (bundle: VApi.ExportBundle) => Promise<VApi.ImportCounts>;
@@ -800,6 +817,25 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const unlockItemDetails = useCallback(
+    async (itemId: string, password: string): Promise<boolean> => {
+      const key = keyRef.current;
+      if (!key) return false;
+      const ok = await verifyMasterPassword(password);
+      if (!ok) return false;
+      const raw = rawItemsRef.current.get(itemId);
+      if (!raw) return false;
+      const dec = await decryptItem(key, raw, { includeSensitive: true });
+      commitItems(
+        itemsRef.current
+          .map((it) => (it.id === itemId ? dec : it))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      );
+      return true;
+    },
+    [commitItems, verifyMasterPassword],
+  );
+
   const exportBundle = useCallback(async () => {
     return VApi.exportVault();
   }, []);
@@ -1137,6 +1173,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       deleteAttachment,
       downloadAttachment,
       verifyMasterPassword,
+      unlockItemDetails,
       exportBundle,
       importBundle,
       createFolder,
@@ -1166,6 +1203,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       deleteAttachment,
       downloadAttachment,
       verifyMasterPassword,
+      unlockItemDetails,
       exportBundle,
       importBundle,
       createFolder,

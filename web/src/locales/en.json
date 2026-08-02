@@ -260,7 +260,8 @@
       "colTime": "Time",
       "pageSummary": "{{start}}-{{end}} of {{total}} entries",
       "previousPage": "Previous",
-      "nextPage": "Next"
+      "nextPage": "Next",
+      "exportCSV": "Export CSV"
     },
     "permissions": {
       "title": "Permissions",
@@ -319,6 +320,7 @@
       "loginPageSummary": "{{start}}-{{end}} of {{total}} attempts",
       "previousPage": "Previous",
       "nextPage": "Next",
+      "exportCSV": "Export CSV",
       "saved": "Security settings saved.",
       "comingSoon": "Configurable in a future release."
     },

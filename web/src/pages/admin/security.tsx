@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
+  Download,
   History,
   Save,
   ShieldCheck,
@@ -81,14 +82,14 @@ export default function AdminSecurity() {
   }, [refresh]);
 
   const refreshLoginHistory = useCallback(async () => {
-    const params = new URLSearchParams({
-      limit: String(loginPageSize),
-      offset: String(loginOffset),
+    const params = loginHistoryParams({
+      email: loginEmail,
+      from: loginFrom,
+      limit: loginPageSize,
+      offset: loginOffset,
+      result: loginResult,
+      to: loginTo,
     });
-    if (loginResult) params.set("result", loginResult);
-    if (loginEmail.trim()) params.set("email", loginEmail.trim());
-    if (loginFrom) params.set("from", new Date(loginFrom).toISOString());
-    if (loginTo) params.set("to", new Date(loginTo).toISOString());
     try {
       const res = await api.get<{
         entries: LoginAttempt[];
@@ -162,6 +163,35 @@ export default function AdminSecurity() {
         isApiError(err) ? (err.error_description ?? err.error) : "error",
       );
     }
+  }
+
+  async function exportLoginHistoryCSV() {
+    const entries = await fetchAllLoginAttempts({
+      email: loginEmail,
+      from: loginFrom,
+      result: loginResult,
+      to: loginTo,
+    });
+    downloadCSV("airbrew-login-history.csv", [
+      [
+        "created_at",
+        "success",
+        "email",
+        "user_id",
+        "ip_address",
+        "user_agent",
+        "failure",
+      ],
+      ...entries.map((a) => [
+        a.created_at,
+        String(a.success),
+        a.email,
+        a.user_id,
+        a.ip_address,
+        a.user_agent,
+        a.failure ?? "",
+      ]),
+    ]);
   }
 
   const loginStart = loginTotal === 0 ? 0 : loginOffset + 1;
@@ -427,7 +457,7 @@ export default function AdminSecurity() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_160px_190px_190px_auto]">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_160px_190px_190px_auto_auto]">
             <Input
               placeholder={t("admin.security.emailFilter")}
               value={loginEmail}
@@ -474,6 +504,10 @@ export default function AdminSecurity() {
               }}
             >
               {t("common.search")}
+            </Button>
+            <Button variant="outline" onClick={exportLoginHistoryCSV}>
+              <Download className="h-4 w-4" />
+              {t("admin.security.exportCSV")}
             </Button>
           </div>
           {attempts && attempts.length > 0 ? (
@@ -570,6 +604,69 @@ export default function AdminSecurity() {
 }
 
 const loginPageSize = 50;
+
+type LoginHistoryParamInput = {
+  email: string;
+  from: string;
+  limit: number;
+  offset: number;
+  result: string;
+  to: string;
+};
+
+function loginHistoryParams(input: LoginHistoryParamInput) {
+  const params = new URLSearchParams({
+    limit: String(input.limit),
+    offset: String(input.offset),
+  });
+  if (input.result) params.set("result", input.result);
+  if (input.email.trim()) params.set("email", input.email.trim());
+  if (input.from) params.set("from", new Date(input.from).toISOString());
+  if (input.to) params.set("to", new Date(input.to).toISOString());
+  return params;
+}
+
+async function fetchAllLoginAttempts(input: {
+  email: string;
+  from: string;
+  result: string;
+  to: string;
+}) {
+  const out: LoginAttempt[] = [];
+  let offset = 0;
+  let total = Number.POSITIVE_INFINITY;
+  while (offset < total) {
+    const params = loginHistoryParams({
+      ...input,
+      limit: 200,
+      offset,
+    });
+    const res = await api.get<{ entries: LoginAttempt[]; total: number }>(
+      `/api/admin/security/login-history?${params.toString()}`,
+    );
+    out.push(...res.entries);
+    total = res.total;
+    if (res.entries.length === 0) break;
+    offset += res.entries.length;
+  }
+  return out;
+}
+
+function downloadCSV(filename: string, rows: string[][]) {
+  const csv = rows
+    .map((row) =>
+      row
+        .map((cell) => `"${String(cell ?? "").replaceAll(`"`, `""`)}"`)
+        .join(","),
+    )
+    .join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 function PolicySwitch({
   title,

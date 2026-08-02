@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, ChevronLeft, ChevronRight } from "lucide-react";
+import { Activity, ChevronLeft, ChevronRight, Download } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -28,25 +28,23 @@ export default function AdminAudit() {
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const refresh = useCallback(async () => {
-    const params = new URLSearchParams({
-      limit: String(auditPageSize),
-      offset: String(offset),
+    const params = auditParams({
+      actor,
+      eventType,
+      from,
+      offset,
+      targetID,
+      targetType,
+      to,
+      limit: auditPageSize,
     });
-    if (eventType.trim()) params.set("event_type", eventType.trim());
-    if (actor.trim()) params.set("actor", actor.trim());
-    if (targetType.trim()) params.set("target_type", targetType.trim());
-    if (targetID.trim()) params.set("target_id", targetID.trim());
-    if (from) params.set("from", new Date(from).toISOString());
-    if (to) params.set("to", new Date(to).toISOString());
     try {
       const res = await api.get<{
         entries: AuditEntry[];
         total: number;
         limit: number;
         offset: number;
-      }>(
-        `/api/admin/audit?${params.toString()}`,
-      );
+      }>(`/api/admin/audit?${params.toString()}`);
       setEntries(res.entries);
       setTotal(res.total);
     } catch {
@@ -56,6 +54,43 @@ export default function AdminAudit() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  async function exportCSV() {
+    const entries = await fetchAllAuditEntries({
+      actor,
+      eventType,
+      from,
+      targetID,
+      targetType,
+      to,
+    });
+    downloadCSV("airbrew-audit.csv", [
+      [
+        "created_at",
+        "event_type",
+        "actor_user_id",
+        "actor_client_id",
+        "actor_email",
+        "target_type",
+        "target_id",
+        "ip_address",
+        "user_agent",
+        "metadata",
+      ],
+      ...entries.map((e) => [
+        e.created_at,
+        e.event_type,
+        e.actor_user_id,
+        e.actor_client_id,
+        e.actor_email,
+        e.target_type,
+        e.target_id,
+        e.ip_address,
+        e.user_agent,
+        e.metadata,
+      ]),
+    ]);
+  }
 
   const pageStart = total === 0 ? 0 : offset + 1;
   const pageEnd = Math.min(offset + (entries?.length ?? 0), total);
@@ -128,6 +163,10 @@ export default function AdminAudit() {
               }}
             >
               {t("common.search")}
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportCSV}>
+              <Download className="h-4 w-4" />
+              {t("admin.audit.exportCSV")}
             </Button>
           </div>
           {entries &&
@@ -233,10 +272,79 @@ export default function AdminAudit() {
 
 const auditPageSize = 50;
 
+type AuditParamInput = {
+  actor: string;
+  eventType: string;
+  from: string;
+  limit: number | string;
+  offset: number;
+  targetID: string;
+  targetType: string;
+  to: string;
+};
+
+function auditParams(input: AuditParamInput) {
+  const params = new URLSearchParams({
+    limit: String(input.limit),
+    offset: String(input.offset),
+  });
+  if (input.eventType.trim()) params.set("event_type", input.eventType.trim());
+  if (input.actor.trim()) params.set("actor", input.actor.trim());
+  if (input.targetType.trim()) params.set("target_type", input.targetType.trim());
+  if (input.targetID.trim()) params.set("target_id", input.targetID.trim());
+  if (input.from) params.set("from", new Date(input.from).toISOString());
+  if (input.to) params.set("to", new Date(input.to).toISOString());
+  return params;
+}
+
+async function fetchAllAuditEntries(input: {
+  actor: string;
+  eventType: string;
+  from: string;
+  targetID: string;
+  targetType: string;
+  to: string;
+}) {
+  const out: AuditEntry[] = [];
+  let offset = 0;
+  let total = Number.POSITIVE_INFINITY;
+  while (offset < total) {
+    const params = auditParams({
+      ...input,
+      limit: 200,
+      offset,
+    });
+    const res = await api.get<{ entries: AuditEntry[]; total: number }>(
+      `/api/admin/audit?${params.toString()}`,
+    );
+    out.push(...res.entries);
+    total = res.total;
+    if (res.entries.length === 0) break;
+    offset += res.entries.length;
+  }
+  return out;
+}
+
 function formatMetadata(raw: string) {
   try {
     return JSON.stringify(JSON.parse(raw || "{}"), null, 2);
   } catch {
     return raw || "{}";
   }
+}
+
+function downloadCSV(filename: string, rows: string[][]) {
+  const csv = rows
+    .map((row) =>
+      row
+        .map((cell) => `"${String(cell ?? "").replaceAll(`"`, `""`)}"`)
+        .join(","),
+    )
+    .join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }

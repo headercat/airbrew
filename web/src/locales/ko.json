@@ -260,7 +260,8 @@
       "colTime": "시간",
       "pageSummary": "전체 {{total}}건 중 {{start}}-{{end}}",
       "previousPage": "이전",
-      "nextPage": "다음"
+      "nextPage": "다음",
+      "exportCSV": "CSV 내보내기"
     },
     "permissions": {
       "title": "권한",
@@ -319,6 +320,7 @@
       "loginPageSummary": "전체 {{total}}건 중 {{start}}-{{end}}",
       "previousPage": "이전",
       "nextPage": "다음",
+      "exportCSV": "CSV 내보내기",
       "saved": "보안 설정이 저장되었습니다.",
       "comingSoon": "향후 릴리스에서 구성 가능합니다."
     },

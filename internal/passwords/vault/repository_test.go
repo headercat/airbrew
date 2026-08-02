@@ -250,6 +250,77 @@ func TestSyncPagination(t *testing.T) {
 	}
 }
 
+func TestSyncPaginationDoesNotSkipAcrossTables(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	f1, _ := repo.CreateFolder(ctx, "u1", cipherFixture(24, 100), nonceFixture(101))
+	f2, _ := repo.CreateFolder(ctx, "u1", cipherFixture(24, 102), nonceFixture(103))
+	it, _ := repo.CreateItem(ctx, "u1", ItemInput{
+		Type:       ItemLogin,
+		NameCipher: cipherFixture(24, 104), NameNonce: nonceFixture(105),
+		DataCipher: cipherFixture(32, 106), DataNonce: nonceFixture(107),
+	})
+
+	first, err := repo.Sync(ctx, "u1", 0, 1)
+	if err != nil {
+		t.Fatalf("sync first: %v", err)
+	}
+	if !first.HasMore || first.Cursor != f1.Revision {
+		t.Fatalf("first cursor/hasMore = %d/%v, want %d/true", first.Cursor, first.HasMore, f1.Revision)
+	}
+	if len(first.Folders) != 1 || first.Folders[0].ID != f1.ID || len(first.Items) != 0 {
+		t.Fatalf("first page = folders %v items %v, want only first folder", first.Folders, first.Items)
+	}
+	second, err := repo.Sync(ctx, "u1", first.Cursor, 1)
+	if err != nil {
+		t.Fatalf("sync second: %v", err)
+	}
+	if !second.HasMore || second.Cursor != f2.Revision {
+		t.Fatalf("second cursor/hasMore = %d/%v, want %d/true", second.Cursor, second.HasMore, f2.Revision)
+	}
+	if len(second.Folders) != 1 || second.Folders[0].ID != f2.ID || len(second.Items) != 0 {
+		t.Fatalf("second page = folders %v items %v, want only second folder", second.Folders, second.Items)
+	}
+	third, err := repo.Sync(ctx, "u1", second.Cursor, 1)
+	if err != nil {
+		t.Fatalf("sync third: %v", err)
+	}
+	if third.HasMore || third.Cursor != it.Revision {
+		t.Fatalf("third cursor/hasMore = %d/%v, want %d/false", third.Cursor, third.HasMore, it.Revision)
+	}
+	if len(third.Items) != 1 || third.Items[0].ID != it.ID {
+		t.Fatalf("third page items = %v, want item %s", third.Items, it.ID)
+	}
+}
+
+func TestSyncPaginationKeepsSameRevisionTogether(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	f, _ := repo.CreateFolder(ctx, "u1", cipherFixture(24, 110), nonceFixture(111))
+	var itemIDs []string
+	for i := 0; i < 3; i++ {
+		it, _ := repo.CreateItem(ctx, "u1", ItemInput{
+			Type: ItemLogin, FolderID: f.ID,
+			NameCipher: cipherFixture(24, byte(112+i)), NameNonce: nonceFixture(byte(120 + i)),
+			DataCipher: cipherFixture(32, byte(130+i)), DataNonce: nonceFixture(byte(140 + i)),
+		})
+		itemIDs = append(itemIDs, it.ID)
+	}
+	if err := repo.SoftDeleteFolder(ctx, "u1", f.ID, f.Revision); err != nil {
+		t.Fatalf("delete folder: %v", err)
+	}
+	page, err := repo.Sync(ctx, "u1", f.Revision, 1)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if len(page.Folders) != 1 || len(page.Items) != len(itemIDs) {
+		t.Fatalf("same-revision page = folders %d items %d, want 1/%d", len(page.Folders), len(page.Items), len(itemIDs))
+	}
+	if page.Cursor != page.Folders[0].Revision || page.HasMore {
+		t.Fatalf("cursor/hasMore = %d/%v, want deleted folder revision/false", page.Cursor, page.HasMore)
+	}
+}
+
 // TestSoftDeleteItemDropsAttachmentRows verifies the A3 fix: deleting an item
 // also removes its attachment rows in the same tx and reports the blob paths.
 func TestSoftDeleteItemDropsAttachmentRows(t *testing.T) {

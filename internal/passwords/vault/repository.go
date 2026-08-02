@@ -449,11 +449,10 @@ type SyncResult struct {
 	HasMore bool
 }
 
-// Sync returns the folders and items changed since the cursor, ordered by
-// revision. When limit > 0, at most limit folders and limit items are returned
-// per call; HasMore is true if either side hit the cap, in which case the
-// client should continue with since = the highest revision returned. A cold
-// sync (since=0) yields the entire vault, paginated.
+// Sync returns the folders and items changed since the cursor. When limit > 0,
+// it pages across one merged revision stream, not per table, so a high-revision
+// row from one table can never advance the cursor past unreturned lower
+// revisions from the other table. Rows sharing one revision are kept together.
 func (r *Repository) Sync(ctx context.Context, userID string, since, limit int64) (SyncResult, error) {
 	cursor, err := r.currentRev(ctx, userID)
 	if err != nil {
@@ -461,18 +460,36 @@ func (r *Repository) Sync(ctx context.Context, userID string, since, limit int64
 	}
 	res := SyncResult{Cursor: cursor}
 
-	folderQuery := folderSelect + `
-		WHERE user_id = ? AND revision > ? ORDER BY revision ASC`
-	itemQuery := itemSelect + `
-		WHERE user_id = ? AND revision > ? ORDER BY revision ASC`
-	args := []any{userID, since}
 	if limit > 0 {
-		folderQuery += ` LIMIT ?`
-		itemQuery += ` LIMIT ?`
-		args = []any{userID, since, limit}
+		changes, nextCursor, hasMore, err := r.syncChanges(ctx, userID, since, cursor, limit)
+		if err != nil {
+			return SyncResult{}, err
+		}
+		res.Cursor = nextCursor
+		res.HasMore = hasMore
+		for _, ch := range changes {
+			switch ch.Kind {
+			case "folder":
+				row := r.db.QueryRowContext(ctx, folderSelect+` WHERE id = ? AND user_id = ?`, ch.ID, userID)
+				f, err := scanFolder(row)
+				if err != nil {
+					return SyncResult{}, err
+				}
+				res.Folders = append(res.Folders, f)
+			case "item":
+				row := r.db.QueryRowContext(ctx, itemSelect+` WHERE id = ? AND user_id = ?`, ch.ID, userID)
+				it, err := scanItem(row)
+				if err != nil {
+					return SyncResult{}, err
+				}
+				res.Items = append(res.Items, it)
+			}
+		}
+		return res, nil
 	}
 
-	rows, err := r.db.QueryContext(ctx, folderQuery, args...)
+	rows, err := r.db.QueryContext(ctx, folderSelect+`
+		WHERE user_id = ? AND revision > ? ORDER BY revision ASC`, userID, since)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("vault: sync folders: %w", err)
 	}
@@ -488,11 +505,8 @@ func (r *Repository) Sync(ctx context.Context, userID string, since, limit int64
 		return SyncResult{}, err
 	}
 
-	itemArgs := []any{userID, since}
-	if limit > 0 {
-		itemArgs = []any{userID, since, limit}
-	}
-	rows, err = r.db.QueryContext(ctx, itemQuery, itemArgs...)
+	rows, err = r.db.QueryContext(ctx, itemSelect+`
+		WHERE user_id = ? AND revision > ? ORDER BY revision ASC`, userID, since)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("vault: sync items: %w", err)
 	}
@@ -507,24 +521,88 @@ func (r *Repository) Sync(ctx context.Context, userID string, since, limit int64
 	if err := rows.Close(); err != nil {
 		return SyncResult{}, err
 	}
-	if limit > 0 && (int64(len(res.Folders)) >= limit || int64(len(res.Items)) >= limit) {
-		res.HasMore = true
-		// The continue cursor is the highest revision we returned; the client
-		// resumes from there on the next call.
-		var maxRev int64
-		for _, f := range res.Folders {
-			if f.Revision > maxRev {
-				maxRev = f.Revision
-			}
-		}
-		for _, it := range res.Items {
-			if it.Revision > maxRev {
-				maxRev = it.Revision
-			}
-		}
-		res.Cursor = maxRev
-	}
 	return res, rows.Err()
+}
+
+type syncChange struct {
+	Kind     string
+	ID       string
+	Revision int64
+}
+
+func (r *Repository) syncChanges(ctx context.Context, userID string, since, current, limit int64) ([]syncChange, int64, bool, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT kind, id, revision FROM (
+			SELECT 'folder' AS kind, id, revision FROM vault_folders WHERE user_id = ? AND revision > ?
+			UNION ALL
+			SELECT 'item' AS kind, id, revision FROM vault_items WHERE user_id = ? AND revision > ?
+		)
+		ORDER BY revision ASC, kind ASC, id ASC
+		LIMIT ?`, userID, since, userID, since, limit+1)
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("vault: sync change stream: %w", err)
+	}
+	defer rows.Close()
+	var changes []syncChange
+	for rows.Next() {
+		var ch syncChange
+		if err := rows.Scan(&ch.Kind, &ch.ID, &ch.Revision); err != nil {
+			return nil, 0, false, err
+		}
+		changes = append(changes, ch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, false, err
+	}
+	if len(changes) == 0 {
+		return nil, current, false, nil
+	}
+	if int64(len(changes)) <= limit {
+		return changes, current, false, nil
+	}
+
+	page := changes[:limit]
+	overflowRev := changes[limit].Revision
+	lastRev := page[len(page)-1].Revision
+	if lastRev != overflowRev {
+		return page, lastRev, true, nil
+	}
+
+	cut := len(page)
+	for cut > 0 && page[cut-1].Revision == overflowRev {
+		cut--
+	}
+	if cut > 0 {
+		return page[:cut], page[cut-1].Revision, true, nil
+	}
+	sameRev, err := r.syncChangesAtRevision(ctx, userID, overflowRev)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	return sameRev, overflowRev, current > overflowRev, nil
+}
+
+func (r *Repository) syncChangesAtRevision(ctx context.Context, userID string, revision int64) ([]syncChange, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT kind, id, revision FROM (
+			SELECT 'folder' AS kind, id, revision FROM vault_folders WHERE user_id = ? AND revision = ?
+			UNION ALL
+			SELECT 'item' AS kind, id, revision FROM vault_items WHERE user_id = ? AND revision = ?
+		)
+		ORDER BY kind ASC, id ASC`, userID, revision, userID, revision)
+	if err != nil {
+		return nil, fmt.Errorf("vault: sync revision group: %w", err)
+	}
+	defer rows.Close()
+	var changes []syncChange
+	for rows.Next() {
+		var ch syncChange
+		if err := rows.Scan(&ch.Kind, &ch.ID, &ch.Revision); err != nil {
+			return nil, err
+		}
+		changes = append(changes, ch)
+	}
+	return changes, rows.Err()
 }
 
 // ListItemRevisions returns the archived history snapshots of an item, newest

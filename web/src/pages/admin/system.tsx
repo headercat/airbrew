@@ -3,7 +3,9 @@ import {
   CheckCircle2,
   Download,
   FileCheck2,
+  Plus,
   Settings as SettingsIcon,
+  Trash2,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -11,7 +13,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SectionHeader, SettingRow } from "./shared";
-import { api, type BackupVerification, type SystemInfo } from "@/lib/api";
+import {
+  api,
+  type BackupVerification,
+  type StoredBackup,
+  type SystemInfo,
+} from "@/lib/api";
 
 export default function AdminSystem() {
   const { t } = useTranslation();
@@ -19,14 +26,43 @@ export default function AdminSystem() {
   const [backupCheck, setBackupCheck] = useState<BackupVerification | null>(
     null,
   );
+  const [storedBackups, setStoredBackups] = useState<StoredBackup[]>([]);
   const [verifying, setVerifying] = useState(false);
+  const [creatingBackup, setCreatingBackup] = useState(false);
   const restoreInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     api
       .get<SystemInfo>("/api/admin/system")
       .then(setInfo)
       .catch(() => {});
+    void refreshStoredBackups();
   }, []);
+
+  async function refreshStoredBackups() {
+    try {
+      const res = await api.get<{ backups: StoredBackup[]; retention: number }>(
+        "/api/admin/system/backups",
+      );
+      setStoredBackups(res.backups);
+    } catch {
+      setStoredBackups([]);
+    }
+  }
+
+  async function createStoredBackup() {
+    setCreatingBackup(true);
+    try {
+      await api.post<StoredBackup>("/api/admin/system/backups");
+      await refreshStoredBackups();
+    } finally {
+      setCreatingBackup(false);
+    }
+  }
+
+  async function deleteStoredBackup(name: string) {
+    await api.del(`/api/admin/system/backups/${encodeURIComponent(name)}`);
+    await refreshStoredBackups();
+  }
 
   async function verifyBackup() {
     setVerifying(true);
@@ -179,6 +215,60 @@ export default function AdminSystem() {
                 <FileCheck2 className="h-4 w-4" />
                 {t("admin.system.restoreDryRun")}
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={creatingBackup}
+                onClick={createStoredBackup}
+              >
+                <Plus className="h-4 w-4" />
+                {creatingBackup
+                  ? t("common.loading")
+                  : t("admin.system.createStoredBackup")}
+              </Button>
+            </div>
+          </SettingRow>
+          <SettingRow
+            title={t("admin.system.storedBackups")}
+            description={t("admin.system.storedBackupsDesc")}
+          >
+            <div className="flex max-w-[560px] flex-col items-end gap-2">
+              {storedBackups.length === 0 ? (
+                <span className="text-xs text-muted-foreground">
+                  {t("admin.system.noStoredBackups")}
+                </span>
+              ) : (
+                storedBackups.map((backup) => (
+                  <div
+                    key={backup.name}
+                    className="flex flex-wrap items-center justify-end gap-2 text-right text-xs text-muted-foreground"
+                  >
+                    <span className="font-mono text-foreground">
+                      {backup.name}
+                    </span>
+                    <span>{formatBytes(backup.size_bytes)}</span>
+                    <span>{new Date(backup.created_at).toLocaleString()}</span>
+                    <Button asChild size="icon" variant="ghost">
+                      <a
+                        href={`/api/admin/system/backups/${encodeURIComponent(
+                          backup.name,
+                        )}`}
+                        title={t("admin.system.downloadBackup")}
+                      >
+                        <Download className="h-4 w-4" />
+                      </a>
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      title={t("common.delete")}
+                      onClick={() => void deleteStoredBackup(backup.name)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))
+              )}
             </div>
           </SettingRow>
           {backupCheck && (

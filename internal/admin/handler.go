@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -64,6 +65,8 @@ type moduleHealthCheckDTO struct {
 }
 
 var startedAt = time.Now().UTC().Truncate(time.Second)
+
+const storedBackupRetention = 10
 
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -1425,6 +1428,12 @@ type backupVerifyDTO struct {
 	Migration      string `json:"migration_version"`
 }
 
+type storedBackupDTO struct {
+	Name      string    `json:"name"`
+	SizeBytes int64     `json:"size_bytes"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 func (h *Handler) verifyDatabaseBackup(w http.ResponseWriter, r *http.Request) {
 	dbPath, err := h.databasePath(r.Context())
 	if err != nil || dbPath == "" {
@@ -1477,6 +1486,114 @@ func (h *Handler) verifyDatabaseBackup(w http.ResponseWriter, r *http.Request) {
 		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
 		Migration:      migration,
 	})
+}
+
+func (h *Handler) listStoredBackups(w http.ResponseWriter, r *http.Request) {
+	dir, err := h.backupDir(r.Context())
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_unavailable", err.Error())
+		return
+	}
+	backups, err := readStoredBackups(dir)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_unavailable", err.Error())
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]any{"backups": backups, "retention": storedBackupRetention})
+}
+
+func (h *Handler) createStoredBackup(w http.ResponseWriter, r *http.Request) {
+	dbPath, err := h.databasePath(r.Context())
+	if err != nil || dbPath == "" {
+		response.Error(w, http.StatusInternalServerError, "backup_unavailable", "database file path is unavailable")
+		return
+	}
+	dir, err := h.backupDir(r.Context())
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_unavailable", err.Error())
+		return
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	name := "airbrew-backup-" + time.Now().UTC().Format("20060102T150405Z") + ".sqlite"
+	path := filepath.Join(dir, name)
+	escaped := strings.ReplaceAll(path, "'", "''")
+	if _, err := h.db.ExecContext(r.Context(), "VACUUM INTO '"+escaped+"'"); err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	if err := pruneStoredBackups(dir, storedBackupRetention); err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "system.backup_created", ActorUserID: callerUserID(r),
+		TargetType: "system_backup", TargetID: name,
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"source": filepath.Base(dbPath), "size_bytes": info.Size()},
+	})
+	response.JSON(w, http.StatusCreated, storedBackupDTO{Name: name, SizeBytes: info.Size(), CreatedAt: info.ModTime().UTC()})
+}
+
+func (h *Handler) downloadStoredBackup(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !validStoredBackupName(name) {
+		response.Error(w, http.StatusBadRequest, "invalid_request", "invalid backup name")
+		return
+	}
+	dir, err := h.backupDir(r.Context())
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_unavailable", err.Error())
+		return
+	}
+	path := filepath.Join(dir, name)
+	if _, err := os.Stat(path); err != nil {
+		response.Error(w, http.StatusNotFound, "not_found", "backup not found")
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "system.backup_downloaded", ActorUserID: callerUserID(r),
+		TargetType: "system_backup", TargetID: name,
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
+	})
+	w.Header().Set("Content-Type", "application/vnd.sqlite3")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	http.ServeFile(w, r, path)
+}
+
+func (h *Handler) deleteStoredBackup(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !validStoredBackupName(name) {
+		response.Error(w, http.StatusBadRequest, "invalid_request", "invalid backup name")
+		return
+	}
+	dir, err := h.backupDir(r.Context())
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_unavailable", err.Error())
+		return
+	}
+	path := filepath.Join(dir, name)
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			response.Error(w, http.StatusNotFound, "not_found", "backup not found")
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "system.backup_deleted", ActorUserID: callerUserID(r),
+		TargetType: "system_backup", TargetID: name,
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
+	})
+	response.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (h *Handler) restoreDryRun(w http.ResponseWriter, r *http.Request) {
@@ -1612,6 +1729,68 @@ func (h *Handler) databasePath(ctx context.Context) (string, error) {
 		}
 	}
 	return "", rows.Err()
+}
+
+func (h *Handler) backupDir(ctx context.Context) (string, error) {
+	dbPath, err := h.databasePath(ctx)
+	if err != nil {
+		return "", err
+	}
+	if dbPath == "" {
+		return "", errors.New("database file path is unavailable")
+	}
+	return filepath.Join(filepath.Dir(dbPath), "backups"), nil
+}
+
+func readStoredBackups(dir string) ([]storedBackupDTO, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []storedBackupDTO{}, nil
+		}
+		return nil, err
+	}
+	out := make([]storedBackupDTO, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !validStoredBackupName(name) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, storedBackupDTO{Name: name, SizeBytes: info.Size(), CreatedAt: info.ModTime().UTC()})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func pruneStoredBackups(dir string, keep int) error {
+	backups, err := readStoredBackups(dir)
+	if err != nil {
+		return err
+	}
+	for i := keep; i < len(backups); i++ {
+		if err := os.Remove(filepath.Join(dir, backups[i].Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+func validStoredBackupName(name string) bool {
+	if filepath.Base(name) != name {
+		return false
+	}
+	if !strings.HasPrefix(name, "airbrew-backup-") || !strings.HasSuffix(name, ".sqlite") {
+		return false
+	}
+	stamp := strings.TrimSuffix(strings.TrimPrefix(name, "airbrew-backup-"), ".sqlite")
+	_, err := time.Parse("20060102T150405Z", stamp)
+	return err == nil
 }
 
 func (h *Handler) latestMigrationVersion(ctx context.Context) (string, error) {

@@ -3,8 +3,10 @@ package admin
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -96,5 +98,47 @@ func TestNormalizeLogoURL(t *testing.T) {
 		if got, err := normalizeLogoURL(raw); err == nil {
 			t.Fatalf("normalizeLogoURL(%q) = %q, want error", raw, got)
 		}
+	}
+}
+
+func TestStoredBackupHelpersValidateAndPrune(t *testing.T) {
+	dir := t.TempDir()
+	names := []string{
+		"airbrew-backup-20260101T000000Z.sqlite",
+		"airbrew-backup-20260102T000000Z.sqlite",
+		"airbrew-backup-20260103T000000Z.sqlite",
+		"not-a-backup.sqlite",
+	}
+	for i, name := range names {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ts := time.Date(2026, 1, i+1, 0, 0, 0, 0, time.UTC)
+		if err := os.Chtimes(path, ts, ts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if validStoredBackupName("../airbrew-backup-20260101T000000Z.sqlite") {
+		t.Fatal("path traversal backup name should be invalid")
+	}
+	if !validStoredBackupName("airbrew-backup-20260101T000000Z.sqlite") {
+		t.Fatal("generated backup name should be valid")
+	}
+	if err := pruneStoredBackups(dir, 2); err != nil {
+		t.Fatal(err)
+	}
+	backups, err := readStoredBackups(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 2 {
+		t.Fatalf("kept backups = %d, want 2", len(backups))
+	}
+	if backups[0].Name != "airbrew-backup-20260103T000000Z.sqlite" {
+		t.Fatalf("newest backup = %q", backups[0].Name)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "not-a-backup.sqlite")); err != nil {
+		t.Fatal("non-backup files should not be pruned")
 	}
 }

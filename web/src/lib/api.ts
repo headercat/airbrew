@@ -169,6 +169,12 @@ export type BackupVerification = {
   migration_version: string;
 };
 
+export type StoredBackup = {
+  name: string;
+  size_bytes: number;
+  created_at: string;
+};
+
 export type ProfileUpdate = {
   display_name: string;
   description: string;

@@ -12,13 +12,14 @@ import (
 
 // Config holds all runtime knobs for the server.
 type Config struct {
-	HTTPAddr      string
-	DatabasePath  string
-	DataDir       string
-	PublicURL     string
-	SessionSecret []byte
-	SessionMaxAge time.Duration
-	LogLevel      string
+	HTTPAddr       string
+	DatabasePath   string
+	DataDir        string
+	PublicURL      string
+	WebProxyTarget string
+	SessionSecret  []byte
+	SessionMaxAge  time.Duration
+	LogLevel       string
 
 	BootstrapAdminEmail    string
 	BootstrapAdminPassword string
@@ -46,12 +47,13 @@ func Load() (Config, error) {
 	dataDir := envStr("AIRBREW_DATA_DIR", "./data")
 
 	cfg := Config{
-		HTTPAddr:      envStr("AIRBREW_HTTP_ADDR", ":5050"),
-		DatabasePath:  envStr("AIRBREW_DATABASE_PATH", dataDir+"/airbrew.db"),
-		DataDir:       dataDir,
-		PublicURL:     envStr("AIRBREW_PUBLIC_URL", "http://localhost:5050"),
-		LogLevel:      envStr("AIRBREW_LOG_LEVEL", "info"),
-		SessionMaxAge: envDuration("AIRBREW_SESSION_MAX_AGE", 14*24*time.Hour),
+		HTTPAddr:       envStr("AIRBREW_HTTP_ADDR", ":5050"),
+		DatabasePath:   envStr("AIRBREW_DATABASE_PATH", dataDir+"/airbrew.db"),
+		DataDir:        dataDir,
+		PublicURL:      envStr("AIRBREW_PUBLIC_URL", "http://localhost:5050"),
+		WebProxyTarget: envStr("AIRBREW_WEB_PROXY_TARGET", ""),
+		LogLevel:       envStr("AIRBREW_LOG_LEVEL", "info"),
+		SessionMaxAge:  envDuration("AIRBREW_SESSION_MAX_AGE", 14*24*time.Hour),
 
 		BootstrapAdminEmail:    envStr("AIRBREW_BOOTSTRAP_ADMIN_EMAIL", "admin@airbrew.local"),
 		BootstrapAdminPassword: os.Getenv("AIRBREW_BOOTSTRAP_ADMIN_PASSWORD"),

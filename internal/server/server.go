@@ -5,6 +5,8 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"time"
 
@@ -23,10 +25,11 @@ import (
 
 // Deps bundles everything the mux needs.
 type Deps struct {
-	DB         *db.DB
-	SessionMax time.Duration
-	WebFS      fs.FS
-	Blobs      blob.Store
+	DB             *db.DB
+	SessionMax     time.Duration
+	WebFS          fs.FS
+	WebProxyTarget string
+	Blobs          blob.Store
 }
 
 // Build returns the root *http.ServeMux wired with every module.
@@ -72,7 +75,11 @@ func Build(d Deps) *http.ServeMux {
 	pwMod.RegisterRoutes(pwSub)
 	mux.Handle("/api/vault/", authMod.SessionMiddleware(pwSub))
 
-	mux.Handle("/", spaHandler(d.WebFS))
+	if d.WebProxyTarget != "" {
+		mux.Handle("/", webProxyHandler(d.WebProxyTarget))
+	} else {
+		mux.Handle("/", spaHandler(d.WebFS))
+	}
 
 	return mux
 }
@@ -117,4 +124,14 @@ func spaHandler(webFS fs.FS) http.Handler {
 		}
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+func webProxyHandler(target string) http.Handler {
+	u, err := url.Parse(target)
+	if err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "invalid AIRBREW_WEB_PROXY_TARGET", http.StatusInternalServerError)
+		})
+	}
+	return httputil.NewSingleHostReverseProxy(u)
 }

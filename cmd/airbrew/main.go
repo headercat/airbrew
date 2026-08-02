@@ -68,10 +68,11 @@ func main() {
 	}
 
 	mux := server.Build(server.Deps{
-		DB:         database,
-		SessionMax: cfg.SessionMaxAge,
-		WebFS:      web.DistFS,
-		Blobs:      blobs,
+		DB:             database,
+		SessionMax:     cfg.SessionMaxAge,
+		WebFS:          web.DistFS,
+		WebProxyTarget: cfg.WebProxyTarget,
+		Blobs:          blobs,
 	})
 
 	srv := httpserver.New(httpserver.Deps{

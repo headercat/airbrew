@@ -19,7 +19,7 @@ func NewService(repo *Repository) *Service { return &Service{repo: repo} }
 // Setup stores the initial key envelope for userID. Returns ErrEnvelopeExists
 // if the vault was already initialized.
 func (s *Service) Setup(ctx context.Context, env KeyEnvelope) error {
-	if err := validateEnvelope(env); err != nil {
+	if err := validateEnvelope(&env); err != nil {
 		return err
 	}
 	if err := s.repo.SetupEnvelope(ctx, env); err != nil {
@@ -35,11 +35,20 @@ func (s *Service) GetEnvelope(ctx context.Context, userID string) (KeyEnvelope, 
 
 // RotateEnvelope replaces the protected vault-key wrapper after a master
 // password change. The vault key itself is unchanged, so no items are touched.
-func (s *Service) RotateEnvelope(ctx context.Context, env KeyEnvelope) error {
-	if err := validateEnvelope(env); err != nil {
+//
+// ifVersion is the envelope Version the client last observed. The rotation only
+// applies if it matches the stored version; otherwise a *ConflictError is
+// returned carrying the server's current envelope so the client can re-fetch
+// and retry. This prevents two concurrent rotations from silently clobbering
+// one another and locking a device out of its vault.
+func (s *Service) RotateEnvelope(ctx context.Context, env KeyEnvelope, ifVersion int64) error {
+	if err := validateEnvelope(&env); err != nil {
 		return err
 	}
-	return s.repo.RotateEnvelope(ctx, env)
+	if ifVersion <= 0 {
+		return fmt.Errorf("%w: if_version required", ErrInvalidInput)
+	}
+	return s.repo.RotateEnvelope(ctx, env, ifVersion)
 }
 
 // CreateFolder creates an encrypted folder.
@@ -93,10 +102,12 @@ func (s *Service) UpdateItem(ctx context.Context, userID, id string, in ItemInpu
 	return s.repo.UpdateItem(ctx, userID, id, in, ifRevision)
 }
 
-// DeleteItem soft-deletes an item.
-func (s *Service) DeleteItem(ctx context.Context, userID, id string, ifRevision int64) error {
+// DeleteItem soft-deletes an item and returns the blob paths of any attachments
+// that were dropped in the same transaction, so the caller can purge them from
+// the blob store.
+func (s *Service) DeleteItem(ctx context.Context, userID, id string, ifRevision int64) ([]string, error) {
 	if ifRevision <= 0 {
-		return fmt.Errorf("%w: if_revision required", ErrInvalidInput)
+		return nil, fmt.Errorf("%w: if_revision required", ErrInvalidInput)
 	}
 	return s.repo.SoftDeleteItem(ctx, userID, id, ifRevision)
 }
@@ -109,7 +120,7 @@ func (s *Service) Sync(ctx context.Context, userID string, since int64) (SyncRes
 	return s.repo.Sync(ctx, userID, since)
 }
 
-func validateEnvelope(env KeyEnvelope) error {
+func validateEnvelope(env *KeyEnvelope) error {
 	if env.UserID == "" {
 		return fmt.Errorf("%w: user_id required", ErrInvalidInput)
 	}
@@ -124,6 +135,13 @@ func validateEnvelope(env KeyEnvelope) error {
 	}
 	if env.KDFMemoryKiB <= 0 || env.KDFIterations <= 0 || env.KDFParallelism <= 0 {
 		return fmt.Errorf("%w: kdf params must be positive", ErrInvalidInput)
+	}
+	// Upper-bound the KDF cost so a malicious client cannot register an
+	// envelope whose unlock would pin multi-gigabyte memory for minutes.
+	// 1 GiB / 100 iterations / 64 lanes is well above any legitimate setting
+	// (OWASP argon2id guidance is ~19 MiB / t=2 / p=1).
+	if env.KDFMemoryKiB > 1<<20 || env.KDFIterations > 100 || env.KDFParallelism > 64 {
+		return fmt.Errorf("%w: kdf params exceed upper bound", ErrInvalidInput)
 	}
 	return nil
 }
@@ -155,6 +173,12 @@ func AsConflict(err error) *ConflictError {
 
 // --- attachments -----------------------------------------------------------
 
+// MaxAttachmentBytes is the upper bound on a single attachment's plaintext
+// size. It mirrors the handler's ciphertext upload cap so a client cannot claim
+// an implausible size_bytes (the server stores it verbatim otherwise). Kept in
+// the domain package so tests can assert the contract without importing HTTP.
+const MaxAttachmentBytes = 10 << 20 // 10 MiB
+
 // CreateAttachment records an attachment row. The handler has already written
 // the encrypted blob to the blob store; it passes the resulting path here.
 func (s *Service) CreateAttachment(ctx context.Context, userID, itemID, blobPath string,
@@ -165,6 +189,9 @@ func (s *Service) CreateAttachment(ctx context.Context, userID, itemID, blobPath
 	}
 	if sizeBytes < 0 {
 		return Attachment{}, fmt.Errorf("%w: negative size", ErrInvalidInput)
+	}
+	if sizeBytes > MaxAttachmentBytes {
+		return Attachment{}, fmt.Errorf("%w: attachment too large", ErrInvalidInput)
 	}
 	return s.repo.CreateAttachment(ctx, userID, itemID, blobPath, sizeBytes, fkCipher, fkNonce, nameCipher, nameNonce)
 }

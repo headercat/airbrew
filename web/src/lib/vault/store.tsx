@@ -379,12 +379,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           protected_vault_key: wrapped.cipher,
           protected_vault_nonce: wrapped.nonce,
         };
-        await VApi.setup(env);
-        keyRef.current = vaultKey;
-        envelopeRef.current = {
-          ...env,
-          updated_at: new Date().toISOString(),
-        };
+		await VApi.setup(env);
+		keyRef.current = vaultKey;
+		envelopeRef.current = {
+			...env,
+			version: 1,
+			updated_at: new Date().toISOString(),
+		};
         setCursor(0);
         setItems([]);
         setFolders([]);

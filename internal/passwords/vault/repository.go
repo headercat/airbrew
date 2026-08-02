@@ -27,12 +27,12 @@ func (r *Repository) SetupEnvelope(ctx context.Context, env KeyEnvelope) error {
 		INSERT INTO vault_keys
 		  (user_id, kdf_algorithm, kdf_salt, kdf_memory_kib, kdf_iterations,
 		   kdf_parallelism, protected_vault_key, protected_vault_nonce,
-		   created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   version, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		env.UserID, env.KDFAlgorithm, env.KDFSalt,
 		env.KDFMemoryKiB, env.KDFIterations, env.KDFParallelism,
-		env.ProtectedVaultKey, env.ProtectedVaultNonce, now, now,
+		env.ProtectedVaultKey, env.ProtectedVaultNonce, 1, now, now,
 	)
 	if err != nil {
 		// modernc.org/sqlite returns "constraint failed: UNIQUE" for PK dup.
@@ -51,12 +51,12 @@ func (r *Repository) GetEnvelope(ctx context.Context, userID string) (KeyEnvelop
 	err := r.db.QueryRowContext(ctx, `
 		SELECT user_id, kdf_algorithm, kdf_salt, kdf_memory_kib, kdf_iterations,
 		       kdf_parallelism, protected_vault_key, protected_vault_nonce,
-		       created_at, updated_at
+		       version, created_at, updated_at
 		FROM vault_keys WHERE user_id = ?
 	`, userID).Scan(
 		&env.UserID, &alg, &env.KDFSalt, &env.KDFMemoryKiB, &env.KDFIterations,
 		&env.KDFParallelism, &env.ProtectedVaultKey, &env.ProtectedVaultNonce,
-		&env.CreatedAt, &env.UpdatedAt,
+		&env.Version, &env.CreatedAt, &env.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return KeyEnvelope{}, ErrNotFound
@@ -70,26 +70,38 @@ func (r *Repository) GetEnvelope(ctx context.Context, userID string) (KeyEnvelop
 
 // RotateEnvelope replaces the protected vault-key wrapper (and KDF params) for
 // a master-password change. The underlying vault key stays the same, so no
-// items are re-encrypted.
-func (r *Repository) RotateEnvelope(ctx context.Context, env KeyEnvelope) error {
+// items are re-encrypted. ifVersion is the envelope version the caller last
+// observed; on mismatch a *ConflictError is returned carrying the server's
+// current envelope so the client can re-fetch and retry.
+func (r *Repository) RotateEnvelope(ctx context.Context, env KeyEnvelope, ifVersion int64) error {
 	now := time.Now().UTC().Truncate(time.Second)
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE vault_keys SET
 		  kdf_algorithm = ?, kdf_salt = ?, kdf_memory_kib = ?,
 		  kdf_iterations = ?, kdf_parallelism = ?,
 		  protected_vault_key = ?, protected_vault_nonce = ?,
-		  updated_at = ?
-		WHERE user_id = ?
+		  version = version + 1, updated_at = ?
+		WHERE user_id = ? AND version = ?
 	`,
 		env.KDFAlgorithm, env.KDFSalt, env.KDFMemoryKiB,
 		env.KDFIterations, env.KDFParallelism,
-		env.ProtectedVaultKey, env.ProtectedVaultNonce, now, env.UserID,
+		env.ProtectedVaultKey, env.ProtectedVaultNonce, now, env.UserID, ifVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("vault: rotate envelope: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
+	switch n, _ := res.RowsAffected(); n {
+	case 0:
+		// Distinguish "no envelope" from "version mismatch" so the client gets
+		// an actionable conflict rather than a generic not-found.
+		cur, err := r.GetEnvelope(ctx, env.UserID)
+		if errors.Is(err, ErrNotFound) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return &ConflictError{CurrentRow: &cur}
 	}
 	return nil
 }
@@ -360,9 +372,14 @@ func (r *Repository) UpdateItem(ctx context.Context, userID, itemID string, in I
 	return out, nil
 }
 
-// SoftDeleteItem tombstones an item.
-func (r *Repository) SoftDeleteItem(ctx context.Context, userID, id string, ifRevision int64) error {
-	return inTx(ctx, r.db, func(tx *sql.Tx) error {
+// SoftDeleteItem tombstones an item and hard-deletes its attachment rows in the
+// same transaction. It returns the blob paths of the removed attachments so the
+// caller can purge the underlying blobs after the commit succeeds. Attachments
+// do not participate in the sync cursor, so dropping the rows directly (rather
+// than tombstoning them) is correct and prevents orphaned/leaked blobs.
+func (r *Repository) SoftDeleteItem(ctx context.Context, userID, id string, ifRevision int64) ([]string, error) {
+	var blobPaths []string
+	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
 		cur, err := lockItemForWrite(ctx, tx, userID, id)
 		if err != nil {
 			return err
@@ -370,6 +387,28 @@ func (r *Repository) SoftDeleteItem(ctx context.Context, userID, id string, ifRe
 		if cur.Revision != ifRevision {
 			c := cur
 			return &ConflictError{CurrentRow: &c}
+		}
+		// Collect attachment blob paths before deleting the rows so the caller
+		// can purge the blobs post-commit.
+		rows, err := tx.QueryContext(ctx,
+			`SELECT blob_path FROM vault_attachments WHERE item_id = ?`, id)
+		if err != nil {
+			return fmt.Errorf("vault: read attachment paths: %w", err)
+		}
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				rows.Close()
+				return err
+			}
+			blobPaths = append(blobPaths, p)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM vault_attachments WHERE item_id = ?`, id); err != nil {
+			return fmt.Errorf("vault: delete attachments: %w", err)
 		}
 		rev, err := bumpRev(ctx, tx, userID)
 		if err != nil {
@@ -389,6 +428,10 @@ func (r *Repository) SoftDeleteItem(ctx context.Context, userID, id string, ifRe
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return blobPaths, nil
 }
 
 // SyncResult is the payload returned to the client for a delta sync.
@@ -456,7 +499,7 @@ const attachmentSelect = `
 	       a.name_cipher, a.name_nonce, a.created_at
 	FROM vault_attachments a
 	JOIN vault_items i ON i.id = a.item_id
-	WHERE i.user_id = ? AND a.item_id = ?`
+	WHERE i.user_id = ? AND a.item_id = ? AND i.deleted_at IS NULL`
 
 // CreateAttachment records a new attachment row pointing at blobPath.
 func (r *Repository) CreateAttachment(ctx context.Context, userID, itemID, blobPath string,

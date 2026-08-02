@@ -15,6 +15,7 @@ export type Envelope = {
   kdf_parallelism: number;
   protected_vault_key: string;
   protected_vault_nonce: string;
+  version: number;
   updated_at: string;
 };
 
@@ -60,6 +61,7 @@ export type EnvelopeInput = {
   kdf_parallelism: number;
   protected_vault_key: string;
   protected_vault_nonce: string;
+  if_version?: number;
 };
 
 export type ItemInput = {
@@ -76,12 +78,12 @@ export type ItemInput = {
   if_revision?: number;
 };
 
-// Conflict is returned on a 409 when the client's if_revision is stale. The
-// server attaches its current row so the client can merge.
+// Conflict is returned on a 409 when the client's if_revision/if_version is
+// stale. The server attaches its current row so the client can merge.
 export type Conflict = {
   error: "conflict";
   error_description: string;
-  current: VaultItem | VaultFolder;
+  current: VaultItem | VaultFolder | Envelope;
 };
 
 export function isConflict(e: unknown): e is Conflict {

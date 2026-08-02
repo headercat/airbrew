@@ -33,6 +33,12 @@ func (e *ConflictError) Error() string { return "vault: revision conflict" }
 // KeyEnvelope is the one-per-user encrypted vault-key wrapper. The client
 // derives the master key from the master password using the KDF parameters and
 // salt stored here, then decrypts ProtectedVaultKey to obtain the vault key.
+//
+// Version is a monotonic counter bumped on every rewrite (setup/rotate). It is
+// the optimistic-concurrency guard for rotation: a master-password change must
+// carry the version the client last saw, otherwise the server reports a
+// ConflictError so two concurrent rotations cannot silently clobber one
+// another and lock a device out.
 type KeyEnvelope struct {
 	UserID              string
 	KDFAlgorithm        string
@@ -42,6 +48,7 @@ type KeyEnvelope struct {
 	KDFParallelism      int
 	ProtectedVaultKey   string
 	ProtectedVaultNonce string
+	Version             int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 }

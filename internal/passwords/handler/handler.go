@@ -68,6 +68,7 @@ type envelopeReq struct {
 	KDFParallelism      int    `json:"kdf_parallelism"`
 	ProtectedVaultKey   string `json:"protected_vault_key"`
 	ProtectedVaultNonce string `json:"protected_vault_nonce"`
+	IfVersion           int64  `json:"if_version"`
 }
 
 type envelopeResp struct {
@@ -78,6 +79,7 @@ type envelopeResp struct {
 	KDFParallelism      int    `json:"kdf_parallelism"`
 	ProtectedVaultKey   string `json:"protected_vault_key"`
 	ProtectedVaultNonce string `json:"protected_vault_nonce"`
+	Version             int64  `json:"version"`
 	UpdatedAt           string `json:"updated_at"`
 }
 
@@ -87,6 +89,7 @@ func toEnvelopeResp(env vault.KeyEnvelope) envelopeResp {
 		KDFMemoryKiB: env.KDFMemoryKiB, KDFIterations: env.KDFIterations,
 		KDFParallelism:    env.KDFParallelism,
 		ProtectedVaultKey: env.ProtectedVaultKey, ProtectedVaultNonce: env.ProtectedVaultNonce,
+		Version:   env.Version,
 		UpdatedAt: env.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
@@ -158,7 +161,7 @@ func (h *Handler) rotateKeys(w http.ResponseWriter, r *http.Request) {
 		KDFMemoryKiB: req.KDFMemoryKiB, KDFIterations: req.KDFIterations, KDFParallelism: req.KDFParallelism,
 		ProtectedVaultKey: req.ProtectedVaultKey, ProtectedVaultNonce: req.ProtectedVaultNonce,
 	}
-	if err := h.svc.RotateEnvelope(r.Context(), env); err != nil {
+	if err := h.svc.RotateEnvelope(r.Context(), env, req.IfVersion); err != nil {
 		if errors.Is(err, vault.ErrNotFound) {
 			response.Error(w, http.StatusNotFound, "not_set_up", "vault has not been set up")
 			return
@@ -167,7 +170,7 @@ func (h *Handler) rotateKeys(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
-		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeVaultError(w, err)
 		return
 	}
 	h.audit.Log(r.Context(), audit.Entry{
@@ -380,9 +383,16 @@ func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	ifRev, _ := strconv.ParseInt(r.URL.Query().Get("if_revision"), 10, 64)
-	if err := h.svc.DeleteItem(r.Context(), sess.UserID, id, ifRev); err != nil {
+	blobPaths, err := h.svc.DeleteItem(r.Context(), sess.UserID, id, ifRev)
+	if err != nil {
 		writeVaultError(w, err)
 		return
+	}
+	// Best-effort: purge the underlying blobs now that the rows are gone.
+	if h.blobs != nil {
+		for _, p := range blobPaths {
+			_ = h.blobs.Delete(r.Context(), p)
+		}
 	}
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -438,6 +448,8 @@ func writeVaultError(w http.ResponseWriter, err error) {
 			body["current"] = toItemResp(*cur)
 		case *vault.Folder:
 			body["current"] = toFolderResp(*cur)
+		case *vault.KeyEnvelope:
+			body["current"] = toEnvelopeResp(*cur)
 		}
 		response.JSON(w, http.StatusConflict, body)
 		return
@@ -452,11 +464,18 @@ func writeVaultError(w http.ResponseWriter, err error) {
 	}
 }
 
+// maxJSONBody caps the size of any vault JSON request body. Vault payloads are
+// small (ciphertext + nonces), so 256 KiB is generous while preventing a
+// malicious oversized body from exhausting server memory. Attachment uploads
+// are handled separately (multipart) with their own cap.
+const maxJSONBody = 256 << 10
+
 func decodeJSON(r *http.Request, v any) error {
 	ct := r.Header.Get("Content-Type")
 	if !strings.Contains(ct, "application/json") {
 		return errors.New("content-type must be application/json")
 	}
+	r.Body = http.MaxBytesReader(nil, r.Body, maxJSONBody)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)

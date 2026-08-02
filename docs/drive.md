@@ -74,10 +74,12 @@ GET  /api/drive/s/{token}/download         (file bytes; ?pw= / X-Share-Password)
 
 # Authenticated user endpoints (session required)
 GET    /api/drive/files?parent=&view=&folder=&q=&sort=&order=&kind=&limit=&offset=
+                                        → {nodes, total} (total drives the pager)
 POST   /api/drive/files                    (multipart "file" or raw body; ?parent=&name=)
 POST   /api/drive/folders                  {name, parent_id}
 GET    /api/drive/files/{id}
-PATCH  /api/drive/files/{id}               {name? | parent_id? | starred?}
+GET    /api/drive/files/{id}/path          (ancestor chain root→node for breadcrumbs)
+PATCH  /api/drive/files/{id}               {name? & parent_id? & starred? — all-at-once}
 DELETE /api/drive/files/{id}?permanent=
 POST   /api/drive/files/{id}/restore
 POST   /api/drive/files/{id}/copy          {parent_id, name}

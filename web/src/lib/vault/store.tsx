@@ -18,6 +18,7 @@ import {
 
 import {
   b64ToBytes,
+  bytesToB64,
   decryptBytes,
   decryptString,
   deriveMasterKey,
@@ -479,6 +480,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   // a second network round-trip. Cleared on lock.
   const rawItemsRef = useRef<Map<string, VApi.VaultItem>>(new Map());
   const rawFoldersRef = useRef<Map<string, VApi.VaultFolder>>(new Map());
+  const legacyMigrationRunningRef = useRef(false);
 
   // cacheUserIdRef holds the IndexedDB cache key derived from the envelope salt.
   const cacheUserIdRef = useRef<string>("");
@@ -492,6 +494,65 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       items: Array.from(rawItemsRef.current.values()),
     });
   }, []);
+
+  const migrateLegacyCiphertextRows = useCallback(async () => {
+    const key = keyRef.current;
+    if (!key || legacyMigrationRunningRef.current) return;
+    const legacyFolders = Array.from(rawFoldersRef.current.values()).filter(
+      (f) => !f.deleted_at && isLegacyCrypto(f.crypto_version),
+    );
+    const legacyItems = Array.from(rawItemsRef.current.values()).filter(
+      (it) => !it.deleted_at && !it.reprompt && isLegacyCrypto(it.crypto_version),
+    );
+    if (!legacyFolders.length && !legacyItems.length) return;
+    legacyMigrationRunningRef.current = true;
+    try {
+      for (const f of legacyFolders) {
+        try {
+          const name = await decryptStringCompat(
+            key,
+            f.name_cipher,
+            f.name_nonce,
+            AAD.folderName,
+            f.crypto_version,
+          );
+          const enc = await encryptString(key, name, AAD.folderName);
+          const raw = await VApi.updateFolder(
+            f.id,
+            enc.cipher,
+            enc.nonce,
+            CURRENT_CRYPTO_VERSION,
+            f.revision,
+          );
+          rawFoldersRef.current.set(raw.id, raw);
+        } catch {
+          // Best-effort migration; conflicts or stale rows will be retried later.
+        }
+      }
+      for (const it of legacyItems) {
+        try {
+          const dec = await decryptItem(key, it, { includeSensitive: true });
+          const input = await encryptItemInput(key, {
+            type: dec.type,
+            folderId: dec.folderId,
+            name: dec.name,
+            notes: dec.notes,
+            fields: dec.fields,
+            favorite: dec.favorite,
+            reprompt: dec.reprompt,
+          });
+          input.if_revision = it.revision;
+          const raw = await VApi.updateItem(it.id, input);
+          rawItemsRef.current.set(raw.id, raw);
+        } catch {
+          // Best-effort migration; conflicts or stale rows will be retried later.
+        }
+      }
+      persistCiphertextCache();
+    } finally {
+      legacyMigrationRunningRef.current = false;
+    }
+  }, [persistCiphertextCache]);
 
   // Full/delta sync from the server, decrypt, and merge into local state.
   // Loops on has_more so a large vault streams in bounded pages. Reads inputs
@@ -554,7 +615,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     // Persist the ciphertext bundle so the next unlock can render instantly
     // (and survive being offline). Ciphertext only — the key is memory-only.
     persistCiphertextCache(since);
-  }, [commitItems, commitCursor, persistCiphertextCache]);
+    void migrateLegacyCiphertextRows();
+  }, [commitItems, commitCursor, migrateLegacyCiphertextRows, persistCiphertextCache]);
 
   // hydrateFromCache decrypts the IndexedDB ciphertext cache (if any) into the
   // decrypted cache so the UI can render before the network sync completes.
@@ -1082,9 +1144,22 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             AAD.attachmentPayload,
             att.crypto_version,
           );
+          const newFileKey = randomBytes(32);
+          const sealedPayload = await seal(
+            newFileKey,
+            verifiedPayload,
+            AAD.attachmentPayload,
+          );
           zeroize(verifiedPayload);
-          const wrapped = await encryptBytes(key, fileKey, AAD.attachmentFileKey);
+          const wrapped = await encryptBytes(
+            key,
+            newFileKey,
+            AAD.attachmentFileKey,
+          );
+          const payload = bytesToB64(sealedPayload);
+          zeroize(sealedPayload);
           zeroize(fileKey);
+          zeroize(newFileKey);
           const name = await decryptStringCompat(
             sourceKey,
             att.name_cipher,
@@ -1102,7 +1177,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             file_key_nonce: wrapped.nonce,
             crypto_version: CURRENT_CRYPTO_VERSION,
             size_bytes: att.size_bytes,
-            payload: att.payload,
+            payload,
           });
         }
         const counts = await VApi.importVault({ folders, items, attachments });

@@ -47,6 +47,8 @@ master password ──Argon2id(salt, m/t/p)──▶ master key (32 B, client on
   operation-specific associated-data label to AES-GCM and are stored with
   `crypto_version = 2`. Older version-1 ciphertext without AAD still decrypts
   through a compatibility fallback; version-2 rows must authenticate with AAD.
+  On unlock/sync, legacy folders and non-reprompt items are re-encrypted in the
+  background as version 2 where possible.
 - **Vault key**: 32 random bytes, generated once at setup, constant for the
   account lifetime. Rotating it (rare) means re-encrypting all items.
 - **Per-attachment keys**: each attachment gets its own 32 B file key, itself
@@ -222,9 +224,10 @@ POST   /api/vault/import                     restore after client-side re-encryp
 Export bundles include the source key envelope plus encrypted folders, items,
 tombstones, attachment metadata, and encrypted attachment payloads. During
 import, the client asks for the backup master password, unwraps the source vault
-key locally, verifies attachment payloads, and re-encrypts everything into the
-currently unlocked vault before upload. The server refuses export bundles whose
-embedded attachment payloads would exceed the import JSON cap.
+key locally, verifies attachment payloads, and re-encrypts folders, items,
+attachment metadata, and attachment payloads into the currently unlocked vault
+before upload. The server refuses export bundles whose embedded attachment
+payloads would exceed the import JSON cap.
 
 ## Search
 

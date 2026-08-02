@@ -19,6 +19,31 @@ type Repository struct {
 // NewRepository returns a Repository bound to db.
 func NewRepository(db *sql.DB) *Repository { return &Repository{db: db} }
 
+// configSettingKey is the server_settings key holding the drive limits JSON.
+const configSettingKey = "module.drive.config"
+
+// GetConfig reads the stored drive config JSON, applying defaults. A missing or
+// unreadable row falls back to defaults so startup never blocks.
+func (r *Repository) GetConfig(ctx context.Context) Config {
+	var raw string
+	err := r.db.QueryRowContext(ctx,
+		"SELECT value FROM server_settings WHERE key = ?", configSettingKey).Scan(&raw)
+	if err != nil {
+		return ParseConfig("")
+	}
+	return ParseConfig(raw)
+}
+
+// SetConfig persists the drive config JSON (upsert).
+func (r *Repository) SetConfig(ctx context.Context, c Config) error {
+	now := time.Now().UTC().Truncate(time.Second)
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO server_settings (key, value, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+	`, configSettingKey, MarshalConfig(c), now)
+	return err
+}
+
 const nodeColumns = `id, user_id, COALESCE(parent_id,''), kind, name,
 	COALESCE(blob_path,''), COALESCE(content_type,''), size_bytes, COALESCE(sha256,''),
 	is_starred, deleted_at, created_at, updated_at`

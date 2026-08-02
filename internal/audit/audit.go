@@ -233,6 +233,22 @@ func humanMessage(actor, target string, e Entry) string {
 		return fmt.Sprintf("%s updated their profile", actor)
 	case "avatar.uploaded":
 		return fmt.Sprintf("%s uploaded an avatar", actor)
+	case "drive.folder_created":
+		return fmt.Sprintf("%s created folder %s", actor, metadataOrTarget(e, "name", target))
+	case "drive.file_uploaded":
+		return fmt.Sprintf("%s uploaded file %s", actor, metadataOrTarget(e, "name", target))
+	case "drive.file_trashed":
+		return fmt.Sprintf("%s moved %s to trash", actor, target)
+	case "drive.file_deleted":
+		return fmt.Sprintf("%s permanently deleted %s", actor, target)
+	case "drive.trash_emptied":
+		return fmt.Sprintf("%s emptied their trash", actor)
+	case "drive.share_created":
+		return fmt.Sprintf("%s created a share link for %s", actor, target)
+	case "drive.share_revoked":
+		return fmt.Sprintf("%s revoked share %s", actor, target)
+	case "drive.config_updated":
+		return fmt.Sprintf("%s updated drive storage limits", actor)
 	case "vault.setup":
 		return fmt.Sprintf("%s initialized their password vault", actor)
 	case "vault.keys_rotated":

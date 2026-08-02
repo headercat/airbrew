@@ -85,12 +85,15 @@ func Build(d Deps) *http.ServeMux {
 	mailMod.Start(d.Ctx) // inbound poll coordinator
 
 	// Drive module. Status + public share links are public; file/folder/share
-	// management endpoints require a session.
+	// management endpoints require a session; storage limits live under admin.
 	driveMod := drive.New(d.Ctx, d.DB.DB, stubState, adminMod.Audit(), d.Blobs)
 	driveMod.RegisterPublicRoutes(mux) // GET /api/drive/status, GET /api/drive/s/{token}
 	driveSub := http.NewServeMux()
 	driveMod.RegisterRoutes(driveSub)
 	mux.Handle("/api/drive/", authMod.SessionMiddleware(driveSub))
+	driveAdminSub := http.NewServeMux()
+	driveMod.RegisterAdminRoutes(driveAdminSub)
+	adminSub.Handle("/api/admin/drive/", admin.RequireAdmin(authMod.UserRepo)(driveAdminSub))
 
 	contacts.New(stubState).RegisterRoutes(mux)
 	chat.New(stubState).RegisterRoutes(mux)

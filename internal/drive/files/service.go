@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/headercat/airbrew/internal/auth/password"
@@ -19,25 +21,63 @@ import (
 // Namespace is the blob-store namespace used for drive file bytes.
 const Namespace = "drive"
 
-// Config tunes drive behaviour.
+// Config tunes drive behaviour. Zero values mean "no limit".
 type Config struct {
 	// MaxUploadBytes caps a single upload; 0 means unlimited.
-	MaxUploadBytes int64
+	MaxUploadBytes int64 `json:"max_upload_bytes"`
 	// QuotaBytes caps a user's total live storage; 0 means unlimited.
-	QuotaBytes int64
+	QuotaBytes int64 `json:"quota_bytes"`
+}
+
+// configDefaults applied when a stored config omits a field (0 keeps the
+// default rather than "unlimited").
+const (
+	DefaultMaxUpload int64 = 50 << 20
+	DefaultQuota     int64 = 1 << 30
+)
+
+// ParseConfig decodes a JSON config blob, applying defaults for any zero field.
+func ParseConfig(raw string) Config {
+	c := Config{MaxUploadBytes: DefaultMaxUpload, QuotaBytes: DefaultQuota}
+	if strings.TrimSpace(raw) != "" {
+		var in Config
+		if err := json.Unmarshal([]byte(raw), &in); err == nil {
+			if in.MaxUploadBytes != 0 {
+				c.MaxUploadBytes = in.MaxUploadBytes
+			}
+			if in.QuotaBytes != 0 {
+				c.QuotaBytes = in.QuotaBytes
+			}
+		}
+	}
+	return c
+}
+
+// MarshalConfig encodes a config to JSON for storage.
+func MarshalConfig(c Config) string {
+	b, _ := json.Marshal(c)
+	return string(b)
 }
 
 // Service contains drive business logic.
 type Service struct {
 	repo  *Repository
 	blobs blob.Store
-	cfg   Config
+	cfg   atomic.Pointer[Config]
 }
 
 // NewService returns a Service backed by repo. blobs stores file bytes.
 func NewService(repo *Repository, blobs blob.Store, cfg Config) *Service {
-	return &Service{repo: repo, blobs: blobs, cfg: cfg}
+	s := &Service{repo: repo, blobs: blobs}
+	s.cfg.Store(&cfg)
+	return s
 }
+
+// SetConfig swaps the active config (live, no restart needed).
+func (s *Service) SetConfig(c Config) { s.cfg.Store(&c) }
+
+// Config returns the current active config.
+func (s *Service) Config() Config { return *s.cfg.Load() }
 
 // CreateFolder creates a folder under parentID ("" = root).
 func (s *Service) CreateFolder(ctx context.Context, in CreateFolderInput) (*Node, error) {
@@ -89,9 +129,10 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*Node, error) {
 	}
 
 	// Enforce per-upload cap while streaming, and hash + count simultaneously.
+	cfg := s.Config()
 	h := sha256.New()
 	var size int64
-	limited := &limitReader{r: in.Content, max: s.cfg.MaxUploadBytes}
+	limited := &limitReader{r: in.Content, max: cfg.MaxUploadBytes}
 	tee := io.TeeReader(limited, &countWriter{h: h, n: &size})
 
 	var blobPath string
@@ -107,15 +148,15 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*Node, error) {
 	}
 
 	// Quota check against the freshly-counted size.
-	if s.cfg.QuotaBytes > 0 {
+	if cfg.QuotaBytes > 0 {
 		used, err := s.repo.TotalSize(ctx, in.UserID)
 		if err != nil {
 			s.deleteBlob(ctx, blobPath)
 			return nil, err
 		}
-		if used+size > s.cfg.QuotaBytes {
+		if used+size > cfg.QuotaBytes {
 			s.deleteBlob(ctx, blobPath)
-			return nil, fmt.Errorf("%w: used %d + %d > quota %d", ErrQuotaExceeded, used, size, s.cfg.QuotaBytes)
+			return nil, fmt.Errorf("%w: used %d + %d > quota %d", ErrQuotaExceeded, used, size, cfg.QuotaBytes)
 		}
 	}
 
@@ -177,7 +218,7 @@ func (s *Service) Usage(ctx context.Context, userID string) (used, quota int64, 
 	if err != nil {
 		return 0, 0, err
 	}
-	return used, s.cfg.QuotaBytes, nil
+	return used, s.Config().QuotaBytes, nil
 }
 
 // Rename changes a node's name.

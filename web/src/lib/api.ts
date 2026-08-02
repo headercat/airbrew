@@ -44,6 +44,7 @@ export type AdminUser = {
   status: string;
   role: string;
   created_at: string;
+  deleted_at?: string;
 };
 
 export type AdminDashboard = {

@@ -38,7 +38,7 @@ const (
 	columnsRead = `id, public_subject, email, email_verified, status, role,
 		COALESCE(display_name, ''), COALESCE(description, ''),
 		birthday, COALESCE(phone_number, ''), COALESCE(avatar_url, ''),
-		COALESCE(custom_fields, '{}'), created_at, updated_at`
+		COALESCE(custom_fields, '{}'), created_at, updated_at, deleted_at`
 )
 
 // Create inserts a user and their password credentials in a single transaction.
@@ -150,6 +150,16 @@ func (r *Repository) List(ctx context.Context, limit, offset int) ([]*User, erro
 // Search returns users matching the query string against email or display_name
 // (case-insensitive), excluding soft-deleted users.
 func (r *Repository) Search(ctx context.Context, query string, limit, offset int) ([]*User, error) {
+	return r.search(ctx, query, limit, offset, false)
+}
+
+// SearchIncludingDeleted returns users matching query and includes soft-deleted
+// rows so admins can restore accounts within the recovery window.
+func (r *Repository) SearchIncludingDeleted(ctx context.Context, query string, limit, offset int) ([]*User, error) {
+	return r.search(ctx, query, limit, offset, true)
+}
+
+func (r *Repository) search(ctx context.Context, query string, limit, offset int, includeDeleted bool) ([]*User, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -157,19 +167,41 @@ func (r *Repository) Search(ctx context.Context, query string, limit, offset int
 		offset = 0
 	}
 	if query == "" {
+		if includeDeleted {
+			rows, err := r.db.QueryContext(ctx,
+				"SELECT "+columnsRead+" FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?",
+				limit, offset,
+			)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+			return scanUsers(rows)
+		}
 		return r.List(ctx, limit, offset)
 	}
 	pattern := "%" + query + "%"
+	deletedClause := "status != ? AND "
+	args := []any{string(StatusDeleted)}
+	if includeDeleted {
+		deletedClause = ""
+		args = []any{}
+	}
+	args = append(args, pattern, pattern, limit, offset)
 	rows, err := r.db.QueryContext(ctx,
 		"SELECT "+columnsRead+` FROM users
-		WHERE status != ? AND (email LIKE ? ESCAPE '\' OR COALESCE(display_name,'') LIKE ? ESCAPE '\')
+		WHERE `+deletedClause+`(email LIKE ? ESCAPE '\' OR COALESCE(display_name,'') LIKE ? ESCAPE '\')
 		ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-		string(StatusDeleted), pattern, pattern, limit, offset,
+		args...,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanUsers(rows)
+}
+
+func scanUsers(rows *sql.Rows) ([]*User, error) {
 	var out []*User
 	for rows.Next() {
 		u, err := scanUser(rows)
@@ -457,11 +489,11 @@ func scanUser(row scanner) (*User, error) {
 	var verified int
 	var customFields string
 	var displayName, description, phoneNumber, avatarURL sql.NullString
-	var birthday sql.NullTime
+	var birthday, deletedAt sql.NullTime
 	err := row.Scan(
 		&u.ID, &u.PublicSubject, &u.Email, &verified, &status, &role,
 		&displayName, &description, &birthday, &phoneNumber, &avatarURL,
-		&customFields, &u.CreatedAt, &u.UpdatedAt,
+		&customFields, &u.CreatedAt, &u.UpdatedAt, &deletedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -487,6 +519,10 @@ func scanUser(row scanner) (*User, error) {
 	}
 	if avatarURL.Valid {
 		u.AvatarURL = avatarURL.String
+	}
+	if deletedAt.Valid {
+		t := deletedAt.Time.UTC()
+		u.DeletedAt = &t
 	}
 	u.CustomFields = unmarshalCustomFields(customFields)
 	return u, nil

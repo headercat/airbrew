@@ -48,6 +48,7 @@ export default function AdminUsers() {
   const { t } = useTranslation();
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [search, setSearch] = useState("");
+  const [includeDeleted, setIncludeDeleted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -61,7 +62,10 @@ export default function AdminUsers() {
 
   const refresh = useCallback(async () => {
     try {
-      const q = search ? `?search=${encodeURIComponent(search)}` : "";
+      const params = new URLSearchParams();
+      if (search) params.set("search", search);
+      if (includeDeleted) params.set("include_deleted", "true");
+      const q = params.toString() ? `?${params.toString()}` : "";
       const res = await api.get<{ users: AdminUser[] }>(`/api/admin/users${q}`);
       setUsers(res.users);
       setError(null);
@@ -70,7 +74,7 @@ export default function AdminUsers() {
         isApiError(err) ? (err.error_description ?? err.error) : "error",
       );
     }
-  }, [search]);
+  }, [includeDeleted, search]);
 
   useEffect(() => {
     void refresh();
@@ -156,6 +160,18 @@ export default function AdminUsers() {
     }
   }
 
+  async function restoreUser(u: AdminUser) {
+    if (!confirm(t("admin.users.confirmRestore", { email: u.email }))) return;
+    try {
+      await api.post(`/api/admin/users/${u.id}/restore`, {});
+      await refresh();
+    } catch (err) {
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : "error",
+      );
+    }
+  }
+
   async function openDetail(u: AdminUser) {
     setSelected(u);
     setDetail(null);
@@ -216,6 +232,14 @@ export default function AdminUsers() {
                 className="h-8 pl-8 text-[13px]"
               />
             </div>
+            <label className="flex items-center gap-2 whitespace-nowrap text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={includeDeleted}
+                onChange={(e) => setIncludeDeleted(e.target.checked)}
+              />
+              {t("admin.users.includeDeleted")}
+            </label>
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <UserPlus className="h-4 w-4" />
               {t("admin.users.create")}
@@ -252,39 +276,58 @@ export default function AdminUsers() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <select
-                        className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                        value={u.role}
-                        onChange={(e) =>
-                          updateRole(u, e.target.value as "user" | "admin")
-                        }
-                      >
-                        <option value="user">
-                          {t("admin.users.roleUser")}
-                        </option>
-                        <option value="admin">
-                          {t("admin.users.roleAdmin")}
-                        </option>
-                      </select>
+                      {u.status === "deleted" ? (
+                        <span className="text-xs text-muted-foreground">
+                          {u.role}
+                        </span>
+                      ) : (
+                        <select
+                          className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                          value={u.role}
+                          onChange={(e) =>
+                            updateRole(u, e.target.value as "user" | "admin")
+                          }
+                        >
+                          <option value="user">
+                            {t("admin.users.roleUser")}
+                          </option>
+                          <option value="admin">
+                            {t("admin.users.roleAdmin")}
+                          </option>
+                        </select>
+                      )}
                     </TableCell>
                     <TableCell>
-                      <select
-                        className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                        value={u.status}
-                        onChange={(e) =>
-                          updateStatus(
-                            u,
-                            e.target.value as "active" | "suspended",
-                          )
-                        }
-                      >
-                        <option value="active">
-                          {t("admin.users.statusActive")}
-                        </option>
-                        <option value="suspended">
-                          {t("admin.users.statusSuspended")}
-                        </option>
-                      </select>
+                      {u.status === "deleted" ? (
+                        <div>
+                          <div className="text-xs font-medium text-destructive">
+                            {t("admin.users.statusDeleted")}
+                          </div>
+                          {u.deleted_at && (
+                            <div className="text-xs text-muted-foreground">
+                              {new Date(u.deleted_at).toLocaleDateString()}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <select
+                          className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                          value={u.status}
+                          onChange={(e) =>
+                            updateStatus(
+                              u,
+                              e.target.value as "active" | "suspended",
+                            )
+                          }
+                        >
+                          <option value="active">
+                            {t("admin.users.statusActive")}
+                          </option>
+                          <option value="suspended">
+                            {t("admin.users.statusSuspended")}
+                          </option>
+                        </select>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {new Date(u.created_at).toLocaleDateString()}
@@ -306,18 +349,31 @@ export default function AdminUsers() {
                           className="h-7 w-7"
                           onClick={() => resetPw(u)}
                           title={t("admin.users.resetPassword")}
+                          disabled={u.status === "deleted"}
                         >
                           <RotateCcw className="h-3 w-3" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                          onClick={() => softDelete(u)}
-                          title={t("admin.users.delete")}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
+                        {u.status === "deleted" ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-primary"
+                            onClick={() => restoreUser(u)}
+                            title={t("admin.users.restore")}
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            onClick={() => softDelete(u)}
+                            title={t("admin.users.delete")}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

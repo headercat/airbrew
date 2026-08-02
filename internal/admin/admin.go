@@ -71,6 +71,7 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("GET /api/admin/users/{id}", m.handler.getUser)
 	admin.HandleFunc("PATCH /api/admin/users/{id}", m.handler.patchUser)
 	admin.HandleFunc("DELETE /api/admin/users/{id}", m.handler.deleteUser)
+	admin.HandleFunc("POST /api/admin/users/{id}/restore", m.handler.restoreUser)
 	admin.HandleFunc("POST /api/admin/users/{id}/reset-password", m.handler.resetPassword)
 	admin.HandleFunc("GET /api/admin/users/{id}/sessions", m.handler.listUserSessions)
 	admin.HandleFunc("DELETE /api/admin/users/{id}/sessions", m.handler.revokeUserSessions)

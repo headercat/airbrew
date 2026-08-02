@@ -149,24 +149,27 @@ func (h *Handler) patchModule(w http.ResponseWriter, r *http.Request) {
 // ---- Users ----
 
 type userDTO struct {
-	ID          string    `json:"id"`
-	Email       string    `json:"email"`
-	DisplayName string    `json:"display_name"`
-	Status      string    `json:"status"`
-	Role        string    `json:"role"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string     `json:"id"`
+	Email       string     `json:"email"`
+	DisplayName string     `json:"display_name"`
+	Status      string     `json:"status"`
+	Role        string     `json:"role"`
+	CreatedAt   time.Time  `json:"created_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
 func toUserDTO(u *user.User) userDTO {
 	return userDTO{
 		ID: u.ID, Email: u.Email, DisplayName: u.DisplayName,
 		Status: string(u.Status), Role: string(u.Role), CreatedAt: u.CreatedAt,
+		DeletedAt: u.DeletedAt,
 	}
 }
 
 func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	search := q.Get("search")
+	includeDeleted := q.Get("include_deleted") == "true"
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
 	if limit <= 0 || limit > 200 {
@@ -175,7 +178,13 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	if offset < 0 {
 		offset = 0
 	}
-	users, err := h.userRepo.Search(r.Context(), search, limit, offset)
+	var users []*user.User
+	var err error
+	if includeDeleted {
+		users, err = h.userRepo.SearchIncludingDeleted(r.Context(), search, limit, offset)
+	} else {
+		users, err = h.userRepo.Search(r.Context(), search, limit, offset)
+	}
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -383,6 +392,35 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		Metadata: map[string]any{"from": string(target.Status), "to": string(user.StatusDeleted)},
 	})
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (h *Handler) restoreUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	target, err := h.userRepo.GetByID(r.Context(), id)
+	if err != nil {
+		response.Error(w, http.StatusNotFound, "not_found", "user not found")
+		return
+	}
+	if target.Status != user.StatusDeleted {
+		response.Error(w, http.StatusBadRequest, "invalid_request", "user is not deleted")
+		return
+	}
+	if target.DeletedAt != nil && time.Since(*target.DeletedAt) > 30*24*time.Hour {
+		response.Error(w, http.StatusBadRequest, "recovery_window_expired", "user recovery window has expired")
+		return
+	}
+	if err := h.userRepo.SetStatus(r.Context(), id, user.StatusActive); err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "user.restored", ActorUserID: callerUserID(r),
+		TargetType: "user", TargetID: id,
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"from": string(user.StatusDeleted), "to": string(user.StatusActive)},
+	})
+	updated, _ := h.userRepo.GetByID(r.Context(), id)
+	response.JSON(w, http.StatusOK, toUserDTO(updated))
 }
 
 type resetPasswordReq struct {

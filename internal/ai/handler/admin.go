@@ -20,12 +20,13 @@ import (
 type AdminHandler struct {
 	prov   *provider.Repository
 	agents *agent.DefinitionRepo
+	tools  *agent.ToolRegistry
 	audit  *audit.Service
 }
 
 // NewAdmin builds an AdminHandler.
-func NewAdmin(prov *provider.Repository, agents *agent.DefinitionRepo, auditSvc *audit.Service) *AdminHandler {
-	return &AdminHandler{prov: prov, agents: agents, audit: auditSvc}
+func NewAdmin(prov *provider.Repository, agents *agent.DefinitionRepo, tools *agent.ToolRegistry, auditSvc *audit.Service) *AdminHandler {
+	return &AdminHandler{prov: prov, agents: agents, tools: tools, audit: auditSvc}
 }
 
 // RegisterRoutes mounts the admin endpoints. The caller mounts this mux
@@ -39,6 +40,7 @@ func (a *AdminHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/ai/agents", a.createAgent)
 	mux.HandleFunc("PUT /api/admin/ai/agents/{id}", a.updateAgent)
 	mux.HandleFunc("DELETE /api/admin/ai/agents/{id}", a.deleteAgent)
+	mux.HandleFunc("GET /api/admin/ai/tools", a.listTools)
 
 	mux.HandleFunc("GET /api/admin/ai/drivers", a.listDrivers)
 }
@@ -46,16 +48,16 @@ func (a *AdminHandler) RegisterRoutes(mux *http.ServeMux) {
 // --- providers ------------------------------------------------------------
 
 type providerResp struct {
-	ID         string    `json:"id"`
-	Direction  string    `json:"direction"`
-	Driver     string    `json:"driver"`
-	Name       string    `json:"name"`
-	BaseURL    string    `json:"base_url"`
-	ModelHint  string    `json:"model_hint"`
-	IsActive   bool      `json:"is_active"`
-	HasAPIKey  bool      `json:"has_api_key"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID        string    `json:"id"`
+	Direction string    `json:"direction"`
+	Driver    string    `json:"driver"`
+	Name      string    `json:"name"`
+	BaseURL   string    `json:"base_url"`
+	ModelHint string    `json:"model_hint"`
+	IsActive  bool      `json:"is_active"`
+	HasAPIKey bool      `json:"has_api_key"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func toProviderResp(p provider.StoredProvider) providerResp {
@@ -264,6 +266,33 @@ func (a *AdminHandler) deleteAgent(w http.ResponseWriter, r *http.Request) {
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
 	})
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// --- tools ----------------------------------------------------------------
+
+type toolInfo struct {
+	Key         string              `json:"key"`
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
+	Parameters  map[string]any      `json:"parameters"`
+	Schema      provider.ToolSchema `json:"schema"`
+}
+
+func (a *AdminHandler) listTools(w http.ResponseWriter, r *http.Request) {
+	keys := a.tools.Keys()
+	out := make([]toolInfo, 0, len(keys))
+	for _, key := range keys {
+		t, ok := a.tools.Get(key)
+		if !ok {
+			continue
+		}
+		schema := t.Schema()
+		out = append(out, toolInfo{
+			Key: key, Name: schema.Name, Description: schema.Description,
+			Parameters: schema.Parameters, Schema: schema,
+		})
+	}
+	response.JSON(w, http.StatusOK, map[string]any{"tools": out})
 }
 
 // --- drivers --------------------------------------------------------------

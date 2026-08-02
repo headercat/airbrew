@@ -11,6 +11,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 )
 
@@ -169,6 +170,7 @@ func Drivers() []string {
 	for k := range drivers {
 		names = append(names, k)
 	}
+	sort.Strings(names)
 	return names
 }
 

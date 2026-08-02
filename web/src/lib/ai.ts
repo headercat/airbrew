@@ -63,6 +63,18 @@ export type Driver = {
   default_model: string;
 };
 
+export type AdminAITool = {
+  key: string;
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  schema: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+};
+
 export type AIProvider = {
   id: string;
   direction: "chat" | "embed";
@@ -90,9 +102,7 @@ export async function listConversations(): Promise<Conversation[]> {
   return res.conversations;
 }
 
-export async function getConversation(
-  id: string,
-): Promise<ConversationDetail> {
+export async function getConversation(id: string): Promise<ConversationDetail> {
   return api.get<ConversationDetail>(`/api/ai/conversations/${id}`);
 }
 
@@ -131,6 +141,11 @@ export async function adminListDrivers(): Promise<Driver[]> {
   return res.drivers;
 }
 
+export async function adminListTools(): Promise<AdminAITool[]> {
+  const res = await api.get<{ tools: AdminAITool[] }>("/api/admin/ai/tools");
+  return res.tools;
+}
+
 export async function adminPutProvider(
   direction: "chat" | "embed",
   body: {
@@ -141,10 +156,7 @@ export async function adminPutProvider(
     api_key?: string;
   },
 ): Promise<AIProvider> {
-  return api.putRaw<AIProvider>(
-    `/api/admin/ai/providers/${direction}`,
-    body,
-  );
+  return api.putRaw<AIProvider>(`/api/admin/ai/providers/${direction}`, body);
 }
 
 export async function adminDeleteProvider(id: string): Promise<void> {
@@ -152,9 +164,7 @@ export async function adminDeleteProvider(id: string): Promise<void> {
 }
 
 export async function adminListAgents(): Promise<AdminAIAgent[]> {
-  const res = await api.get<{ agents: AdminAIAgent[] }>(
-    "/api/admin/ai/agents",
-  );
+  const res = await api.get<{ agents: AdminAIAgent[] }>("/api/admin/ai/agents");
   return res.agents;
 }
 

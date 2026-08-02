@@ -13,6 +13,7 @@ import { PageWrapper } from "@/components/page";
 import { SectionHeader, SettingRow } from "./shared";
 import {
   type AdminAIAgent,
+  type AdminAITool,
   type AIProvider,
   type Driver,
   adminCreateAgent,
@@ -21,6 +22,7 @@ import {
   adminListAgents,
   adminListDrivers,
   adminListProviders,
+  adminListTools,
   adminPutProvider,
   adminUpdateAgent,
 } from "@/lib/ai";
@@ -126,9 +128,7 @@ function ProviderSection() {
       <CardContent className="space-y-4 p-6">
         <div className="flex items-center justify-between">
           <div className="space-y-0.5">
-            <p className="text-sm font-medium">
-              {t("admin.ai.providerTitle")}
-            </p>
+            <p className="text-sm font-medium">{t("admin.ai.providerTitle")}</p>
             <p className="text-xs text-muted-foreground">
               {t("admin.ai.providerDesc")}
             </p>
@@ -259,6 +259,7 @@ function ProviderSection() {
 function AgentsSection() {
   const { t } = useTranslation();
   const [agents, setAgents] = useState<AdminAIAgent[]>([]);
+  const [availableTools, setAvailableTools] = useState<AdminAITool[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<AdminAIAgent | null>(null);
@@ -266,7 +267,12 @@ function AgentsSection() {
   async function load() {
     setLoading(true);
     try {
-      setAgents(await adminListAgents());
+      const [agentRows, toolRows] = await Promise.all([
+        adminListAgents(),
+        adminListTools(),
+      ]);
+      setAgents(agentRows);
+      setAvailableTools(toolRows);
     } catch (err) {
       setError(fmtErr(err));
     } finally {
@@ -328,6 +334,7 @@ function AgentsSection() {
         ) : editing ? (
           <AgentEditor
             agent={editing}
+            availableTools={availableTools}
             onCancel={() => setEditing(null)}
             onSaved={() => {
               setEditing(null);
@@ -339,7 +346,9 @@ function AgentsSection() {
             {agents.map((a) => (
               <SettingRow
                 key={a.id}
-                title={a.name + (a.is_builtin ? ` · ${t("admin.ai.builtin")}` : "")}
+                title={
+                  a.name + (a.is_builtin ? ` · ${t("admin.ai.builtin")}` : "")
+                }
                 description={`${a.model}${a.tools.length ? ` · ${a.tools.length} ${t("ai.tools")}` : ""}`}
               >
                 <div className="flex items-center gap-2">
@@ -378,10 +387,12 @@ function AgentsSection() {
 
 function AgentEditor({
   agent,
+  availableTools,
   onCancel,
   onSaved,
 }: {
   agent: AdminAIAgent;
+  availableTools: AdminAITool[];
   onCancel: () => void;
   onSaved: () => void;
 }) {
@@ -390,7 +401,7 @@ function AgentEditor({
   const [description, setDescription] = useState(agent.description);
   const [model, setModel] = useState(agent.model);
   const [systemPrompt, setSystemPrompt] = useState(agent.system_prompt);
-  const [tools, setTools] = useState(agent.tools.join(", "));
+  const [tools, setTools] = useState<string[]>(agent.tools);
   const [temperature, setTemperature] = useState(String(agent.temperature));
   const [maxTokens, setMaxTokens] = useState(String(agent.max_tokens));
   const [maxTurns, setMaxTurns] = useState(String(agent.max_turns));
@@ -406,10 +417,7 @@ function AgentEditor({
       description,
       model,
       system_prompt: systemPrompt,
-      tools: tools
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
+      tools,
       temperature: parseFloat(temperature) || 0.7,
       max_tokens: parseInt(maxTokens, 10) || 0,
       max_turns: parseInt(maxTurns, 10) || 6,
@@ -454,14 +462,53 @@ function AgentEditor({
           className="font-mono text-xs"
         />
       </Field>
-      <div className="grid gap-3 md:grid-cols-4">
-        <Field label={t("admin.ai.tools")}>
-          <Input
-            value={tools}
-            onChange={(e) => setTools(e.target.value)}
-            placeholder="clock, echo"
-          />
-        </Field>
+      <Field label={t("admin.ai.tools")}>
+        <div className="min-h-9 rounded-md border border-border px-3 py-2">
+          {availableTools.length === 0 ? (
+            <p className="text-xs text-muted-foreground">clock, echo</p>
+          ) : (
+            <div className="grid gap-2 md:grid-cols-2">
+              {availableTools.map((tool) => {
+                const checked = tools.includes(tool.key);
+                return (
+                  <label
+                    key={tool.key}
+                    className="flex items-start gap-2 text-xs"
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={checked}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setTools((prev) =>
+                            prev.includes(tool.key)
+                              ? prev
+                              : [...prev, tool.key],
+                          );
+                        } else {
+                          setTools((prev) =>
+                            prev.filter((key) => key !== tool.key),
+                          );
+                        }
+                      }}
+                    />
+                    <span>
+                      <span className="font-medium">{tool.key}</span>
+                      {tool.description && (
+                        <span className="ml-1 text-muted-foreground">
+                          {tool.description}
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </Field>
+      <div className="grid gap-3 md:grid-cols-3">
         <Field label={t("admin.ai.temperature")}>
           <Input
             type="number"

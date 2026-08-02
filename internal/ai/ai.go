@@ -66,7 +66,7 @@ func New(
 		agents:  agentsRepo,
 		runtime: runtime,
 		user:    handler.New(convSvc, agentsRepo, runtime, auditSvc).WithAutoTitle(autoTitle),
-		admin:   handler.NewAdmin(provRepo, agentsRepo, auditSvc),
+		admin:   handler.NewAdmin(provRepo, agentsRepo, tools, auditSvc),
 	}
 }
 
@@ -84,10 +84,10 @@ func (m *Module) Status(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"module":   "ai",
-		"status":   status,
-		"enabled":  boolStr(enabled),
-		"drivers":  provider.Drivers(),
+		"module":  "ai",
+		"status":  status,
+		"enabled": boolStr(enabled),
+		"drivers": provider.Drivers(),
 	})
 }
 

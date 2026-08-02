@@ -105,6 +105,38 @@ func TestStreamRequiresMessage(t *testing.T) {
 	}
 }
 
+func TestAdminListTools(t *testing.T) {
+	reg := agent.NewToolRegistry()
+	agent.Builtin(reg)
+	h := &AdminHandler{tools: reg}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/ai/tools", nil)
+	rec := httptest.NewRecorder()
+	h.listTools(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body struct {
+		Tools []struct {
+			Key  string `json:"key"`
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode tools: %v", err)
+	}
+	if len(body.Tools) != 2 {
+		t.Fatalf("expected 2 tools, got %+v", body.Tools)
+	}
+	if body.Tools[0].Key != "clock" || body.Tools[1].Key != "echo" {
+		t.Fatalf("tools not sorted: %+v", body.Tools)
+	}
+	if body.Tools[0].Name == "" || body.Tools[1].Name == "" {
+		t.Fatalf("tool schema names missing: %+v", body.Tools)
+	}
+}
+
 // newTestConvService spins up an in-memory conv.Service backed by SQLite.
 func newTestConvService(t *testing.T) (*conv.Service, string, string) {
 	t.Helper()

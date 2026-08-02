@@ -282,6 +282,7 @@ export async function streamChat(opts: {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
+  let sawDone = false;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -297,6 +298,9 @@ export async function streamChat(opts: {
       const ev = parseFrame(frame);
       if (ev) {
         onEvent(ev);
+        if (ev.kind === "done") {
+          sawDone = true;
+        }
         if (ev.kind === "error") {
           const err: ApiError = {
             error: ev.error.code,
@@ -307,6 +311,14 @@ export async function streamChat(opts: {
         }
       }
     }
+  }
+  if (!sawDone) {
+    const err: ApiError = {
+      error: "stream_closed",
+      error_description: "stream closed before done",
+      status: 0,
+    };
+    throw err;
   }
 }
 

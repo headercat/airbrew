@@ -9,6 +9,7 @@ package conv
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -99,6 +100,12 @@ func (s *Service) SetTitle(ctx context.Context, userID, id, title string) error 
 
 // AppendUserMessage records a user turn and returns the inserted row.
 func (s *Service) AppendUserMessage(ctx context.Context, userID, conversationID, content string) (Message, error) {
+	return s.AppendUserMessageIfRevision(ctx, userID, conversationID, content, 0)
+}
+
+// AppendUserMessageIfRevision records a user turn only if the conversation
+// still has expectedRevision. expectedRevision <= 0 disables the check.
+func (s *Service) AppendUserMessageIfRevision(ctx context.Context, userID, conversationID, content string, expectedRevision int64) (Message, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return Message{}, fmt.Errorf("%w: content required", ErrInvalidInput)
@@ -106,9 +113,13 @@ func (s *Service) AppendUserMessage(ctx context.Context, userID, conversationID,
 	if len(content) > MaxContentLen {
 		return Message{}, fmt.Errorf("%w: content too long", ErrInvalidInput)
 	}
-	return s.repo.AppendMessage(ctx, userID, Message{
+	m := Message{
 		ConversationID: conversationID, Role: provider.RoleUser, Content: content,
-	})
+	}
+	if expectedRevision > 0 {
+		return s.repo.AppendMessageIfRevision(ctx, userID, m, expectedRevision)
+	}
+	return s.repo.AppendMessage(ctx, userID, m)
 }
 
 // AppendAssistantMessage records an assistant turn (with tool calls and
@@ -125,7 +136,7 @@ func (s *Service) AppendAssistantMessage(ctx context.Context, userID, conversati
 	}
 	if err := s.repo.IncUsage(ctx, userID, time.Now(), promptTok, completionTok); err != nil {
 		// Usage rollup is best-effort; never fail the request on it.
-		_ = err
+		slog.Default().Warn("ai: usage rollup failed", "user_id", userID, "conversation_id", conversationID, "error", err)
 	}
 	return m, nil
 }

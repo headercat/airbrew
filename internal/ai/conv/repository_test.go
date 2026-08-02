@@ -132,6 +132,25 @@ func TestAppendMessageForeignConversation(t *testing.T) {
 	}
 }
 
+func TestAppendMessageIfRevisionRejectsStaleSnapshot(t *testing.T) {
+	r, uid, agentID := testRepo(t)
+	ctx := context.Background()
+	c, _ := r.Create(ctx, Conversation{
+		UserID: uid, AgentID: agentID, SnapModel: "x", SnapTools: []string{},
+		SnapMaxTurns: 6,
+	})
+	if _, err := r.AppendMessageIfRevision(ctx, uid, Message{
+		ConversationID: c.ID, Role: provider.RoleUser, Content: "first",
+	}, c.Revision); err != nil {
+		t.Fatalf("AppendMessageIfRevision first: %v", err)
+	}
+	if _, err := r.AppendMessageIfRevision(ctx, uid, Message{
+		ConversationID: c.ID, Role: provider.RoleUser, Content: "stale",
+	}, c.Revision); err != ErrConflict {
+		t.Fatalf("expected ErrConflict for stale revision, got %v", err)
+	}
+}
+
 func TestIncUsageRollup(t *testing.T) {
 	r, uid, _ := testRepo(t)
 	ctx := context.Background()

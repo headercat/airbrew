@@ -161,6 +161,16 @@ func (r *Repository) BumpRevision(ctx context.Context, userID, id string) error 
 // that race into a deterministic ErrConflict that the caller can surface
 // to the user.
 func (r *Repository) AppendMessage(ctx context.Context, userID string, m Message) (Message, error) {
+	return r.appendMessage(ctx, userID, m, 0)
+}
+
+// AppendMessageIfRevision appends a message only when the conversation
+// revision still matches expectedRevision.
+func (r *Repository) AppendMessageIfRevision(ctx context.Context, userID string, m Message, expectedRevision int64) (Message, error) {
+	return r.appendMessage(ctx, userID, m, expectedRevision)
+}
+
+func (r *Repository) appendMessage(ctx context.Context, userID string, m Message, expectedRevision int64) (Message, error) {
 	if userID == "" {
 		return Message{}, fmt.Errorf("%w: user_id required", ErrInvalidInput)
 	}
@@ -196,7 +206,7 @@ func (r *Repository) AppendMessage(ctx context.Context, userID string, m Message
 	// attempts so a pathological contention scenario still terminates.
 	const maxAttempts = 5
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		out, done, err := r.tryAppendMessage(ctx, m, tools)
+		out, done, err := r.tryAppendMessage(ctx, m, tools, expectedRevision)
 		if err != nil {
 			return Message{}, err
 		}
@@ -211,7 +221,7 @@ func (r *Repository) AppendMessage(ctx context.Context, userID string, m Message
 // Returns (inserted, true, nil) on success, (zero, false, nil) on a
 // unique-seq race (caller may retry), and (zero, false, err) on any
 // other failure.
-func (r *Repository) tryAppendMessage(ctx context.Context, m Message, tools string) (Message, bool, error) {
+func (r *Repository) tryAppendMessage(ctx context.Context, m Message, tools string, expectedRevision int64) (Message, bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Message{}, false, fmt.Errorf("conv: begin tx: %w", err)
@@ -229,6 +239,19 @@ func (r *Repository) tryAppendMessage(ctx context.Context, m Message, tools stri
 	m.ID = id.New()
 	m.Seq = seq
 	m.CreatedAt = now
+	if expectedRevision > 0 {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE ai_conversations
+			SET updated_at = ?, revision = revision + 1
+			WHERE id = ? AND deleted_at IS NULL AND revision = ?
+		`, now, m.ConversationID, expectedRevision)
+		if err != nil {
+			return Message{}, false, fmt.Errorf("conv: conditional bump revision: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return Message{}, false, ErrConflict
+		}
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO ai_messages
 		  (id, conversation_id, role, content, tool_calls, tool_call_id, tool_name,
@@ -243,11 +266,13 @@ func (r *Repository) tryAppendMessage(ctx context.Context, m Message, tools stri
 		}
 		return Message{}, false, fmt.Errorf("conv: insert message: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE ai_conversations SET updated_at = ?, revision = revision + 1 WHERE id = ?",
-		now, m.ConversationID,
-	); err != nil {
-		return Message{}, false, fmt.Errorf("conv: bump updated_at: %w", err)
+	if expectedRevision <= 0 {
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE ai_conversations SET updated_at = ?, revision = revision + 1 WHERE id = ?",
+			now, m.ConversationID,
+		); err != nil {
+			return Message{}, false, fmt.Errorf("conv: bump updated_at: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Message{}, false, fmt.Errorf("conv: commit: %w", err)

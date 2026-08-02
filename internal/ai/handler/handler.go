@@ -347,7 +347,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		MaxTurns: conv0.SnapMaxTurns,
 	}
 	events := h.runtime.Run(r.Context(), agent.RunInput{
-		UserID: sess.UserID, ConversationID: id,
+		UserID: sess.UserID, ConversationID: id, ExpectedRevision: conv0.Revision,
 		UserMessage: req.Message, Spec: spec,
 	})
 	h.logAudit(r, "ai.message_sent", id, map[string]any{

@@ -132,10 +132,11 @@ func (rt *Runtime) AutoTitle(ctx context.Context, userID, conversationID, userMe
 
 // RunInput is one chat request.
 type RunInput struct {
-	UserID         string
-	ConversationID string
-	UserMessage    string
-	Spec           Spec
+	UserID           string
+	ConversationID   string
+	UserMessage      string
+	ExpectedRevision int64
+	Spec             Spec
 }
 
 // Run executes one assistant turn and streams events. It is the only
@@ -179,7 +180,7 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 
 	// 1. Persist the user's prompt first so the conversation reflects the
 	//    request even if the provider call never returns.
-	if _, err := rt.conv.AppendUserMessage(ctx, in.UserID, in.ConversationID, in.UserMessage); err != nil {
+	if _, err := rt.conv.AppendUserMessageIfRevision(ctx, in.UserID, in.ConversationID, in.UserMessage, in.ExpectedRevision); err != nil {
 		return fmt.Errorf("append user message: %w", err)
 	}
 
@@ -527,6 +528,9 @@ func toEventError(err error) *ErrorBody {
 	}
 	if errors.Is(err, ErrRunInProgress) {
 		return &ErrorBody{Code: "conversation_busy", Description: "conversation already has a running turn"}
+	}
+	if errors.Is(err, conv.ErrConflict) {
+		return &ErrorBody{Code: "conversation_conflict", Description: "conversation changed before this turn started"}
 	}
 	// Surface only the top-level message; the wrapped chain may contain
 	// internal paths or DB errors that should not reach the SPA.

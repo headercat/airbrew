@@ -200,9 +200,11 @@ panel can show burn-down charts without scanning the messages table.
 ## History replay
 
 The runtime replays at most the last `MaxHistoryMessages` (50) messages
-per turn, dropping any leading orphan tool row, so long conversations
-do not blow up prompt cost. `revision` on `ai_conversations` is bumped
-on every append so a multi-tab SPA can poll for changes and resync.
+per turn, then repairs tool-call boundaries before sending history to a
+provider. Orphan `tool` rows and incomplete `assistant(tool_calls)` /
+`tool` exchanges are dropped from replay so provider transcripts remain
+valid. `revision` on `ai_conversations` is bumped on every append so a
+multi-tab SPA can poll for changes and resync.
 
 ## Title auto-generation
 

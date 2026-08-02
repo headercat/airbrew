@@ -278,6 +278,9 @@ export default function AIPage() {
   function handleStop() {
     abortRef.current?.abort();
     setBusy(false);
+    setError(
+      t("ai.streamError", { msg: "cancelled; partial response was not saved" }),
+    );
     setMessages((prev) =>
       prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
     );

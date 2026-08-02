@@ -174,26 +174,30 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 	}
 	defer unlock()
 	runID := id.New()
-	if err := rt.conv.AcquireRunLease(ctx, in.UserID, in.ConversationID, runID, 30*time.Minute); err != nil {
+	if err := rt.conv.AcquireRunLease(ctx, in.UserID, in.ConversationID, runID, runLeaseTTL); err != nil {
 		return fmt.Errorf("acquire run lease: %w", err)
 	}
 	defer func() {
 		_ = rt.conv.ReleaseRunLease(context.Background(), in.ConversationID, runID)
 	}()
+	runCtx, cancelRun := context.WithCancelCause(ctx)
+	defer cancelRun(nil)
+	stopHeartbeat := rt.startRunLeaseHeartbeat(runCtx, in.ConversationID, runID, runLeaseTTL, cancelRun)
+	defer stopHeartbeat()
 	if rt.ResolveProvider == nil {
 		return errors.New("agent: provider resolver not configured")
 	}
-	cli, err := rt.ResolveProvider(ctx)
+	cli, err := rt.ResolveProvider(runCtx)
 	if err != nil {
 		return fmt.Errorf("resolve provider: %w", err)
 	}
-	if !sendEvent(ctx, out, Event{Kind: EventMetadata, Content: cli.Model()}) {
-		return ctx.Err()
+	if !sendEvent(runCtx, out, Event{Kind: EventMetadata, Content: cli.Model()}) {
+		return context.Cause(runCtx)
 	}
 
 	// 1. Persist the user's prompt first so the conversation reflects the
 	//    request even if the provider call never returns.
-	if _, err := rt.conv.AppendUserMessageIfRevision(ctx, in.UserID, in.ConversationID, in.UserMessage, in.ExpectedRevision); err != nil {
+	if _, err := rt.conv.AppendUserMessageIfRevision(runCtx, in.UserID, in.ConversationID, in.UserMessage, in.ExpectedRevision); err != nil {
 		return fmt.Errorf("append user message: %w", err)
 	}
 
@@ -209,7 +213,7 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 		//    messages are visible. Snap the system prompt from the spec.
 		//    Trim to MaxHistoryMessages to bound prompt cost on long
 		//    conversations (docs/ai.md).
-		hist, err := rt.conv.History(ctx, in.UserID, in.ConversationID)
+		hist, err := rt.conv.History(runCtx, in.UserID, in.ConversationID)
 		if err != nil {
 			return fmt.Errorf("load history: %w", err)
 		}
@@ -226,15 +230,15 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 			req.Tools = rt.tools.SchemasFor(in.Spec.Tools)
 		}
 
-		deltas := cli.ChatStream(ctx, req)
+		deltas := cli.ChatStream(runCtx, req)
 		streamDone := false
 	accLoop:
 		for d := range deltas {
 			switch d.Kind {
 			case provider.DeltaContent:
 				acc.content.WriteString(d.Content)
-				if !sendEvent(ctx, out, Event{Kind: EventDelta, Content: d.Content}) {
-					return ctx.Err()
+				if !sendEvent(runCtx, out, Event{Kind: EventDelta, Content: d.Content}) {
+					return context.Cause(runCtx)
 				}
 			case provider.DeltaToolCallStart:
 				acc.startTool(d.Index, d.ToolCallID, d.ToolName)
@@ -248,7 +252,7 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 				break accLoop
 			case provider.DeltaError:
 				if errors.Is(d.Err, context.Canceled) {
-					return d.Err
+					return context.Cause(runCtx)
 				}
 				return fmt.Errorf("provider stream: %w", d.Err)
 			}
@@ -259,19 +263,16 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 
 		// 4. No tool calls => terminal turn. Persist and emit done.
 		if acc.toolCalls == nil || len(acc.toolCalls) == 0 {
-			amsg, perr := rt.conv.AppendAssistantMessage(ctx, in.UserID, in.ConversationID,
-				acc.content.String(), nil, lastUsage.PromptTokens, lastUsage.CompletionTokens)
+			amsg, perr := rt.conv.AppendAssistantMessageWithUsage(runCtx, in.UserID, in.ConversationID,
+				acc.content.String(), nil, lastUsage)
 			if perr != nil {
 				return fmt.Errorf("append assistant message: %w", perr)
 			}
-			if !sendEvent(ctx, out, Event{
+			if !sendEvent(runCtx, out, Event{
 				Kind: EventDone, MessageID: amsg.ID,
-				Usage: &provider.Usage{
-					PromptTokens:     lastUsage.PromptTokens,
-					CompletionTokens: lastUsage.CompletionTokens,
-				},
+				Usage: &lastUsage,
 			}) {
-				return ctx.Err()
+				return context.Cause(runCtx)
 			}
 			return nil
 		}
@@ -279,35 +280,30 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 		// 5. Dispatch each tool call, emit results, and append the tool
 		//    messages so the next turn sees them.
 		persistedToolCalls := acc.completedToolCalls(turn)
-		// Persist the assistant turn that issued the tool calls first,
-		// mirroring how the wire transcript will look to the model next turn.
-		if _, err := rt.conv.AppendAssistantMessage(ctx, in.UserID, in.ConversationID,
-			acc.content.String(), providerToolCalls(persistedToolCalls),
-			lastUsage.PromptTokens, lastUsage.CompletionTokens,
-		); err != nil {
-			return fmt.Errorf("append assistant tool turn: %w", err)
-		}
-
+		toolResults := make([]conv.ToolResult, 0, len(persistedToolCalls))
 		for _, tc := range persistedToolCalls {
-			if !sendEvent(ctx, out, Event{
+			if !sendEvent(runCtx, out, Event{
 				Kind: EventToolStart, ToolCallID: tc.id, ToolName: tc.name,
 				ToolArgs: tc.args,
 			}) {
-				return ctx.Err()
+				return context.Cause(runCtx)
 			}
-			result, _ := dispatch(ctx, rt.tools, allowedTools, tc.name, tc.args)
+			result, _ := dispatch(runCtx, rt.tools, allowedTools, tc.name, tc.args)
 			result = truncateToolResult(result)
-			if !sendEvent(ctx, out, Event{
+			if !sendEvent(runCtx, out, Event{
 				Kind: EventTool, ToolCallID: tc.id, ToolName: tc.name,
 				ToolArgs: tc.args, ToolResult: result,
 			}) {
-				return ctx.Err()
+				return context.Cause(runCtx)
 			}
-			if _, err := rt.conv.AppendToolMessage(ctx, in.UserID, in.ConversationID,
-				tc.id, tc.name, result,
-			); err != nil {
-				return fmt.Errorf("append tool message: %w", err)
-			}
+			toolResults = append(toolResults, conv.ToolResult{
+				ToolCallID: tc.id, ToolName: tc.name, Content: result,
+			})
+		}
+		if _, err := rt.conv.AppendAssistantToolExchange(runCtx, in.UserID, in.ConversationID,
+			acc.content.String(), providerToolCalls(persistedToolCalls), lastUsage, toolResults,
+		); err != nil {
+			return fmt.Errorf("append assistant tool exchange: %w", err)
 		}
 	}
 
@@ -338,6 +334,37 @@ func sendEvent(ctx context.Context, out chan<- Event, ev Event) bool {
 		return false
 	case out <- ev:
 		return true
+	}
+}
+
+const runLeaseTTL = 30 * time.Minute
+
+func (rt *Runtime) startRunLeaseHeartbeat(ctx context.Context, conversationID, runID string, ttl time.Duration, cancel context.CancelCauseFunc) func() {
+	interval := ttl / 3
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				if err := rt.conv.RenewRunLease(ctx, conversationID, runID, ttl); err != nil {
+					cancel(fmt.Errorf("renew run lease: %w", err))
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() { close(done) })
 	}
 }
 

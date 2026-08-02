@@ -13,17 +13,20 @@ import { PageWrapper } from "@/components/page";
 import { SectionHeader, SettingRow } from "./shared";
 import {
   type AdminAIAgent,
+  type AdminAIRun,
   type AdminAIUsage,
   type AdminAITool,
   type AIProvider,
   type Driver,
   adminCreateAgent,
+  adminDeleteRun,
   adminDeleteAgent,
   adminDeleteProvider,
   adminGetUsage,
   adminListAgents,
   adminListDrivers,
   adminListProviders,
+  adminListRuns,
   adminListTools,
   adminPutProvider,
   adminUpdateAgent,
@@ -41,6 +44,7 @@ export default function AdminAI() {
       />
       <ProviderSection />
       <UsageSection />
+      <RunSection />
       <AgentsSection />
     </PageWrapper>
   );
@@ -314,6 +318,100 @@ function UsageSection() {
                 </p>
               )}
             </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---- Runs section ----
+
+function RunSection() {
+  const { t } = useTranslation();
+  const [runs, setRuns] = useState<AdminAIRun[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [includeExpired, setIncludeExpired] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      setRuns(await adminListRuns({ includeExpired }));
+    } catch (err) {
+      setError(fmtErr(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, [includeExpired]);
+
+  async function remove(run: AdminAIRun) {
+    if (!confirm(t("admin.ai.confirmDeleteRun"))) return;
+    try {
+      await adminDeleteRun(run.conversation_id, run.run_id);
+      await load();
+    } catch (err) {
+      setError(fmtErr(err));
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="space-y-4 p-6">
+        <div className="flex items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">{t("admin.ai.runsTitle")}</p>
+            <p className="text-xs text-muted-foreground">
+              {t("admin.ai.runsDesc")}
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Switch
+              checked={includeExpired}
+              onCheckedChange={setIncludeExpired}
+            />
+            {t("admin.ai.includeExpiredRuns")}
+          </label>
+        </div>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {loading ? (
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        ) : runs.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {t("admin.ai.noRuns")}
+          </p>
+        ) : (
+          <div className="space-y-1 rounded-md border border-border">
+            {runs.map((run) => (
+              <SettingRow
+                key={`${run.conversation_id}:${run.run_id}`}
+                title={run.title || run.conversation_id}
+                description={`${run.user_id} • ${run.expires_at}`}
+              >
+                <div className="flex items-center gap-2">
+                  <Badge
+                    variant={run.expired ? "secondary" : "default"}
+                    className="text-[10px]"
+                  >
+                    {run.expired
+                      ? t("admin.ai.expiredRun")
+                      : t("admin.ai.activeRun")}
+                  </Badge>
+                  <button
+                    onClick={() => remove(run)}
+                    className="text-muted-foreground hover:text-destructive"
+                    title={t("admin.ai.deleteRun")}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </SettingRow>
+            ))}
           </div>
         )}
       </CardContent>

@@ -84,6 +84,16 @@ type UsageDay struct {
 	RequestCount     int
 }
 
+// RunLease is an active or recently expired assistant run lock.
+type RunLease struct {
+	ConversationID string
+	RunID          string
+	UserID         string
+	Title          string
+	ExpiresAt      time.Time
+	CreatedAt      time.Time
+}
+
 // Input constraints. They are enforced in the service to bound DB row
 // size and prompt cost.
 const (

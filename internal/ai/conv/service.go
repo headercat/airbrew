@@ -113,6 +113,21 @@ func (s *Service) ReleaseRunLease(ctx context.Context, conversationID, runID str
 	return s.repo.ReleaseRunLease(ctx, conversationID, runID)
 }
 
+// RenewRunLease extends a previously acquired run lease.
+func (s *Service) RenewRunLease(ctx context.Context, conversationID, runID string, ttl time.Duration) error {
+	return s.repo.RenewRunLease(ctx, conversationID, runID, ttl)
+}
+
+// DeleteRunLease removes a run lease for admin recovery.
+func (s *Service) DeleteRunLease(ctx context.Context, conversationID, runID string) error {
+	return s.repo.DeleteRunLease(ctx, conversationID, runID)
+}
+
+// ListRunLeases returns active AI run leases for operator visibility.
+func (s *Service) ListRunLeases(ctx context.Context, includeExpired bool) ([]RunLease, error) {
+	return s.repo.ListRunLeases(ctx, includeExpired)
+}
+
 // AppendUserMessage records a user turn and returns the inserted row.
 func (s *Service) AppendUserMessage(ctx context.Context, userID, conversationID, content string) (Message, error) {
 	return s.AppendUserMessageIfRevision(ctx, userID, conversationID, content, 0)
@@ -142,18 +157,79 @@ func (s *Service) AppendUserMessageIfRevision(ctx context.Context, userID, conve
 func (s *Service) AppendAssistantMessage(ctx context.Context, userID, conversationID, content string,
 	toolCalls []provider.ToolCall, promptTok, completionTok int,
 ) (Message, error) {
+	return s.AppendAssistantMessageWithUsage(ctx, userID, conversationID, content, toolCalls, provider.Usage{
+		PromptTokens: promptTok, CompletionTokens: completionTok,
+	})
+}
+
+// AppendAssistantMessageWithUsage records an assistant turn and rolls up
+// usage only when the provider reported token counts.
+func (s *Service) AppendAssistantMessageWithUsage(ctx context.Context, userID, conversationID, content string,
+	toolCalls []provider.ToolCall, usage provider.Usage,
+) (Message, error) {
 	m, err := s.repo.AppendMessage(ctx, userID, Message{
 		ConversationID: conversationID, Role: provider.RoleAssistant, Content: content,
-		ToolCalls: toolCalls, PromptTokens: promptTok, CompletionTokens: completionTok,
+		ToolCalls: toolCalls, PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
 	})
 	if err != nil {
 		return Message{}, err
 	}
-	if err := s.repo.IncUsage(ctx, userID, time.Now(), promptTok, completionTok); err != nil {
+	s.rollupUsage(ctx, userID, conversationID, usage)
+	return m, nil
+}
+
+// ToolResult is one tool response ready for persistence.
+type ToolResult struct {
+	ToolCallID string
+	ToolName   string
+	Content    string
+}
+
+// AppendAssistantToolExchange atomically records an assistant tool-call
+// row followed by all corresponding tool result rows.
+func (s *Service) AppendAssistantToolExchange(ctx context.Context, userID, conversationID, content string,
+	toolCalls []provider.ToolCall, usage provider.Usage, results []ToolResult,
+) ([]Message, error) {
+	if len(toolCalls) == 0 {
+		return nil, fmt.Errorf("%w: tool calls required", ErrInvalidInput)
+	}
+	if len(results) != len(toolCalls) {
+		return nil, fmt.Errorf("%w: tool result count mismatch", ErrInvalidInput)
+	}
+	msgs := make([]Message, 0, 1+len(results))
+	msgs = append(msgs, Message{
+		ConversationID: conversationID, Role: provider.RoleAssistant, Content: content,
+		ToolCalls: toolCalls, PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
+	})
+	for _, result := range results {
+		if result.ToolCallID == "" {
+			return nil, fmt.Errorf("%w: tool_call_id required", ErrInvalidInput)
+		}
+		if len(result.Content) > MaxContentLen {
+			return nil, fmt.Errorf("%w: tool content too long", ErrInvalidInput)
+		}
+		msgs = append(msgs, Message{
+			ConversationID: conversationID, Role: provider.RoleTool,
+			Content: result.Content, ToolCallID: result.ToolCallID, ToolName: result.ToolName,
+		})
+	}
+	out, err := s.repo.AppendMessages(ctx, userID, msgs)
+	if err != nil {
+		return nil, err
+	}
+	s.rollupUsage(ctx, userID, conversationID, usage)
+	return out, nil
+}
+
+func (s *Service) rollupUsage(ctx context.Context, userID, conversationID string, usage provider.Usage) {
+	if usage.Unavailable {
+		slog.Default().Warn("ai: usage unavailable", "user_id", userID, "conversation_id", conversationID)
+		return
+	}
+	if err := s.repo.IncUsage(ctx, userID, time.Now(), usage.PromptTokens, usage.CompletionTokens); err != nil {
 		// Usage rollup is best-effort; never fail the request on it.
 		slog.Default().Warn("ai: usage rollup failed", "user_id", userID, "conversation_id", conversationID, "error", err)
 	}
-	return m, nil
 }
 
 // AppendToolMessage records a tool result turn.

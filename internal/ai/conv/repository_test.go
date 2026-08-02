@@ -198,6 +198,75 @@ func TestRunLeasePreventsOverlap(t *testing.T) {
 	}
 }
 
+func TestRunLeaseRenewAndList(t *testing.T) {
+	r, uid, agentID := testRepo(t)
+	ctx := context.Background()
+	c, _ := r.Create(ctx, Conversation{
+		UserID: uid, AgentID: agentID, SnapModel: "x", SnapTools: []string{},
+		SnapMaxTurns: 6,
+	})
+	if err := r.AcquireRunLease(ctx, uid, c.ID, "run-1", time.Second); err != nil {
+		t.Fatalf("AcquireRunLease: %v", err)
+	}
+	if err := r.RenewRunLease(ctx, c.ID, "run-1", time.Hour); err != nil {
+		t.Fatalf("RenewRunLease: %v", err)
+	}
+	leases, err := r.ListRunLeases(ctx, false)
+	if err != nil {
+		t.Fatalf("ListRunLeases: %v", err)
+	}
+	if len(leases) != 1 || leases[0].ConversationID != c.ID || leases[0].RunID != "run-1" {
+		t.Fatalf("unexpected leases: %+v", leases)
+	}
+	if err := r.DeleteRunLease(ctx, c.ID, "run-1"); err != nil {
+		t.Fatalf("DeleteRunLease: %v", err)
+	}
+	leases, err = r.ListRunLeases(ctx, true)
+	if err != nil {
+		t.Fatalf("ListRunLeases after delete: %v", err)
+	}
+	if len(leases) != 0 {
+		t.Fatalf("lease should be deleted: %+v", leases)
+	}
+}
+
+func TestAppendMessagesAtomicAssistantToolExchange(t *testing.T) {
+	r, uid, agentID := testRepo(t)
+	ctx := context.Background()
+	c, _ := r.Create(ctx, Conversation{
+		UserID: uid, AgentID: agentID, SnapModel: "x", SnapTools: []string{},
+		SnapMaxTurns: 6,
+	})
+	msgs, err := r.AppendMessages(ctx, uid, []Message{
+		{
+			ConversationID: c.ID, Role: provider.RoleAssistant,
+			Content: "checking", ToolCalls: []provider.ToolCall{{ID: "call_1", Name: "clock", Args: "{}"}},
+			PromptTokens: 7, CompletionTokens: 3,
+		},
+		{
+			ConversationID: c.ID, Role: provider.RoleTool,
+			Content: "noon", ToolCallID: "call_1", ToolName: "clock",
+		},
+	})
+	if err != nil {
+		t.Fatalf("AppendMessages: %v", err)
+	}
+	if len(msgs) != 2 || msgs[0].Seq != 1 || msgs[1].Seq != 2 {
+		t.Fatalf("unexpected batch rows: %+v", msgs)
+	}
+	got, err := r.ListMessages(ctx, uid, c.ID)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(got) != 2 || got[0].Role != provider.RoleAssistant || got[1].ToolCallID != "call_1" {
+		t.Fatalf("batch transcript wrong: %+v", got)
+	}
+	after, _ := r.Get(ctx, uid, c.ID)
+	if after.Revision != 2 {
+		t.Fatalf("batch should bump revision once, got %d", after.Revision)
+	}
+}
+
 func TestIncUsageRollup(t *testing.T) {
 	r, uid, _ := testRepo(t)
 	ctx := context.Background()
@@ -217,6 +286,25 @@ func TestIncUsageRollup(t *testing.T) {
 	}
 	if promptTok != 300 || completionTok != 75 || reqCount != 2 {
 		t.Fatalf("rollup wrong: %d/%d/%d", promptTok, completionTok, reqCount)
+	}
+}
+
+func TestUnavailableUsageSkipsRollup(t *testing.T) {
+	svc, uid, agentID := newTestService(t)
+	ctx := context.Background()
+	c, _ := svc.Create(ctx, CreateInput{
+		UserID: uid, AgentID: agentID, SnapModel: "x", SnapTools: []string{},
+		SnapMaxTurns: 6,
+	})
+	if _, err := svc.AppendAssistantMessageWithUsage(ctx, uid, c.ID, "hello", nil, provider.Usage{Unavailable: true}); err != nil {
+		t.Fatalf("AppendAssistantMessageWithUsage: %v", err)
+	}
+	rows, err := svc.Usage(ctx, uid, time.Now().UTC().AddDate(0, 0, -1))
+	if err != nil {
+		t.Fatalf("Usage: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("unavailable usage should not roll up: %+v", rows)
 	}
 }
 

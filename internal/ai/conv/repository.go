@@ -236,6 +236,71 @@ func (r *Repository) ReleaseRunLease(ctx context.Context, conversationID, runID 
 	return nil
 }
 
+// RenewRunLease extends a run lease while the same run still owns it.
+func (r *Repository) RenewRunLease(ctx context.Context, conversationID, runID string, ttl time.Duration) error {
+	if conversationID == "" || runID == "" {
+		return fmt.Errorf("%w: missing run lease ids", ErrInvalidInput)
+	}
+	expires := time.Now().UTC().Truncate(time.Second).Add(ttl).Format(time.RFC3339)
+	res, err := r.db.ExecContext(ctx,
+		"UPDATE ai_run_locks SET expires_at = ? WHERE conversation_id = ? AND run_id = ?",
+		expires, conversationID, runID)
+	if err != nil {
+		return fmt.Errorf("conv: renew run lease: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// DeleteRunLease removes a run lease for admin recovery.
+func (r *Repository) DeleteRunLease(ctx context.Context, conversationID, runID string) error {
+	if conversationID == "" || runID == "" {
+		return fmt.Errorf("%w: missing run lease ids", ErrInvalidInput)
+	}
+	if _, err := r.db.ExecContext(ctx,
+		"DELETE FROM ai_run_locks WHERE conversation_id = ? AND run_id = ?",
+		conversationID, runID,
+	); err != nil {
+		return fmt.Errorf("conv: delete run lease: %w", err)
+	}
+	return nil
+}
+
+// ListRunLeases returns active run leases, plus expired rows when requested.
+func (r *Repository) ListRunLeases(ctx context.Context, includeExpired bool) ([]RunLease, error) {
+	nowStr := time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
+	query := `
+		SELECT l.conversation_id, l.run_id, c.user_id, c.title, l.expires_at, l.created_at
+		FROM ai_run_locks l
+		JOIN ai_conversations c ON c.id = l.conversation_id
+		WHERE c.deleted_at IS NULL`
+	args := []any{}
+	if !includeExpired {
+		query += " AND l.expires_at > ?"
+		args = append(args, nowStr)
+	}
+	query += " ORDER BY l.expires_at ASC LIMIT 100"
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("conv: list run leases: %w", err)
+	}
+	defer rows.Close()
+	out := []RunLease{}
+	for rows.Next() {
+		var lease RunLease
+		var expires, created string
+		if err := rows.Scan(&lease.ConversationID, &lease.RunID, &lease.UserID, &lease.Title, &expires, &created); err != nil {
+			return nil, fmt.Errorf("conv: scan run lease: %w", err)
+		}
+		lease.ExpiresAt, _ = time.Parse(time.RFC3339, expires)
+		lease.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		out = append(out, lease)
+	}
+	return out, rows.Err()
+}
+
 // AppendMessage inserts a message with seq assigned inside the transaction
 // so order is always deterministic. Returns the inserted row.
 //
@@ -251,6 +316,50 @@ func (r *Repository) AppendMessage(ctx context.Context, userID string, m Message
 // revision still matches expectedRevision.
 func (r *Repository) AppendMessageIfRevision(ctx context.Context, userID string, m Message, expectedRevision int64) (Message, error) {
 	return r.appendMessage(ctx, userID, m, expectedRevision)
+}
+
+// AppendMessages inserts multiple messages atomically and bumps the
+// conversation revision once. All rows must belong to one conversation.
+func (r *Repository) AppendMessages(ctx context.Context, userID string, msgs []Message) ([]Message, error) {
+	if len(msgs) == 0 {
+		return []Message{}, nil
+	}
+	if userID == "" {
+		return nil, fmt.Errorf("%w: user_id required", ErrInvalidInput)
+	}
+	conversationID := msgs[0].ConversationID
+	if conversationID == "" {
+		return nil, fmt.Errorf("%w: conversation_id required", ErrInvalidInput)
+	}
+	for _, m := range msgs {
+		if m.ConversationID != conversationID {
+			return nil, fmt.Errorf("%w: mixed conversation batch", ErrInvalidInput)
+		}
+	}
+	var owner string
+	err := r.db.QueryRowContext(ctx,
+		"SELECT user_id FROM ai_conversations WHERE id = ? AND deleted_at IS NULL", conversationID,
+	).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if owner != userID {
+		return nil, ErrNotFound
+	}
+	const maxAttempts = 5
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		out, done, err := r.tryAppendMessages(ctx, msgs)
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			return out, nil
+		}
+	}
+	return nil, ErrConflict
 }
 
 func (r *Repository) appendMessage(ctx context.Context, userID string, m Message, expectedRevision int64) (Message, error) {
@@ -298,6 +407,60 @@ func (r *Repository) appendMessage(ctx context.Context, userID string, m Message
 		}
 	}
 	return Message{}, ErrConflict
+}
+
+func (r *Repository) tryAppendMessages(ctx context.Context, msgs []Message) ([]Message, bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("conv: begin batch tx: %w", err)
+	}
+	defer tx.Rollback()
+	var seq int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COALESCE(MAX(seq),0) + 1 FROM ai_messages WHERE conversation_id = ?",
+		msgs[0].ConversationID,
+	).Scan(&seq); err != nil {
+		return nil, false, fmt.Errorf("conv: next batch seq: %w", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	out := make([]Message, len(msgs))
+	for i, m := range msgs {
+		tools := "[]"
+		if m.ToolCalls != nil {
+			b, err := json.Marshal(m.ToolCalls)
+			if err != nil {
+				return nil, false, fmt.Errorf("%w: marshal tool_calls: %v", ErrInvalidInput, err)
+			}
+			tools = string(b)
+		}
+		m.ID = id.New()
+		m.Seq = seq + i
+		m.CreatedAt = now
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO ai_messages
+			  (id, conversation_id, role, content, tool_calls, tool_call_id, tool_name,
+			   prompt_tokens, completion_tokens, seq, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, m.ID, m.ConversationID, string(m.Role), m.Content, tools,
+			m.ToolCallID, m.ToolName, m.PromptTokens, m.CompletionTokens, m.Seq, m.CreatedAt)
+		if err != nil {
+			if isUniqueViolation(err) {
+				return nil, false, nil
+			}
+			return nil, false, fmt.Errorf("conv: insert batch message: %w", err)
+		}
+		out[i] = m
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE ai_conversations SET updated_at = ?, revision = revision + 1 WHERE id = ?",
+		now, msgs[0].ConversationID,
+	); err != nil {
+		return nil, false, fmt.Errorf("conv: bump batch revision: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, fmt.Errorf("conv: commit batch: %w", err)
+	}
+	return out, true, nil
 }
 
 // tryAppendMessage performs one attempt at assigning seq and inserting.

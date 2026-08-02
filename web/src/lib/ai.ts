@@ -85,6 +85,16 @@ export type AdminAIUsage = {
   totals: AdminAIUsageDay;
 };
 
+export type AdminAIRun = {
+  conversation_id: string;
+  run_id: string;
+  user_id: string;
+  title: string;
+  expires_at: string;
+  created_at: string;
+  expired: boolean;
+};
+
 export type AIProvider = {
   id: string;
   direction: "chat" | "embed";
@@ -167,6 +177,28 @@ export async function adminGetUsage(opts?: {
   return api.get<AdminAIUsage>(`/api/admin/ai/usage${qs ? `?${qs}` : ""}`);
 }
 
+export async function adminListRuns(opts?: {
+  includeExpired?: boolean;
+}): Promise<AdminAIRun[]> {
+  const params = new URLSearchParams();
+  if (opts?.includeExpired) params.set("include_expired", "1");
+  const qs = params.toString();
+  const res = await api.get<{ runs: AdminAIRun[] }>(
+    `/api/admin/ai/runs${qs ? `?${qs}` : ""}`,
+  );
+  return res.runs;
+}
+
+export async function adminDeleteRun(
+  conversationId: string,
+  runId: string,
+): Promise<void> {
+  const params = new URLSearchParams({ run_id: runId });
+  await api.del<{ ok: true }>(
+    `/api/admin/ai/runs/${conversationId}?${params.toString()}`,
+  );
+}
+
 export async function adminPutProvider(
   direction: "chat" | "embed",
   body: {
@@ -235,6 +267,7 @@ export type StreamEvent =
 export type Usage = {
   prompt_tokens: number;
   completion_tokens: number;
+  unavailable?: boolean;
 };
 
 /**

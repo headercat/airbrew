@@ -63,8 +63,9 @@ type ToolSchema struct {
 
 // Usage reports token accounting for one assistant response.
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
+	PromptTokens     int  `json:"prompt_tokens"`
+	CompletionTokens int  `json:"completion_tokens"`
+	Unavailable      bool `json:"unavailable,omitempty"`
 }
 
 // Request is the input to LLMClient.ChatStream.

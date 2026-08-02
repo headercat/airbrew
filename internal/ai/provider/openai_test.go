@@ -142,6 +142,35 @@ func TestOpenAIDriverUnexpectedEOF(t *testing.T) {
 	}
 }
 
+func TestOpenAIDriverDoneWithoutUsageMarksUnavailable(t *testing.T) {
+	const resp = `data: {"choices":[{"delta":{"content":"ok"}}]}
+
+data: [DONE]
+
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+	cli, _ := OpenAIDriver{}.Build(Config{
+		Driver: "openai", BaseURL: srv.URL, Model: "x", APIKey: "sk-x",
+	})
+	ch := cli.ChatStream(context.Background(), Request{Model: "x"})
+	var gotUnavailable bool
+	for d := range ch {
+		switch d.Kind {
+		case DeltaDone:
+			gotUnavailable = d.Usage != nil && d.Usage.Unavailable
+		case DeltaError:
+			t.Fatalf("unexpected error: %v", d.Err)
+		}
+	}
+	if !gotUnavailable {
+		t.Fatal("expected unavailable usage on [DONE] without usage chunk")
+	}
+}
+
 func TestOpenAIDriverInBandError(t *testing.T) {
 	const resp = `data: {"error":{"message":"bad request","type":"invalid_request_error"}}
 

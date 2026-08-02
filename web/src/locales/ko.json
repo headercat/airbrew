@@ -438,6 +438,13 @@
       "promptTokens": "입력 토큰",
       "completionTokens": "출력 토큰",
       "requestCount": "요청 수",
+      "runsTitle": "활성 실행",
+      "runsDesc": "현재 AI 실행 락과 복구 제어.",
+      "includeExpiredRuns": "만료 항목 표시",
+      "noRuns": "활성 AI 실행이 없습니다.",
+      "activeRun": "활성",
+      "expiredRun": "만료",
+      "deleteRun": "실행 락 해제",
       "providerTitle": "LLM 프로바이더",
       "providerDesc": "채팅 요청을 처리할 활성 프로바이더를 구성합니다. 한 번에 하나만 활성화됩니다.",
       "agentsTitle": "에이전트",
@@ -462,7 +469,8 @@
       "maxTokens": "최대 토큰",
       "maxTurns": "최대 턴",
       "confirmDeleteProvider": "이 프로바이더를 삭제하시겠습니까?",
-      "confirmDeleteAgent": "이 에이전트를 삭제하시겠습니까?"
+      "confirmDeleteAgent": "이 에이전트를 삭제하시겠습니까?",
+      "confirmDeleteRun": "이 AI 실행 락을 해제하시겠습니까?"
     }
   },
   "passwords": {

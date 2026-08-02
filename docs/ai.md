@@ -111,7 +111,8 @@ The runtime loop:
 3. Call `LLMClient.ChatStream`.
 4. Forward text deltas to the SSE channel.
 5. If the assistant returns `tool_calls`, dispatch each one, append the
-   tool message, and loop again (subject to `max_turns`).
+   assistant/tool exchange atomically, and loop again (subject to
+   `max_turns`).
 6. On the final turn (no tool calls), persist the assistant message and
    close the stream.
 
@@ -195,7 +196,10 @@ Each provider response carries a usage block. We persist `prompt_tokens`
 and `completion_tokens` on the assistant row and accumulate a per-user
 `ai_usage_daily` rollup (one row per user per UTC day) so the admin
 panel can show burn-down charts without scanning the messages table.
-`GET /api/admin/ai/usage` returns the rollup plus totals.
+`GET /api/admin/ai/usage` returns the rollup plus totals. If an
+OpenAI-compatible endpoint ends with `[DONE]` without an included usage
+chunk, the stream marks usage as unavailable and skips the rollup instead
+of recording a misleading zero-token request.
 
 ## History replay
 
@@ -211,9 +215,10 @@ multi-tab SPA can poll for changes and resync.
 Each assistant run takes an in-memory lock and a durable
 `ai_run_locks` lease scoped to the conversation. The in-memory lock
 prevents overlap inside one process; the database lease prevents overlap
-across processes and survives until release or expiry. Stale client
-snapshots are rejected with a revision conflict before appending the user
-message.
+across processes, is renewed while the run is active, and survives until
+release or expiry. Stale client snapshots are rejected with a revision
+conflict before appending the user message. Admins can inspect and clear
+run leases from `/api/admin/ai/runs`.
 
 ## Title auto-generation
 

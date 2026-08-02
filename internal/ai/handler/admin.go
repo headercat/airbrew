@@ -48,6 +48,8 @@ func (a *AdminHandler) RegisterRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/admin/ai/drivers", a.listDrivers)
 	mux.HandleFunc("GET /api/admin/ai/usage", a.usage)
+	mux.HandleFunc("GET /api/admin/ai/runs", a.listRuns)
+	mux.HandleFunc("DELETE /api/admin/ai/runs/{conversationID}", a.deleteRun)
 }
 
 // --- providers ------------------------------------------------------------
@@ -384,6 +386,65 @@ func (a *AdminHandler) usage(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, map[string]any{
 		"days": days, "usage": out, "totals": totals,
 	})
+}
+
+// --- runs -----------------------------------------------------------------
+
+type runLeaseResp struct {
+	ConversationID string `json:"conversation_id"`
+	RunID          string `json:"run_id"`
+	UserID         string `json:"user_id"`
+	Title          string `json:"title"`
+	ExpiresAt      string `json:"expires_at"`
+	CreatedAt      string `json:"created_at"`
+	Expired        bool   `json:"expired"`
+}
+
+func (a *AdminHandler) listRuns(w http.ResponseWriter, r *http.Request) {
+	includeExpired := r.URL.Query().Get("include_expired") == "1"
+	leases, err := a.conv.ListRunLeases(r.Context(), includeExpired)
+	if err != nil {
+		sanitizeInternal(w, err)
+		return
+	}
+	now := time.Now().UTC()
+	out := make([]runLeaseResp, 0, len(leases))
+	for _, lease := range leases {
+		out = append(out, runLeaseResp{
+			ConversationID: lease.ConversationID,
+			RunID:          lease.RunID,
+			UserID:         lease.UserID,
+			Title:          lease.Title,
+			ExpiresAt:      lease.ExpiresAt.UTC().Format(time.RFC3339),
+			CreatedAt:      lease.CreatedAt.UTC().Format(time.RFC3339),
+			Expired:        !lease.ExpiresAt.After(now),
+		})
+	}
+	response.JSON(w, http.StatusOK, map[string]any{"runs": out})
+}
+
+func (a *AdminHandler) deleteRun(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	conversationID := r.PathValue("conversationID")
+	runID := r.URL.Query().Get("run_id")
+	if err := a.conv.DeleteRunLease(r.Context(), conversationID, runID); err != nil {
+		if errors.Is(err, conv.ErrInvalidInput) {
+			response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		sanitizeInternal(w, err)
+		return
+	}
+	a.audit.Log(r.Context(), audit.Entry{
+		EventType: "ai.run_lease_deleted", ActorUserID: sess.UserID,
+		TargetType: "ai_conversation", TargetID: conversationID,
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"run_id": runID},
+	})
+	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // --- error helpers --------------------------------------------------------

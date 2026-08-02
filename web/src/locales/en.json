@@ -438,6 +438,13 @@
       "promptTokens": "Prompt tokens",
       "completionTokens": "Completion tokens",
       "requestCount": "Requests",
+      "runsTitle": "Active runs",
+      "runsDesc": "Current assistant run leases and recovery controls.",
+      "includeExpiredRuns": "Show expired",
+      "noRuns": "No active AI runs.",
+      "activeRun": "active",
+      "expiredRun": "expired",
+      "deleteRun": "Clear run lease",
       "providerTitle": "LLM provider",
       "providerDesc": "Configure the active provider that handles chat requests. Only one is active at a time.",
       "agentsTitle": "Agents",
@@ -462,7 +469,8 @@
       "maxTokens": "Max tokens",
       "maxTurns": "Max turns",
       "confirmDeleteProvider": "Delete this provider?",
-      "confirmDeleteAgent": "Delete this agent?"
+      "confirmDeleteAgent": "Delete this agent?",
+      "confirmDeleteRun": "Clear this AI run lease?"
     }
   },
   "passwords": {

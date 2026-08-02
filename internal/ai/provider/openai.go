@@ -189,7 +189,7 @@ func (c *openAIClient) streamSSE(ctx context.Context, body io.Reader, out chan<-
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
-			_ = sendDelta(ctx, out, Delta{Kind: DeltaDone})
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaDone, Usage: &Usage{Unavailable: true}})
 			return
 		}
 		var chunk openAIChunk

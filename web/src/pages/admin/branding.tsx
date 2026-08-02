@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, Palette, Save } from "lucide-react";
+import { Loader2, Palette, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -120,17 +120,53 @@ export default function AdminBranding() {
             title={t("admin.branding.logo")}
             description={t("admin.branding.logoDesc")}
           >
-            {data.logo_url ? (
-              <img
-                src={data.logo_url}
-                alt="logo"
-                className="h-8 w-8 rounded border border-border object-cover"
+            <div className="flex min-w-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+              {data.logo_url && (
+                <img
+                  src={data.logo_url}
+                  alt="logo"
+                  className="h-9 w-9 rounded border border-border object-cover"
+                />
+              )}
+              <Input
+                value={data.logo_url}
+                placeholder={t("admin.branding.logoURLPlaceholder")}
+                className="h-8 w-full text-[13px] sm:w-80"
+                onChange={(e) => setData({ ...data, logo_url: e.target.value })}
               />
-            ) : (
-              <Button variant="outline" size="sm" disabled>
-                {t("admin.branding.upload")}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={saving}
+                onClick={() => save({ logo_url: data.logo_url })}
+              >
+                <Save className="h-3 w-3" />
               </Button>
-            )}
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={saving || !data.logo_url}
+                onClick={() => save({ logo_url: "" })}
+                title={t("admin.branding.clearLogo")}
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={saving}
+                onClick={() =>
+                  save({
+                    workspace_name: "Airbrew",
+                    logo_url: "",
+                    primary_color: "215 55% 48%",
+                  })
+                }
+                title={t("admin.branding.restoreDefaults")}
+              >
+                <RotateCcw className="h-3 w-3" />
+              </Button>
+            </div>
           </SettingRow>
         </CardContent>
       </Card>

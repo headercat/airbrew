@@ -990,11 +990,9 @@ func (h *Handler) systemInfo(w http.ResponseWriter, r *http.Request) {
 	activeSessions, _ := h.countActiveSessions(ctx)
 
 	// Get DB file size from the database itself.
-	var dbPath string
 	dbSize := "unknown"
-	if row := h.db.QueryRowContext(ctx, "PRAGMA database_list"); true {
-		var id, file string
-		_ = row.Scan(&id, &file, &dbPath)
+	dbPath, _ := h.databasePath(ctx)
+	if dbPath != "" {
 		if fi, err := os.Stat(dbPath); err == nil {
 			dbSize = fmt.Sprintf("%.1f", float64(fi.Size())/1024/1024)
 		}
@@ -1012,3 +1010,54 @@ func (h *Handler) systemInfo(w http.ResponseWriter, r *http.Request) {
 		DBSizeMB:      dbSize,
 	})
 }
+
+func (h *Handler) backupDatabase(w http.ResponseWriter, r *http.Request) {
+	dbPath, err := h.databasePath(r.Context())
+	if err != nil || dbPath == "" {
+		response.Error(w, http.StatusInternalServerError, "backup_unavailable", "database file path is unavailable")
+		return
+	}
+	tmp, err := os.CreateTemp("", "airbrew-backup-*.sqlite")
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	tmpPath := tmp.Name()
+	_ = tmp.Close()
+	defer os.Remove(tmpPath)
+
+	escaped := strings.ReplaceAll(tmpPath, "'", "''")
+	if _, err := h.db.ExecContext(r.Context(), "VACUUM INTO '"+escaped+"'"); err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "system.backup_downloaded", ActorUserID: callerUserID(r),
+		TargetType: "system", TargetID: filepath.Base(dbPath),
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
+
+	filename := "airbrew-backup-" + time.Now().UTC().Format("20060102T150405Z") + ".sqlite"
+	w.Header().Set("Content-Type", "application/vnd.sqlite3")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	http.ServeFile(w, r, tmpPath)
+}
+
+func (h *Handler) databasePath(ctx context.Context) (string, error) {
+	rows, err := h.db.QueryContext(ctx, "PRAGMA database_list")
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var seq int
+		var name, file string
+		if err := rows.Scan(&seq, &name, &file); err != nil {
+			return "", err
+		}
+		if name == "main" {
+			return file, nil
+		}
+	}
+	return "", rows.Err()

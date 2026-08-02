@@ -395,6 +395,7 @@
       "dbSizeDesc": "Current on-disk size of the SQLite file.",
       "backup": "Database backup",
       "backupDesc": "Download a snapshot of the SQLite database.",
+      "downloadBackup": "Download backup",
       "export": "Export",
       "featureFlags": "Feature flags"
     },

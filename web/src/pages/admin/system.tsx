@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Settings as SettingsIcon } from "lucide-react";
+import { Download, Settings as SettingsIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SectionHeader, SettingRow } from "./shared";
 import { api, type SystemInfo } from "@/lib/api";
@@ -76,7 +77,12 @@ export default function AdminSystem() {
             title={t("admin.system.backup")}
             description={t("admin.system.backupDesc")}
           >
-            <Badge variant="outline">{t("admin.security.comingSoon")}</Badge>
+            <Button asChild size="sm" variant="outline">
+              <a href="/api/admin/system/backup">
+                <Download className="h-4 w-4" />
+                {t("admin.system.downloadBackup")}
+              </a>
+            </Button>
           </SettingRow>
         </CardContent>
       </Card>

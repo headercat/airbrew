@@ -395,6 +395,7 @@
       "dbSizeDesc": "SQLite 파일의 현재 디스크 크기.",
       "backup": "데이터베이스 백업",
       "backupDesc": "SQLite 데이터베이스 스냅샷을 다운로드합니다.",
+      "downloadBackup": "백업 다운로드",
       "export": "내보내기",
       "featureFlags": "기능 플래그"
     },

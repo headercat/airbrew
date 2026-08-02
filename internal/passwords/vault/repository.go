@@ -959,7 +959,11 @@ func boolToInt(b bool) int {
 }
 
 // isUniqueViolation reports whether err is a SQLite UNIQUE/PK constraint
-// failure. modernc.org/sqlite prefixes constraint errors with "constraint".
+// failure. modernc.org/sqlite prefixes constraint errors with "constraint
+// failed"; we match on the UNIQUE-specific phrase so that a FOREIGN KEY
+// constraint failure (also prefixed "constraint failed") is NOT mistaken for a
+// duplicate-key conflict — otherwise setup against a missing user would be
+// misreported as "envelope already exists".
 func isUniqueViolation(err error) bool {
 	if err == nil {
 		return false
@@ -967,6 +971,5 @@ func isUniqueViolation(err error) bool {
 	msg := err.Error()
 	// modernc returns errors like:
 	//   "constraint failed: UNIQUE constraint failed: vault_keys.user_id (1555)"
-	return strings.Contains(msg, "constraint failed") ||
-		strings.Contains(msg, "UNIQUE constraint failed")
+	return strings.Contains(msg, "UNIQUE constraint failed")
 }

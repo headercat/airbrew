@@ -259,6 +259,28 @@ func (r *Repository) Count(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// CountSearch returns the total rows matching query and includeDeleted.
+func (r *Repository) CountSearch(ctx context.Context, query string, includeDeleted bool) (int, error) {
+	where := ""
+	args := []any{}
+	if !includeDeleted {
+		where = "WHERE status != ?"
+		args = append(args, string(StatusDeleted))
+	}
+	if query != "" {
+		prefix := "WHERE"
+		if where != "" {
+			prefix = "AND"
+		}
+		where += " " + prefix + " (email LIKE ? ESCAPE '\\' OR COALESCE(display_name,'') LIKE ? ESCAPE '\\')"
+		pattern := "%" + query + "%"
+		args = append(args, pattern, pattern)
+	}
+	var n int
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users "+where, args...).Scan(&n)
+	return n, err
+}
+
 // GetPasswordHash returns the stored argon2id hash for the user.
 func (r *Repository) GetPasswordHash(ctx context.Context, userID string) (string, error) {
 	var hash string

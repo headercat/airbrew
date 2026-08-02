@@ -190,7 +190,7 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	total, err := h.userRepo.Count(r.Context())
+	total, err := h.userRepo.CountSearch(r.Context(), search, includeDeleted)
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return

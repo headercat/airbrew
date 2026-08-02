@@ -243,6 +243,8 @@ CREATE TABLE group_members (
 - Backup: download DB snapshot (SQLite `VACUUM INTO`)
 - Stored DB backup snapshots: create/list/download/delete, retaining newest 10
 - Restore dry-run: validate uploaded SQLite backup integrity and Airbrew schema
+- Restore staging: copy a verified backup to `restore-pending.sqlite` plus a
+  manifest for an offline, supervised database replacement
 
 **Future additions:**
 - Export: full workspace export (DB + files as tar.gz)
@@ -341,6 +343,7 @@ GET    /api/admin/system                          version, paths, sizes
 GET    /api/admin/system/backup                   download ephemeral DB snapshot
 GET    /api/admin/system/backup/verify            verify generated backup snapshot
 POST   /api/admin/system/backup/restore-dry-run   validate uploaded backup
+POST   /api/admin/system/backup/restore-stage     stage verified backup for offline restore
 GET    /api/admin/system/backups                  list retained DB snapshots
 POST   /api/admin/system/backups                  create retained DB snapshot
 GET    /api/admin/system/backups/{name}           download retained snapshot

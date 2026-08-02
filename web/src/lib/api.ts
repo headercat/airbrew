@@ -175,6 +175,15 @@ export type StoredBackup = {
   created_at: string;
 };
 
+export type RestoreStage = {
+  ok: boolean;
+  pending_path: string;
+  manifest_path: string;
+  staged_at: string;
+  verification: BackupVerification;
+  restart_message: string;
+};
+
 export type ProfileUpdate = {
   display_name: string;
   description: string;

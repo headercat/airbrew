@@ -17,6 +17,7 @@ import {
   api,
   isApiError,
   type BackupVerification,
+  type RestoreStage,
   type StoredBackup,
   type SystemInfo,
 } from "@/lib/api";
@@ -27,9 +28,13 @@ export default function AdminSystem() {
   const [backupCheck, setBackupCheck] = useState<BackupVerification | null>(
     null,
   );
+  const [restoreStage, setRestoreStage] = useState<RestoreStage | null>(null);
   const [storedBackups, setStoredBackups] = useState<StoredBackup[]>([]);
   const [verifying, setVerifying] = useState(false);
   const [creatingBackup, setCreatingBackup] = useState(false);
+  const [restoreMode, setRestoreMode] = useState<"dry-run" | "stage">(
+    "dry-run",
+  );
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const restoreInput = useRef<HTMLInputElement>(null);
@@ -100,11 +105,26 @@ export default function AdminSystem() {
     if (!file) return;
     setVerifying(true);
     try {
-      const res = await api.upload<BackupVerification>(
-        "/api/admin/system/backup/restore-dry-run",
-        file,
+      if (restoreMode === "stage") {
+        const res = await api.upload<RestoreStage>(
+          "/api/admin/system/backup/restore-stage",
+          file,
+        );
+        setRestoreStage(res);
+        setBackupCheck(res.verification);
+        setNotice(t("admin.system.restoreStaged"));
+        setError(null);
+      } else {
+        const res = await api.upload<BackupVerification>(
+          "/api/admin/system/backup/restore-dry-run",
+          file,
+        );
+        setBackupCheck(res);
+      }
+    } catch (err) {
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : "error",
       );
-      setBackupCheck(res);
     } finally {
       setVerifying(false);
       if (restoreInput.current) restoreInput.current.value = "";
@@ -232,7 +252,10 @@ export default function AdminSystem() {
                 size="sm"
                 variant="outline"
                 disabled={verifying}
-                onClick={() => restoreInput.current?.click()}
+                onClick={() => {
+                  setRestoreMode("dry-run");
+                  restoreInput.current?.click();
+                }}
               >
                 <FileCheck2 className="h-4 w-4" />
                 {t("admin.system.restoreDryRun")}
@@ -248,8 +271,41 @@ export default function AdminSystem() {
                   ? t("common.loading")
                   : t("admin.system.createStoredBackup")}
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={verifying}
+                onClick={() => {
+                  if (!window.confirm(t("admin.system.confirmStageRestore"))) {
+                    return;
+                  }
+                  setRestoreMode("stage");
+                  restoreInput.current?.click();
+                }}
+              >
+                <FileCheck2 className="h-4 w-4" />
+                {t("admin.system.stageRestore")}
+              </Button>
             </div>
           </SettingRow>
+          {restoreStage && (
+            <SettingRow
+              title={t("admin.system.pendingRestore")}
+              description={new Date(restoreStage.staged_at).toLocaleString()}
+            >
+              <div className="max-w-[520px] space-y-1 text-right text-xs text-muted-foreground">
+                <div className="font-medium text-foreground">
+                  {restoreStage.restart_message}
+                </div>
+                <div className="font-mono break-all">
+                  {restoreStage.pending_path}
+                </div>
+                <div className="font-mono break-all">
+                  {restoreStage.manifest_path}
+                </div>
+              </div>
+            </SettingRow>
+          )}
           <SettingRow
             title={t("admin.system.storedBackups")}
             description={t("admin.system.storedBackupsDesc")}

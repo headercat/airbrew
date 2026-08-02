@@ -92,6 +92,7 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("GET /api/admin/system/backup", m.handler.backupDatabase)
 	admin.HandleFunc("GET /api/admin/system/backup/verify", m.handler.verifyDatabaseBackup)
 	admin.HandleFunc("POST /api/admin/system/backup/restore-dry-run", m.handler.restoreDryRun)
+	admin.HandleFunc("POST /api/admin/system/backup/restore-stage", m.handler.stageRestore)
 	admin.HandleFunc("GET /api/admin/system/backups", m.handler.listStoredBackups)
 	admin.HandleFunc("POST /api/admin/system/backups", m.handler.createStoredBackup)
 	admin.HandleFunc("GET /api/admin/system/backups/{name}", m.handler.downloadStoredBackup)

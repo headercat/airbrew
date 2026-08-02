@@ -1434,6 +1434,15 @@ type storedBackupDTO struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type restoreStageDTO struct {
+	OK             bool            `json:"ok"`
+	PendingPath    string          `json:"pending_path"`
+	ManifestPath   string          `json:"manifest_path"`
+	StagedAt       string          `json:"staged_at"`
+	Verification   backupVerifyDTO `json:"verification"`
+	RestartMessage string          `json:"restart_message"`
+}
+
 func (h *Handler) verifyDatabaseBackup(w http.ResponseWriter, r *http.Request) {
 	dbPath, err := h.databasePath(r.Context())
 	if err != nil || dbPath == "" {
@@ -1597,31 +1606,11 @@ func (h *Handler) deleteStoredBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) restoreDryRun(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<30)
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	file, _, err := r.FormFile("file")
+	tmpPath, _, cleanup, err := h.receiveBackupUpload(w, r, "airbrew-restore-dry-run-*.sqlite")
 	if err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_request", "backup file is required")
 		return
 	}
-	defer file.Close()
-	tmp, err := os.CreateTemp("", "airbrew-restore-dry-run-*.sqlite")
-	if err != nil {
-		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
-		return
-	}
-	tmpPath := tmp.Name()
-	if _, err := io.Copy(tmp, file); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
-		return
-	}
-	_ = tmp.Close()
-	defer os.Remove(tmpPath)
+	defer cleanup()
 
 	result, err := verifySQLiteFile(r.Context(), tmpPath)
 	if err != nil {
@@ -1635,6 +1624,124 @@ func (h *Handler) restoreDryRun(w http.ResponseWriter, r *http.Request) {
 		Metadata: map[string]any{"ok": result.OK, "size_bytes": result.SizeBytes, "sha256": result.SHA256},
 	})
 	response.JSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) stageRestore(w http.ResponseWriter, r *http.Request) {
+	tmpPath, fileName, cleanup, err := h.receiveBackupUpload(w, r, "airbrew-restore-stage-*.sqlite")
+	if err != nil {
+		return
+	}
+	defer cleanup()
+	result, err := verifySQLiteFile(r.Context(), tmpPath)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "backup_failed", err.Error())
+		return
+	}
+	if !result.OK {
+		response.Error(w, http.StatusBadRequest, "backup_failed", "backup failed integrity or Airbrew schema checks")
+		return
+	}
+	dir, err := h.backupDir(r.Context())
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_unavailable", err.Error())
+		return
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	pendingPath := filepath.Join(dir, "restore-pending.sqlite")
+	manifestPath := filepath.Join(dir, "restore-pending.json")
+	if err := copyFile(tmpPath, pendingPath, 0o600); err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	stagedAt := time.Now().UTC().Format(time.RFC3339)
+	manifest := map[string]any{
+		"staged_at":         stagedAt,
+		"original_filename": fileName,
+		"pending_path":      pendingPath,
+		"sha256":            result.SHA256,
+		"size_bytes":        result.SizeBytes,
+		"migration_version": result.Migration,
+	}
+	b, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	if err := os.WriteFile(manifestPath, b, 0o600); err != nil {
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "system.backup_restore_staged", ActorUserID: callerUserID(r),
+		TargetType: "system_backup", TargetID: "restore-pending.sqlite",
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"size_bytes": result.SizeBytes, "sha256": result.SHA256, "migration_version": result.Migration},
+	})
+	response.JSON(w, http.StatusCreated, restoreStageDTO{
+		OK:             true,
+		PendingPath:    pendingPath,
+		ManifestPath:   manifestPath,
+		StagedAt:       stagedAt,
+		Verification:   result,
+		RestartMessage: "Stop Airbrew, replace the current database with restore-pending.sqlite, then restart Airbrew.",
+	})
+}
+
+func (h *Handler) receiveBackupUpload(w http.ResponseWriter, r *http.Request, pattern string) (string, string, func(), error) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<30)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return "", "", func() {}, err
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", "backup file is required")
+		return "", "", func() {}, err
+	}
+	defer file.Close()
+	tmp, err := os.CreateTemp("", pattern)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return "", "", func() {}, err
+	}
+	tmpPath := tmp.Name()
+	if _, err := io.Copy(tmp, file); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return "", "", func() {}, err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		response.Error(w, http.StatusInternalServerError, "backup_failed", err.Error())
+		return "", "", func() {}, err
+	}
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	fileName := ""
+	if header != nil {
+		fileName = header.Filename
+	}
+	return tmpPath, fileName, cleanup, nil
+}
+
+func copyFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func fileSHA256(path string) (string, int64, error) {

@@ -229,6 +229,8 @@ func humanMessage(actor, target string, e Entry) string {
 		return fmt.Sprintf("%s updated OAuth client %s", actor, metadataOrTarget(e, "name", target))
 	case "oauth.client_deleted":
 		return fmt.Sprintf("%s deleted OAuth client %s", actor, metadataOrTarget(e, "name", target))
+	case "oauth.client_secret_rotated":
+		return fmt.Sprintf("%s rotated the secret for OAuth client %s", actor, target)
 	case "profile.updated":
 		return fmt.Sprintf("%s updated their profile", actor)
 	case "avatar.uploaded":
@@ -259,6 +261,10 @@ func humanMessage(actor, target string, e Entry) string {
 		return fmt.Sprintf("%s revoked share %s", actor, target)
 	case "drive.config_updated":
 		return fmt.Sprintf("%s updated drive storage limits", actor)
+	case "mail.provider_upserted":
+		return fmt.Sprintf("%s configured mail provider %s (%s)", actor, metadataValue(e, "driver"), metadataValue(e, "direction"))
+	case "mail.provider_deleted":
+		return fmt.Sprintf("%s removed mail provider %s", actor, target)
 	case "vault.setup":
 		return fmt.Sprintf("%s initialized their password vault", actor)
 	case "vault.keys_rotated":

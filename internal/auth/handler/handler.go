@@ -334,6 +334,12 @@ func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType:   "avatar.uploaded",
+		ActorUserID: sess.UserID,
+		TargetType:  "user", TargetID: sess.UserID,
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
 	response.JSON(w, http.StatusOK, map[string]string{"avatar_url": url})
 }
 

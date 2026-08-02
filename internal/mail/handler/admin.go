@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/mail/inbound"

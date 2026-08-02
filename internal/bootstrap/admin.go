@@ -11,12 +11,15 @@ import (
 	"os"
 	"strings"
 
+	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/auth/user"
 	"github.com/headercat/airbrew/internal/config"
 )
 
 // EnsureAdmin creates an administrator account when none exists. If a password
 // is generated, it is printed once to stdout and is never recoverable later.
+// A successful first-run creation also emits an admin.bootstrap audit event so
+// the security center shows how the workspace was initialized.
 func EnsureAdmin(ctx context.Context, db *sql.DB, cfg config.Config, logger *slog.Logger) error {
 	repo := user.NewRepository(db)
 	count, err := repo.CountByRole(ctx, user.RoleAdmin)
@@ -49,6 +52,16 @@ func EnsureAdmin(ctx context.Context, db *sql.DB, cfg config.Config, logger *slo
 	if err != nil {
 		return fmt.Errorf("bootstrap: create admin user: %w", err)
 	}
+
+	audit.NewService(db).Log(ctx, audit.Entry{
+		EventType:   "admin.bootstrap",
+		ActorUserID: admin.ID,
+		TargetType:  "user", TargetID: admin.ID,
+		Metadata: map[string]any{
+			"email":           admin.Email,
+			"generated_login": generatedPassword,
+		},
+	})
 
 	printAdminCredentials(admin.Email, adminPassword, admin.ID, generatedPassword)
 	logger.Info("bootstrap admin created", "email", admin.Email, "user_id", admin.ID)

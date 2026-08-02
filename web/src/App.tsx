@@ -1,7 +1,7 @@
 import { Outlet, Routes, Route } from "react-router-dom";
 
 import { AppLayout } from "@/components/layout/app-layout";
-import { RedirectIfSignedIn, RequireAuth } from "@/components/auth-route";
+import { RedirectIfSignedIn, RequireAdmin, RequireAuth } from "@/components/auth-route";
 import AdminLayout from "@/pages/admin";
 import AdminOverview from "@/pages/admin/overview";
 import AdminUsers from "@/pages/admin/users";
@@ -60,7 +60,7 @@ export default function App() {
         <Route path="/profile" element={<ProfilePage />} />
 
         {/* Admin — nested layout with grouped sidebar */}
-        <Route path="/admin" element={<AdminLayout />}>
+        <Route path="/admin" element={<RequireAdmin><AdminLayout /></RequireAdmin>}>
           <Route index element={<AdminOverview />} />
           <Route path="users" element={<AdminUsers />} />
           <Route path="modules" element={<AdminModules />} />

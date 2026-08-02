@@ -156,6 +156,9 @@ func validateEnvelope(env *KeyEnvelope) error {
 	if env.KDFAlgorithm == "" {
 		env.KDFAlgorithm = "argon2id"
 	}
+	if env.KDFAlgorithm != "argon2id" {
+		return fmt.Errorf("%w: unsupported kdf_algorithm", ErrInvalidInput)
+	}
 	if env.KDFSalt == "" {
 		return fmt.Errorf("%w: kdf_salt required", ErrInvalidInput)
 	}
@@ -173,6 +176,9 @@ func validateEnvelope(env *KeyEnvelope) error {
 	}
 	if env.KDFMemoryKiB <= 0 || env.KDFIterations <= 0 || env.KDFParallelism <= 0 {
 		return fmt.Errorf("%w: kdf params must be positive", ErrInvalidInput)
+	}
+	if env.KDFMemoryKiB < 65536 || env.KDFIterations < 3 || env.KDFParallelism < 1 {
+		return fmt.Errorf("%w: kdf params below minimum", ErrInvalidInput)
 	}
 	// Upper-bound the KDF cost so a malicious client cannot register an
 	// envelope whose unlock would pin multi-gigabyte memory for minutes.

@@ -272,6 +272,9 @@ func (r *Repository) CreateItem(ctx context.Context, userID string, in ItemInput
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
+		if err := ensureFolderOwned(ctx, tx, userID, in.FolderID); err != nil {
+			return err
+		}
 		rev, err := bumpRev(ctx, tx, userID)
 		if err != nil {
 			return err
@@ -328,6 +331,9 @@ func (r *Repository) UpdateItem(ctx context.Context, userID, itemID string, in I
 		if cur.Revision != ifRevision {
 			c := cur
 			return &ConflictError{CurrentRow: &c}
+		}
+		if err := ensureFolderOwned(ctx, tx, userID, in.FolderID); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO vault_item_revisions
@@ -978,6 +984,24 @@ func lockItemForWrite(ctx context.Context, tx *sql.Tx, userID, id string) (Item,
 		return Item{}, ErrNotFound
 	}
 	return it, nil
+}
+
+func ensureFolderOwned(ctx context.Context, tx *sql.Tx, userID, folderID string) error {
+	if folderID == "" {
+		return nil
+	}
+	var ok int
+	err := tx.QueryRowContext(ctx,
+		`SELECT 1 FROM vault_folders WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+		folderID, userID,
+	).Scan(&ok)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("vault: verify folder ownership: %w", err)
+	}
+	return nil
 }
 
 const folderSelect = `

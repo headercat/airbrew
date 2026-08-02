@@ -34,7 +34,7 @@ func testRepo(t *testing.T) *Repository {
 func env(userID string) KeyEnvelope {
 	return KeyEnvelope{
 		UserID: userID, KDFAlgorithm: "argon2id", KDFSalt: b64bytes(16, 1),
-		KDFMemoryKiB: 1024, KDFIterations: 1, KDFParallelism: 1,
+		KDFMemoryKiB: 65536, KDFIterations: 3, KDFParallelism: 1,
 		ProtectedVaultKey: cipherFixture(48, 2), ProtectedVaultNonce: nonceFixture(3),
 	}
 }
@@ -219,6 +219,47 @@ func TestSoftDeleteFolderClearsItemFolderIDs(t *testing.T) {
 	}
 	if got.Revision <= it.Revision {
 		t.Fatalf("item revision = %d, want > %d", got.Revision, it.Revision)
+	}
+}
+
+func TestItemFolderIDMustBelongToUser(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	if _, err := repo.db.Exec(`INSERT INTO users (id, public_subject, email) VALUES ('u2', 'sub2', 'u2@example.com')`); err != nil {
+		t.Fatal(err)
+	}
+	otherFolder, err := repo.CreateFolder(ctx, "u2", cipherFixture(24, 96), nonceFixture(97))
+	if err != nil {
+		t.Fatalf("create other folder: %v", err)
+	}
+	_, err = repo.CreateItem(ctx, "u1", ItemInput{
+		Type: ItemLogin, FolderID: otherFolder.ID,
+		NameCipher: cipherFixture(24, 98), NameNonce: nonceFixture(99),
+		DataCipher: cipherFixture(32, 100), DataNonce: nonceFixture(101),
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("create with foreign folder = %v, want ErrNotFound", err)
+	}
+
+	ownFolder, err := repo.CreateFolder(ctx, "u1", cipherFixture(24, 102), nonceFixture(103))
+	if err != nil {
+		t.Fatalf("create own folder: %v", err)
+	}
+	it, err := repo.CreateItem(ctx, "u1", ItemInput{
+		Type: ItemLogin, FolderID: ownFolder.ID,
+		NameCipher: cipherFixture(24, 104), NameNonce: nonceFixture(105),
+		DataCipher: cipherFixture(32, 106), DataNonce: nonceFixture(107),
+	})
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+	_, err = repo.UpdateItem(ctx, "u1", it.ID, ItemInput{
+		Type: ItemLogin, FolderID: otherFolder.ID,
+		NameCipher: cipherFixture(24, 108), NameNonce: nonceFixture(109),
+		DataCipher: cipherFixture(32, 110), DataNonce: nonceFixture(111),
+	}, it.Revision)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("update with foreign folder = %v, want ErrNotFound", err)
 	}
 }
 

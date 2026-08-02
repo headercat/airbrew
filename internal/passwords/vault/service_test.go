@@ -13,7 +13,7 @@ import (
 func TestValidateEnvelopeAppliesDefaultAlgorithm(t *testing.T) {
 	e := KeyEnvelope{
 		UserID: "u", KDFSalt: b64bytes(16, 1),
-		KDFMemoryKiB: 1024, KDFIterations: 1, KDFParallelism: 1,
+		KDFMemoryKiB: 65536, KDFIterations: 3, KDFParallelism: 1,
 		ProtectedVaultKey: cipherFixture(48, 2), ProtectedVaultNonce: nonceFixture(3),
 	}
 	if err := validateEnvelope(&e); err != nil {
@@ -33,7 +33,9 @@ func TestValidateEnvelopeRejectsMissingFields(t *testing.T) {
 		{"missing salt", KeyEnvelope{UserID: "u"}},
 		{"missing protected key", KeyEnvelope{UserID: "u", KDFSalt: "s"}},
 		{"zero memory", KeyEnvelope{UserID: "u", KDFSalt: b64bytes(16, 1), ProtectedVaultKey: cipherFixture(48, 2), ProtectedVaultNonce: nonceFixture(3)}},
-		{"bad nonce", KeyEnvelope{UserID: "u", KDFSalt: b64bytes(16, 1), KDFMemoryKiB: 1024, KDFIterations: 1, KDFParallelism: 1, ProtectedVaultKey: cipherFixture(48, 2), ProtectedVaultNonce: "not-base64"}},
+		{"bad nonce", KeyEnvelope{UserID: "u", KDFSalt: b64bytes(16, 1), KDFMemoryKiB: 65536, KDFIterations: 3, KDFParallelism: 1, ProtectedVaultKey: cipherFixture(48, 2), ProtectedVaultNonce: "not-base64"}},
+		{"unsupported algorithm", KeyEnvelope{UserID: "u", KDFAlgorithm: "pbkdf2", KDFSalt: b64bytes(16, 1), KDFMemoryKiB: 65536, KDFIterations: 3, KDFParallelism: 1, ProtectedVaultKey: cipherFixture(48, 2), ProtectedVaultNonce: nonceFixture(3)}},
+		{"weak kdf", KeyEnvelope{UserID: "u", KDFSalt: b64bytes(16, 1), KDFMemoryKiB: 1024, KDFIterations: 1, KDFParallelism: 1, ProtectedVaultKey: cipherFixture(48, 2), ProtectedVaultNonce: nonceFixture(3)}},
 	}
 	for _, c := range cases {
 		c := c

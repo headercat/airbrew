@@ -58,6 +58,9 @@ func (d *sendgridDriver) Send(ctx context.Context, o letter.Outgoing) error {
 		"headers":       sgHeaders(o),
 		"mail_settings": map[string]any{"sandbox_mode": map[string]bool{"enable": false}},
 	}
+	if atts := sgAttachments(o.Attachments); len(atts) > 0 {
+		body["attachments"] = atts
+	}
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -110,6 +113,34 @@ func sgContent(o letter.Outgoing) []map[string]string {
 		c = append(c, map[string]string{"type": "text/html", "value": o.HTML})
 	}
 	return c
+}
+
+func sgAttachments(in []letter.Attachment) []map[string]string {
+	out := make([]map[string]string, 0, len(in))
+	for _, a := range in {
+		if len(a.Data) == 0 {
+			continue
+		}
+		ct := a.ContentType
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		disposition := "attachment"
+		if a.Inline {
+			disposition = "inline"
+		}
+		item := map[string]string{
+			"content":     b64(a.Data),
+			"type":        ct,
+			"filename":    a.Filename,
+			"disposition": disposition,
+		}
+		if a.ContentID != "" {
+			item["content_id"] = a.ContentID
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func sgHeaders(o letter.Outgoing) map[string]string {

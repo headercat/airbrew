@@ -93,6 +93,7 @@ export type Attachment = {
   size: number;
   fileKeyCipher: string;
   fileKeyNonce: string;
+  cryptoVersion?: number;
   createdAt: string;
 };
 
@@ -187,15 +188,23 @@ const AAD = {
   attachmentPayload: "airbrew:vault:attachment-payload:v1",
 } as const;
 
+const CURRENT_CRYPTO_VERSION = 2;
+
+function isLegacyCrypto(version?: number): boolean {
+  return (version ?? 1) < CURRENT_CRYPTO_VERSION;
+}
+
 async function decryptStringCompat(
   key: Uint8Array,
   cipher: string,
   nonce: string,
   aad: string,
+  cryptoVersion?: number,
 ): Promise<string> {
   try {
     return await decryptString(key, cipher, nonce, aad);
   } catch {
+    if (!isLegacyCrypto(cryptoVersion)) throw new Error("AAD verification failed");
     return decryptString(key, cipher, nonce);
   }
 }
@@ -205,10 +214,12 @@ async function decryptBytesCompat(
   cipher: string,
   nonce: string,
   aad: string,
+  cryptoVersion?: number,
 ): Promise<Uint8Array> {
   try {
     return await decryptBytes(key, cipher, nonce, aad);
   } catch {
+    if (!isLegacyCrypto(cryptoVersion)) throw new Error("AAD verification failed");
     return decryptBytes(key, cipher, nonce);
   }
 }
@@ -217,10 +228,12 @@ async function openCompat(
   key: Uint8Array,
   sealed: Uint8Array,
   aad: string,
+  cryptoVersion?: number,
 ): Promise<Uint8Array> {
   try {
     return await open(key, sealed, aad);
   } catch {
+    if (!isLegacyCrypto(cryptoVersion)) throw new Error("AAD verification failed");
     return open(key, sealed);
   }
 }
@@ -235,6 +248,7 @@ async function decryptItem(
     it.name_cipher,
     it.name_nonce,
     AAD.itemName,
+    it.crypto_version,
   );
   if (it.reprompt && !options.includeSensitive) {
     return {
@@ -256,6 +270,7 @@ async function decryptItem(
     it.data_cipher,
     it.data_nonce,
     AAD.itemData,
+    it.crypto_version,
   );
   let fields: Field[] = [];
   try {
@@ -282,6 +297,7 @@ async function decryptItem(
         it.notes_cipher,
         it.notes_nonce,
         AAD.itemNotes,
+        it.crypto_version,
       );
     } catch {
       notes = "";
@@ -337,6 +353,7 @@ export async function encryptItemInput(
     data_nonce: dataEnc.nonce,
     notes_cipher: notesCipher,
     notes_nonce: notesNonce,
+    crypto_version: CURRENT_CRYPTO_VERSION,
     favorite: draft.favorite,
     reprompt: draft.reprompt,
   };
@@ -510,6 +527,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             f.name_cipher,
             f.name_nonce,
             AAD.folderName,
+            f.crypto_version,
           );
           folderMap.set(f.id, { id: f.id, name, revision: f.revision });
         } catch {
@@ -560,6 +578,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           f.name_cipher,
           f.name_nonce,
           AAD.folderName,
+          f.crypto_version,
         );
         folderMap.set(f.id, { id: f.id, name, revision: f.revision });
       } catch {
@@ -621,6 +640,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           kdf_parallelism: params.parallelism,
           protected_vault_key: wrapped.cipher,
           protected_vault_nonce: wrapped.nonce,
+          crypto_version: CURRENT_CRYPTO_VERSION,
         };
         await VApi.setup(env);
         keyRef.current = vaultKey;
@@ -683,6 +703,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             envNow.protected_vault_key,
             envNow.protected_vault_nonce,
             AAD.envelope,
+            envNow.crypto_version,
           );
         } catch {
           zeroize(masterKey);
@@ -802,6 +823,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             m.name_cipher,
             m.name_nonce,
             AAD.attachmentName,
+            m.crypto_version,
           );
         } catch {
           name = "attachment";
@@ -812,6 +834,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           size: m.size_bytes,
           fileKeyCipher: m.file_key_cipher,
           fileKeyNonce: m.file_key_nonce,
+          cryptoVersion: m.crypto_version,
           createdAt: m.created_at,
         });
       }
@@ -848,6 +871,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         size: meta.size_bytes,
         fileKeyCipher: meta.file_key_cipher,
         fileKeyNonce: meta.file_key_nonce,
+        cryptoVersion: meta.crypto_version,
         createdAt: meta.created_at,
       };
     },
@@ -874,8 +898,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         att.fileKeyCipher,
         att.fileKeyNonce,
         AAD.attachmentFileKey,
+        att.cryptoVersion,
       );
-      const plain = await openCompat(fileKey, sealed, AAD.attachmentPayload);
+      const plain = await openCompat(
+        fileKey,
+        sealed,
+        AAD.attachmentPayload,
+        att.cryptoVersion,
+      );
       return { blob: new Blob([plain as unknown as BlobPart]), name: att.name };
     },
     [],
@@ -902,6 +932,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           env.protected_vault_key,
           env.protected_vault_nonce,
           AAD.envelope,
+          env.crypto_version,
         );
         zeroize(masterKey);
         if (candidate.length !== live.length) return false;
@@ -958,6 +989,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             bundle.envelope.protected_vault_key,
             bundle.envelope.protected_vault_nonce,
             AAD.envelope,
+            bundle.envelope.crypto_version,
           );
         } catch {
           throw new WrongMasterPassword();
@@ -973,12 +1005,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             f.name_cipher,
             f.name_nonce,
             AAD.folderName,
+            f.crypto_version,
           );
           const enc = await encryptString(key, name, AAD.folderName);
           folders.push({
             id: f.id,
             name_cipher: enc.cipher,
             name_nonce: enc.nonce,
+            crypto_version: CURRENT_CRYPTO_VERSION,
             deleted_at: f.deleted_at,
           });
         }
@@ -992,12 +1026,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             it.name_cipher,
             it.name_nonce,
             AAD.itemName,
+            it.crypto_version,
           );
           const data = await decryptStringCompat(
             sourceKey,
             it.data_cipher,
             it.data_nonce,
             AAD.itemData,
+            it.crypto_version,
           );
           const nameEnc = await encryptString(key, name, AAD.itemName);
           const dataEnc = await encryptString(key, data, AAD.itemData);
@@ -1009,6 +1045,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
               it.notes_cipher,
               it.notes_nonce,
               AAD.itemNotes,
+              it.crypto_version,
             );
             const notesEnc = await encryptString(key, notes, AAD.itemNotes);
             notes_cipher = notesEnc.cipher;
@@ -1024,6 +1061,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             data_nonce: dataEnc.nonce,
             notes_cipher,
             notes_nonce,
+            crypto_version: CURRENT_CRYPTO_VERSION,
             favorite: it.favorite,
             reprompt: it.reprompt,
             deleted_at: it.deleted_at,
@@ -1036,11 +1074,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             att.file_key_cipher,
             att.file_key_nonce,
             AAD.attachmentFileKey,
+            att.crypto_version,
           );
           const verifiedPayload = await openCompat(
             fileKey,
             b64ToBytes(att.payload),
             AAD.attachmentPayload,
+            att.crypto_version,
           );
           zeroize(verifiedPayload);
           const wrapped = await encryptBytes(key, fileKey, AAD.attachmentFileKey);
@@ -1050,6 +1090,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             att.name_cipher,
             att.name_nonce,
             AAD.attachmentName,
+            att.crypto_version,
           );
           const nameEnc = await encryptString(key, name, AAD.attachmentName);
           attachments.push({
@@ -1059,6 +1100,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             name_nonce: nameEnc.nonce,
             file_key_cipher: wrapped.cipher,
             file_key_nonce: wrapped.nonce,
+            crypto_version: CURRENT_CRYPTO_VERSION,
             size_bytes: att.size_bytes,
             payload: att.payload,
           });
@@ -1081,7 +1123,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const key = keyRef.current;
       if (!key) throw new Error("vault locked");
       const enc = await encryptString(key, name, AAD.folderName);
-      const raw = await VApi.createFolder(enc.cipher, enc.nonce);
+      const raw = await VApi.createFolder(
+        enc.cipher,
+        enc.nonce,
+        CURRENT_CRYPTO_VERSION,
+      );
       rawFoldersRef.current.set(raw.id, raw);
       const folder: DecryptedFolder = {
         id: raw.id,
@@ -1111,6 +1157,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         id,
         enc.cipher,
         enc.nonce,
+        CURRENT_CRYPTO_VERSION,
         existing.revision,
       );
       rawFoldersRef.current.set(raw.id, raw);
@@ -1175,6 +1222,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         kdf_parallelism: params.parallelism,
         protected_vault_key: wrapped.cipher,
         protected_vault_nonce: wrapped.nonce,
+        crypto_version: CURRENT_CRYPTO_VERSION,
         if_version: env.version,
       });
       // Refresh the cached envelope so the version advances locally.
@@ -1211,6 +1259,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           r.name_cipher,
           r.name_nonce,
           AAD.itemName,
+          r.crypto_version,
         );
       } catch {
         name = "—";
@@ -1223,6 +1272,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
               r.notes_cipher,
               r.notes_nonce,
               AAD.itemNotes,
+              r.crypto_version,
             ),
           );
         } catch {

@@ -76,6 +76,7 @@ type envelopeReq struct {
 	KDFParallelism      int    `json:"kdf_parallelism"`
 	ProtectedVaultKey   string `json:"protected_vault_key"`
 	ProtectedVaultNonce string `json:"protected_vault_nonce"`
+	CryptoVersion       int    `json:"crypto_version"`
 	IfVersion           int64  `json:"if_version"`
 }
 
@@ -87,6 +88,7 @@ type envelopeResp struct {
 	KDFParallelism      int    `json:"kdf_parallelism"`
 	ProtectedVaultKey   string `json:"protected_vault_key"`
 	ProtectedVaultNonce string `json:"protected_vault_nonce"`
+	CryptoVersion       int    `json:"crypto_version"`
 	Version             int64  `json:"version"`
 	UpdatedAt           string `json:"updated_at"`
 }
@@ -97,8 +99,9 @@ func toEnvelopeResp(env vault.KeyEnvelope) envelopeResp {
 		KDFMemoryKiB: env.KDFMemoryKiB, KDFIterations: env.KDFIterations,
 		KDFParallelism:    env.KDFParallelism,
 		ProtectedVaultKey: env.ProtectedVaultKey, ProtectedVaultNonce: env.ProtectedVaultNonce,
-		Version:   env.Version,
-		UpdatedAt: env.UpdatedAt.UTC().Format(time.RFC3339),
+		CryptoVersion: env.CryptoVersion,
+		Version:       env.Version,
+		UpdatedAt:     env.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -116,6 +119,7 @@ func (h *Handler) setup(w http.ResponseWriter, r *http.Request) {
 		UserID: sess.UserID, KDFAlgorithm: req.KDFAlgorithm, KDFSalt: req.KDFSalt,
 		KDFMemoryKiB: req.KDFMemoryKiB, KDFIterations: req.KDFIterations, KDFParallelism: req.KDFParallelism,
 		ProtectedVaultKey: req.ProtectedVaultKey, ProtectedVaultNonce: req.ProtectedVaultNonce,
+		CryptoVersion: req.CryptoVersion,
 	}
 	if err := h.svc.Setup(r.Context(), env); err != nil {
 		if errors.Is(err, vault.ErrEnvelopeExists) {
@@ -168,6 +172,7 @@ func (h *Handler) rotateKeys(w http.ResponseWriter, r *http.Request) {
 		UserID: sess.UserID, KDFAlgorithm: req.KDFAlgorithm, KDFSalt: req.KDFSalt,
 		KDFMemoryKiB: req.KDFMemoryKiB, KDFIterations: req.KDFIterations, KDFParallelism: req.KDFParallelism,
 		ProtectedVaultKey: req.ProtectedVaultKey, ProtectedVaultNonce: req.ProtectedVaultNonce,
+		CryptoVersion: req.CryptoVersion,
 	}
 	if err := h.svc.RotateEnvelope(r.Context(), env, req.IfVersion); err != nil {
 		if errors.Is(err, vault.ErrNotFound) {
@@ -192,27 +197,30 @@ func (h *Handler) rotateKeys(w http.ResponseWriter, r *http.Request) {
 // --- folders ---------------------------------------------------------------
 
 type folderReq struct {
-	NameCipher string `json:"name_cipher"`
-	NameNonce  string `json:"name_nonce"`
-	IfRevision int64  `json:"if_revision"`
+	NameCipher    string `json:"name_cipher"`
+	NameNonce     string `json:"name_nonce"`
+	CryptoVersion int    `json:"crypto_version"`
+	IfRevision    int64  `json:"if_revision"`
 }
 
 type folderResp struct {
-	ID         string  `json:"id"`
-	NameCipher string  `json:"name_cipher"`
-	NameNonce  string  `json:"name_nonce"`
-	Revision   int64   `json:"revision"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  string  `json:"updated_at"`
-	DeletedAt  *string `json:"deleted_at"`
+	ID            string  `json:"id"`
+	NameCipher    string  `json:"name_cipher"`
+	NameNonce     string  `json:"name_nonce"`
+	CryptoVersion int     `json:"crypto_version"`
+	Revision      int64   `json:"revision"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
+	DeletedAt     *string `json:"deleted_at"`
 }
 
 func toFolderResp(f vault.Folder) folderResp {
 	out := folderResp{
 		ID: f.ID, NameCipher: f.NameCipher, NameNonce: f.NameNonce,
-		Revision:  f.Revision,
-		CreatedAt: f.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt: f.UpdatedAt.UTC().Format(time.RFC3339),
+		CryptoVersion: f.CryptoVersion,
+		Revision:      f.Revision,
+		CreatedAt:     f.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:     f.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 	if f.DeletedAt != nil {
 		s := f.DeletedAt.UTC().Format(time.RFC3339)
@@ -278,35 +286,37 @@ func (h *Handler) deleteFolder(w http.ResponseWriter, r *http.Request) {
 // --- items -----------------------------------------------------------------
 
 type itemReq struct {
-	Type        vault.ItemType `json:"type"`
-	FolderID    string         `json:"folder_id"`
-	NameCipher  string         `json:"name_cipher"`
-	NameNonce   string         `json:"name_nonce"`
-	DataCipher  string         `json:"data_cipher"`
-	DataNonce   string         `json:"data_nonce"`
-	NotesCipher string         `json:"notes_cipher"`
-	NotesNonce  string         `json:"notes_nonce"`
-	Favorite    bool           `json:"favorite"`
-	Reprompt    bool           `json:"reprompt"`
-	IfRevision  int64          `json:"if_revision"`
+	Type          vault.ItemType `json:"type"`
+	FolderID      string         `json:"folder_id"`
+	NameCipher    string         `json:"name_cipher"`
+	NameNonce     string         `json:"name_nonce"`
+	DataCipher    string         `json:"data_cipher"`
+	DataNonce     string         `json:"data_nonce"`
+	NotesCipher   string         `json:"notes_cipher"`
+	NotesNonce    string         `json:"notes_nonce"`
+	CryptoVersion int            `json:"crypto_version"`
+	Favorite      bool           `json:"favorite"`
+	Reprompt      bool           `json:"reprompt"`
+	IfRevision    int64          `json:"if_revision"`
 }
 
 type itemResp struct {
-	ID          string  `json:"id"`
-	Type        string  `json:"type"`
-	FolderID    string  `json:"folder_id"`
-	NameCipher  string  `json:"name_cipher"`
-	NameNonce   string  `json:"name_nonce"`
-	DataCipher  string  `json:"data_cipher"`
-	DataNonce   string  `json:"data_nonce"`
-	NotesCipher string  `json:"notes_cipher"`
-	NotesNonce  string  `json:"notes_nonce"`
-	Favorite    bool    `json:"favorite"`
-	Reprompt    bool    `json:"reprompt"`
-	Revision    int64   `json:"revision"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
-	DeletedAt   *string `json:"deleted_at"`
+	ID            string  `json:"id"`
+	Type          string  `json:"type"`
+	FolderID      string  `json:"folder_id"`
+	NameCipher    string  `json:"name_cipher"`
+	NameNonce     string  `json:"name_nonce"`
+	DataCipher    string  `json:"data_cipher"`
+	DataNonce     string  `json:"data_nonce"`
+	NotesCipher   string  `json:"notes_cipher"`
+	NotesNonce    string  `json:"notes_nonce"`
+	CryptoVersion int     `json:"crypto_version"`
+	Favorite      bool    `json:"favorite"`
+	Reprompt      bool    `json:"reprompt"`
+	Revision      int64   `json:"revision"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
+	DeletedAt     *string `json:"deleted_at"`
 }
 
 func toItemResp(it vault.Item) itemResp {
@@ -315,7 +325,8 @@ func toItemResp(it vault.Item) itemResp {
 		NameCipher: it.NameCipher, NameNonce: it.NameNonce,
 		DataCipher: it.DataCipher, DataNonce: it.DataNonce,
 		NotesCipher: it.NotesCipher, NotesNonce: it.NotesNonce,
-		Favorite: it.Favorite, Reprompt: it.Reprompt, Revision: it.Revision,
+		CryptoVersion: it.CryptoVersion,
+		Favorite:      it.Favorite, Reprompt: it.Reprompt, Revision: it.Revision,
 		CreatedAt: it.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: it.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -332,7 +343,8 @@ func itemInput(req itemReq) vault.ItemInput {
 		NameCipher: req.NameCipher, NameNonce: req.NameNonce,
 		DataCipher: req.DataCipher, DataNonce: req.DataNonce,
 		NotesCipher: req.NotesCipher, NotesNonce: req.NotesNonce,
-		Favorite: req.Favorite, Reprompt: req.Reprompt,
+		CryptoVersion: req.CryptoVersion,
+		Favorite:      req.Favorite, Reprompt: req.Reprompt,
 	}
 }
 
@@ -454,19 +466,20 @@ func (h *Handler) sync(w http.ResponseWriter, r *http.Request) {
 // --- history ----------------------------------------------------------------
 
 type itemRevisionResp struct {
-	ID          string `json:"id"`
-	Type        string `json:"type"`
-	FolderID    string `json:"folder_id"`
-	NameCipher  string `json:"name_cipher"`
-	NameNonce   string `json:"name_nonce"`
-	DataCipher  string `json:"data_cipher"`
-	DataNonce   string `json:"data_nonce"`
-	NotesCipher string `json:"notes_cipher"`
-	NotesNonce  string `json:"notes_nonce"`
-	Favorite    bool   `json:"favorite"`
-	Reprompt    bool   `json:"reprompt"`
-	Revision    int64  `json:"revision"`
-	CreatedAt   string `json:"created_at"`
+	ID            string `json:"id"`
+	Type          string `json:"type"`
+	FolderID      string `json:"folder_id"`
+	NameCipher    string `json:"name_cipher"`
+	NameNonce     string `json:"name_nonce"`
+	DataCipher    string `json:"data_cipher"`
+	DataNonce     string `json:"data_nonce"`
+	NotesCipher   string `json:"notes_cipher"`
+	NotesNonce    string `json:"notes_nonce"`
+	CryptoVersion int    `json:"crypto_version"`
+	Favorite      bool   `json:"favorite"`
+	Reprompt      bool   `json:"reprompt"`
+	Revision      int64  `json:"revision"`
+	CreatedAt     string `json:"created_at"`
 }
 
 func (h *Handler) listRevisions(w http.ResponseWriter, r *http.Request) {
@@ -487,7 +500,8 @@ func (h *Handler) listRevisions(w http.ResponseWriter, r *http.Request) {
 			NameCipher: rv.NameCipher, NameNonce: rv.NameNonce,
 			DataCipher: rv.DataCipher, DataNonce: rv.DataNonce,
 			NotesCipher: rv.NotesCipher, NotesNonce: rv.NotesNonce,
-			Favorite: rv.Favorite, Reprompt: rv.Reprompt,
+			CryptoVersion: rv.CryptoVersion,
+			Favorite:      rv.Favorite, Reprompt: rv.Reprompt,
 			Revision: rv.Revision, CreatedAt: rv.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
@@ -527,6 +541,7 @@ type exportAttachmentResp struct {
 	NameNonce     string `json:"name_nonce"`
 	FileKeyCipher string `json:"file_key_cipher"`
 	FileKeyNonce  string `json:"file_key_nonce"`
+	CryptoVersion int    `json:"crypto_version"`
 	SizeBytes     int64  `json:"size_bytes"`
 	Payload       string `json:"payload"`
 }
@@ -572,8 +587,9 @@ func (h *Handler) exportVault(w http.ResponseWriter, r *http.Request) {
 			ID: a.ID, ItemID: a.ItemID,
 			NameCipher: a.NameCipher, NameNonce: a.NameNonce,
 			FileKeyCipher: a.FileKeyCipher, FileKeyNonce: a.FileKeyNonce,
-			SizeBytes: a.SizeBytes,
-			Payload:   base64.StdEncoding.EncodeToString(payload),
+			CryptoVersion: a.CryptoVersion,
+			SizeBytes:     a.SizeBytes,
+			Payload:       base64.StdEncoding.EncodeToString(payload),
 		})
 	}
 	body, err := json.Marshal(out)
@@ -598,25 +614,27 @@ type importReq struct {
 }
 
 type importFolderReq struct {
-	ID         string `json:"id"`
-	NameCipher string `json:"name_cipher"`
-	NameNonce  string `json:"name_nonce"`
-	DeletedAt  string `json:"deleted_at"`
+	ID            string `json:"id"`
+	NameCipher    string `json:"name_cipher"`
+	NameNonce     string `json:"name_nonce"`
+	CryptoVersion int    `json:"crypto_version"`
+	DeletedAt     string `json:"deleted_at"`
 }
 
 type importItemReq struct {
-	ID          string         `json:"id"`
-	Type        vault.ItemType `json:"type"`
-	FolderID    string         `json:"folder_id"`
-	NameCipher  string         `json:"name_cipher"`
-	NameNonce   string         `json:"name_nonce"`
-	DataCipher  string         `json:"data_cipher"`
-	DataNonce   string         `json:"data_nonce"`
-	NotesCipher string         `json:"notes_cipher"`
-	NotesNonce  string         `json:"notes_nonce"`
-	Favorite    bool           `json:"favorite"`
-	Reprompt    bool           `json:"reprompt"`
-	DeletedAt   string         `json:"deleted_at"`
+	ID            string         `json:"id"`
+	Type          vault.ItemType `json:"type"`
+	FolderID      string         `json:"folder_id"`
+	NameCipher    string         `json:"name_cipher"`
+	NameNonce     string         `json:"name_nonce"`
+	DataCipher    string         `json:"data_cipher"`
+	DataNonce     string         `json:"data_nonce"`
+	NotesCipher   string         `json:"notes_cipher"`
+	NotesNonce    string         `json:"notes_nonce"`
+	CryptoVersion int            `json:"crypto_version"`
+	Favorite      bool           `json:"favorite"`
+	Reprompt      bool           `json:"reprompt"`
+	DeletedAt     string         `json:"deleted_at"`
 }
 
 type importAttachmentReq struct {
@@ -626,6 +644,7 @@ type importAttachmentReq struct {
 	NameNonce     string `json:"name_nonce"`
 	FileKeyCipher string `json:"file_key_cipher"`
 	FileKeyNonce  string `json:"file_key_nonce"`
+	CryptoVersion int    `json:"crypto_version"`
 	SizeBytes     int64  `json:"size_bytes"`
 	Payload       string `json:"payload"`
 }
@@ -648,7 +667,8 @@ func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		folders = append(folders, vault.Folder{
-			ID: f.ID, NameCipher: f.NameCipher, NameNonce: f.NameNonce, DeletedAt: deletedAt,
+			ID: f.ID, NameCipher: f.NameCipher, NameNonce: f.NameNonce,
+			CryptoVersion: f.CryptoVersion, DeletedAt: deletedAt,
 		})
 	}
 	items := make([]vault.Item, 0, len(req.Items))
@@ -667,7 +687,8 @@ func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
 			NameCipher: it.NameCipher, NameNonce: it.NameNonce,
 			DataCipher: it.DataCipher, DataNonce: it.DataNonce,
 			NotesCipher: it.NotesCipher, NotesNonce: it.NotesNonce,
-			Favorite: it.Favorite, Reprompt: it.Reprompt, DeletedAt: deletedAt,
+			CryptoVersion: it.CryptoVersion,
+			Favorite:      it.Favorite, Reprompt: it.Reprompt, DeletedAt: deletedAt,
 		})
 	}
 	var attachments []vault.Attachment
@@ -699,6 +720,7 @@ func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
 			ID: a.ID, ItemID: a.ItemID, BlobPath: blobPath, SizeBytes: a.SizeBytes,
 			FileKeyCipher: a.FileKeyCipher, FileKeyNonce: a.FileKeyNonce,
 			NameCipher: a.NameCipher, NameNonce: a.NameNonce,
+			CryptoVersion: a.CryptoVersion,
 		})
 	}
 	fc, ic, ac, err := h.svc.ImportBundle(r.Context(), sess.UserID, folders, items, attachments)
@@ -837,6 +859,7 @@ type attachmentResp struct {
 	NameNonce     string `json:"name_nonce"`
 	FileKeyCipher string `json:"file_key_cipher"`
 	FileKeyNonce  string `json:"file_key_nonce"`
+	CryptoVersion int    `json:"crypto_version"`
 	SizeBytes     int64  `json:"size_bytes"`
 	CreatedAt     string `json:"created_at"`
 }
@@ -845,7 +868,8 @@ func toAttachmentResp(a vault.Attachment) attachmentResp {
 	return attachmentResp{
 		ID: a.ID, NameCipher: a.NameCipher, NameNonce: a.NameNonce,
 		FileKeyCipher: a.FileKeyCipher, FileKeyNonce: a.FileKeyNonce,
-		SizeBytes: a.SizeBytes, CreatedAt: a.CreatedAt.UTC().Format(time.RFC3339),
+		CryptoVersion: a.CryptoVersion,
+		SizeBytes:     a.SizeBytes, CreatedAt: a.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
 

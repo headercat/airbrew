@@ -14,6 +14,11 @@ type Service struct {
 	repo *Repository
 }
 
+const (
+	CryptoVersionLegacy = 1
+	CryptoVersionAAD    = 2
+)
+
 // NewService returns a Service backed by repo.
 func NewService(repo *Repository) *Service { return &Service{repo: repo} }
 
@@ -60,7 +65,7 @@ func (s *Service) CreateFolder(ctx context.Context, userID, nameCipher, nameNonc
 	if err := validateCipherPair(nameCipher, nameNonce, "name"); err != nil {
 		return Folder{}, err
 	}
-	return s.repo.CreateFolder(ctx, userID, nameCipher, nameNonce)
+	return s.repo.CreateFolder(ctx, userID, nameCipher, nameNonce, CryptoVersionAAD)
 }
 
 // UpdateFolder renames a folder, guarding on the client's last-seen revision.
@@ -74,7 +79,7 @@ func (s *Service) UpdateFolder(ctx context.Context, userID, id, nameCipher, name
 	if ifRevision <= 0 {
 		return Folder{}, fmt.Errorf("%w: if_revision required", ErrInvalidInput)
 	}
-	return s.repo.UpdateFolder(ctx, userID, id, nameCipher, nameNonce, ifRevision)
+	return s.repo.UpdateFolder(ctx, userID, id, nameCipher, nameNonce, CryptoVersionAAD, ifRevision)
 }
 
 // DeleteFolder soft-deletes a folder.
@@ -87,6 +92,7 @@ func (s *Service) DeleteFolder(ctx context.Context, userID, id string, ifRevisio
 
 // CreateItem stores a new encrypted item.
 func (s *Service) CreateItem(ctx context.Context, userID string, in ItemInput) (Item, error) {
+	normalizeItemCryptoVersion(&in)
 	if err := validateItem(in); err != nil {
 		return Item{}, err
 	}
@@ -100,6 +106,7 @@ func (s *Service) GetItem(ctx context.Context, userID, id string) (Item, error) 
 
 // UpdateItem overwrites an item, archiving the prior snapshot.
 func (s *Service) UpdateItem(ctx context.Context, userID, id string, in ItemInput, ifRevision int64) (Item, error) {
+	normalizeItemCryptoVersion(&in)
 	if err := validateItem(in); err != nil {
 		return Item{}, err
 	}
@@ -164,6 +171,7 @@ func validateEnvelope(env *KeyEnvelope) error {
 	if env.ProtectedVaultKey == "" || env.ProtectedVaultNonce == "" {
 		return fmt.Errorf("%w: protected_vault_key and nonce required", ErrInvalidInput)
 	}
+	env.CryptoVersion = normalizeCryptoVersion(env.CryptoVersion)
 	if _, err := decodeB64Exact(env.KDFSalt, 16, "kdf_salt"); err != nil {
 		return err
 	}
@@ -193,6 +201,9 @@ func validateItem(in ItemInput) error {
 	if !in.Type.Valid() {
 		return fmt.Errorf("%w: invalid type", ErrInvalidInput)
 	}
+	if err := validateCryptoVersion(in.CryptoVersion); err != nil {
+		return err
+	}
 	if in.NameCipher == "" || in.NameNonce == "" {
 		return fmt.Errorf("%w: name ciphertext and nonce required", ErrInvalidInput)
 	}
@@ -214,6 +225,26 @@ func validateItem(in ItemInput) error {
 		}
 	}
 	return nil
+}
+
+func normalizeItemCryptoVersion(in *ItemInput) {
+	in.CryptoVersion = normalizeCryptoVersion(in.CryptoVersion)
+}
+
+func normalizeCryptoVersion(version int) int {
+	if version == 0 {
+		return CryptoVersionLegacy
+	}
+	return version
+}
+
+func validateCryptoVersion(version int) error {
+	switch version {
+	case CryptoVersionLegacy, CryptoVersionAAD:
+		return nil
+	default:
+		return fmt.Errorf("%w: invalid crypto_version", ErrInvalidInput)
+	}
 }
 
 const maxCiphertextBytes = 64 << 10
@@ -300,7 +331,7 @@ func (s *Service) CreateAttachment(ctx context.Context, userID, itemID, blobPath
 	if sizeBytes > MaxAttachmentBytes {
 		return Attachment{}, fmt.Errorf("%w: attachment too large", ErrInvalidInput)
 	}
-	return s.repo.CreateAttachment(ctx, userID, itemID, blobPath, sizeBytes, fkCipher, fkNonce, nameCipher, nameNonce)
+	return s.repo.CreateAttachment(ctx, userID, itemID, blobPath, sizeBytes, fkCipher, fkNonce, nameCipher, nameNonce, CryptoVersionAAD)
 }
 
 // ListAttachments returns all attachments for an item.
@@ -341,36 +372,47 @@ func (s *Service) ExportBundle(ctx context.Context, userID string) (KeyEnvelope,
 // ImportBundle re-inserts the given ciphertext folders and items with fresh IDs
 // and bumped revisions, returning the count of each.
 func (s *Service) ImportBundle(ctx context.Context, userID string, folders []Folder, items []Item, attachments []Attachment) (int64, int64, int64, error) {
-	for _, f := range folders {
-		if f.NameCipher == "" || f.NameNonce == "" {
+	for i := range folders {
+		folders[i].CryptoVersion = normalizeCryptoVersion(folders[i].CryptoVersion)
+		if folders[i].NameCipher == "" || folders[i].NameNonce == "" {
 			return 0, 0, 0, fmt.Errorf("%w: folder name ciphertext required", ErrInvalidInput)
 		}
-		if err := validateCipherPair(f.NameCipher, f.NameNonce, "folder_name"); err != nil {
+		if err := validateCryptoVersion(folders[i].CryptoVersion); err != nil {
+			return 0, 0, 0, err
+		}
+		if err := validateCipherPair(folders[i].NameCipher, folders[i].NameNonce, "folder_name"); err != nil {
 			return 0, 0, 0, err
 		}
 	}
-	for _, it := range items {
+	for i := range items {
+		items[i].CryptoVersion = normalizeCryptoVersion(items[i].CryptoVersion)
+		it := items[i]
 		if err := validateItem(ItemInput{
 			Type: it.Type, FolderID: it.FolderID,
 			NameCipher: it.NameCipher, NameNonce: it.NameNonce,
 			DataCipher: it.DataCipher, DataNonce: it.DataNonce,
 			NotesCipher: it.NotesCipher, NotesNonce: it.NotesNonce,
-			Favorite: it.Favorite, Reprompt: it.Reprompt,
+			CryptoVersion: it.CryptoVersion,
+			Favorite:      it.Favorite, Reprompt: it.Reprompt,
 		}); err != nil {
 			return 0, 0, 0, err
 		}
 	}
-	for _, a := range attachments {
-		if a.ItemID == "" || a.BlobPath == "" {
-			return 0, 0, 0, fmt.Errorf("%w: attachment item_id and blob_path required", ErrInvalidInput)
-		}
-		if a.SizeBytes < 0 || a.SizeBytes > MaxAttachmentBytes {
-			return 0, 0, 0, fmt.Errorf("%w: invalid attachment size", ErrInvalidInput)
-		}
-		if err := validateCipherPair(a.FileKeyCipher, a.FileKeyNonce, "file_key"); err != nil {
+	for i := range attachments {
+		attachments[i].CryptoVersion = normalizeCryptoVersion(attachments[i].CryptoVersion)
+		if err := validateCryptoVersion(attachments[i].CryptoVersion); err != nil {
 			return 0, 0, 0, err
 		}
-		if err := validateCipherPair(a.NameCipher, a.NameNonce, "name"); err != nil {
+		if attachments[i].ItemID == "" || attachments[i].BlobPath == "" {
+			return 0, 0, 0, fmt.Errorf("%w: attachment item_id and blob_path required", ErrInvalidInput)
+		}
+		if attachments[i].SizeBytes < 0 || attachments[i].SizeBytes > MaxAttachmentBytes {
+			return 0, 0, 0, fmt.Errorf("%w: invalid attachment size", ErrInvalidInput)
+		}
+		if err := validateCipherPair(attachments[i].FileKeyCipher, attachments[i].FileKeyNonce, "file_key"); err != nil {
+			return 0, 0, 0, err
+		}
+		if err := validateCipherPair(attachments[i].NameCipher, attachments[i].NameNonce, "name"); err != nil {
 			return 0, 0, 0, err
 		}
 	}

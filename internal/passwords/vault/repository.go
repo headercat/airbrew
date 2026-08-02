@@ -27,12 +27,12 @@ func (r *Repository) SetupEnvelope(ctx context.Context, env KeyEnvelope) error {
 		INSERT INTO vault_keys
 		  (user_id, kdf_algorithm, kdf_salt, kdf_memory_kib, kdf_iterations,
 		   kdf_parallelism, protected_vault_key, protected_vault_nonce,
-		   version, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   crypto_version, version, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		env.UserID, env.KDFAlgorithm, env.KDFSalt,
 		env.KDFMemoryKiB, env.KDFIterations, env.KDFParallelism,
-		env.ProtectedVaultKey, env.ProtectedVaultNonce, 1, now, now,
+		env.ProtectedVaultKey, env.ProtectedVaultNonce, env.CryptoVersion, 1, now, now,
 	)
 	if err != nil {
 		// modernc.org/sqlite returns "constraint failed: UNIQUE" for PK dup.
@@ -51,12 +51,12 @@ func (r *Repository) GetEnvelope(ctx context.Context, userID string) (KeyEnvelop
 	err := r.db.QueryRowContext(ctx, `
 		SELECT user_id, kdf_algorithm, kdf_salt, kdf_memory_kib, kdf_iterations,
 		       kdf_parallelism, protected_vault_key, protected_vault_nonce,
-		       version, created_at, updated_at
+		       crypto_version, version, created_at, updated_at
 		FROM vault_keys WHERE user_id = ?
 	`, userID).Scan(
 		&env.UserID, &alg, &env.KDFSalt, &env.KDFMemoryKiB, &env.KDFIterations,
 		&env.KDFParallelism, &env.ProtectedVaultKey, &env.ProtectedVaultNonce,
-		&env.Version, &env.CreatedAt, &env.UpdatedAt,
+		&env.CryptoVersion, &env.Version, &env.CreatedAt, &env.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return KeyEnvelope{}, ErrNotFound
@@ -80,12 +80,12 @@ func (r *Repository) RotateEnvelope(ctx context.Context, env KeyEnvelope, ifVers
 		  kdf_algorithm = ?, kdf_salt = ?, kdf_memory_kib = ?,
 		  kdf_iterations = ?, kdf_parallelism = ?,
 		  protected_vault_key = ?, protected_vault_nonce = ?,
-		  version = version + 1, updated_at = ?
+		  crypto_version = ?, version = version + 1, updated_at = ?
 		WHERE user_id = ? AND version = ?
 	`,
 		env.KDFAlgorithm, env.KDFSalt, env.KDFMemoryKiB,
 		env.KDFIterations, env.KDFParallelism,
-		env.ProtectedVaultKey, env.ProtectedVaultNonce, now, env.UserID, ifVersion,
+		env.ProtectedVaultKey, env.ProtectedVaultNonce, env.CryptoVersion, now, env.UserID, ifVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("vault: rotate envelope: %w", err)
@@ -140,8 +140,8 @@ func (r *Repository) currentRev(ctx context.Context, userID string) (int64, erro
 }
 
 // CreateFolder inserts a folder and returns the stored row with its revision.
-func (r *Repository) CreateFolder(ctx context.Context, userID, nameCipher, nameNonce string) (Folder, error) {
-	folder := Folder{ID: id.New(), UserID: userID, NameCipher: nameCipher, NameNonce: nameNonce}
+func (r *Repository) CreateFolder(ctx context.Context, userID, nameCipher, nameNonce string, cryptoVersion int) (Folder, error) {
+	folder := Folder{ID: id.New(), UserID: userID, NameCipher: nameCipher, NameNonce: nameNonce, CryptoVersion: cryptoVersion}
 	now := time.Now().UTC().Truncate(time.Second)
 	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
 		rev, err := bumpRev(ctx, tx, userID)
@@ -153,9 +153,9 @@ func (r *Repository) CreateFolder(ctx context.Context, userID, nameCipher, nameN
 		folder.UpdatedAt = now
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO vault_folders
-			  (id, user_id, name_cipher, name_nonce, revision, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, folder.ID, folder.UserID, folder.NameCipher, folder.NameNonce, rev, now, now)
+			  (id, user_id, name_cipher, name_nonce, crypto_version, revision, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, folder.ID, folder.UserID, folder.NameCipher, folder.NameNonce, folder.CryptoVersion, rev, now, now)
 		if err != nil {
 			return fmt.Errorf("vault: insert folder: %w", err)
 		}
@@ -179,7 +179,7 @@ func (r *Repository) GetFolder(ctx context.Context, userID, id string) (Folder, 
 
 // UpdateFolder renames a folder. If ifRevision does not match the stored
 // revision, it returns a *ConflictError carrying the server's current row.
-func (r *Repository) UpdateFolder(ctx context.Context, userID, id, nameCipher, nameNonce string, ifRevision int64) (Folder, error) {
+func (r *Repository) UpdateFolder(ctx context.Context, userID, id, nameCipher, nameNonce string, cryptoVersion int, ifRevision int64) (Folder, error) {
 	var out Folder
 	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
 		cur, err := lockFolderForWrite(ctx, tx, userID, id)
@@ -197,9 +197,9 @@ func (r *Repository) UpdateFolder(ctx context.Context, userID, id, nameCipher, n
 		now := time.Now().UTC().Truncate(time.Second)
 		res, err := tx.ExecContext(ctx, `
 			UPDATE vault_folders
-			SET name_cipher = ?, name_nonce = ?, revision = ?, updated_at = ?
+			SET name_cipher = ?, name_nonce = ?, crypto_version = ?, revision = ?, updated_at = ?
 			WHERE id = ? AND user_id = ? AND deleted_at IS NULL
-		`, nameCipher, nameNonce, rev, now, id, userID)
+		`, nameCipher, nameNonce, cryptoVersion, rev, now, id, userID)
 		if err != nil {
 			return fmt.Errorf("vault: update folder: %w", err)
 		}
@@ -209,6 +209,7 @@ func (r *Repository) UpdateFolder(ctx context.Context, userID, id, nameCipher, n
 		out = cur
 		out.NameCipher = nameCipher
 		out.NameNonce = nameNonce
+		out.CryptoVersion = cryptoVersion
 		out.Revision = rev
 		out.UpdatedAt = now
 		return nil
@@ -268,7 +269,8 @@ func (r *Repository) CreateItem(ctx context.Context, userID string, in ItemInput
 		NameCipher: in.NameCipher, NameNonce: in.NameNonce,
 		DataCipher: in.DataCipher, DataNonce: in.DataNonce,
 		NotesCipher: in.NotesCipher, NotesNonce: in.NotesNonce,
-		Favorite: in.Favorite, Reprompt: in.Reprompt,
+		CryptoVersion: in.CryptoVersion,
+		Favorite:      in.Favorite, Reprompt: in.Reprompt,
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
@@ -286,12 +288,13 @@ func (r *Repository) CreateItem(ctx context.Context, userID string, in ItemInput
 			INSERT INTO vault_items
 			  (id, user_id, type, folder_id, name_cipher, name_nonce,
 			   data_cipher, data_nonce, notes_cipher, notes_nonce,
-			   favorite, reprompt, revision, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			   crypto_version, favorite, reprompt, revision, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			item.ID, item.UserID, string(item.Type), nullable(item.FolderID),
 			item.NameCipher, item.NameNonce, item.DataCipher, item.DataNonce,
 			nullable(item.NotesCipher), nullable(item.NotesNonce),
+			item.CryptoVersion,
 			boolToInt(item.Favorite), boolToInt(item.Reprompt), rev, now, now,
 		)
 		if err != nil {
@@ -347,12 +350,12 @@ func (r *Repository) UpdateItem(ctx context.Context, userID, itemID string, in I
 			UPDATE vault_items SET
 			  type = ?, folder_id = ?, name_cipher = ?, name_nonce = ?,
 			  data_cipher = ?, data_nonce = ?, notes_cipher = ?, notes_nonce = ?,
-			  favorite = ?, reprompt = ?, revision = ?, updated_at = ?
+			  crypto_version = ?, favorite = ?, reprompt = ?, revision = ?, updated_at = ?
 			WHERE id = ? AND user_id = ? AND deleted_at IS NULL
 		`,
 			string(in.Type), nullable(in.FolderID), in.NameCipher, in.NameNonce,
 			in.DataCipher, in.DataNonce, nullable(in.NotesCipher), nullable(in.NotesNonce),
-			boolToInt(in.Favorite), boolToInt(in.Reprompt), rev, now, itemID, userID,
+			in.CryptoVersion, boolToInt(in.Favorite), boolToInt(in.Reprompt), rev, now, itemID, userID,
 		)
 		if err != nil {
 			return fmt.Errorf("vault: update item: %w", err)
@@ -369,6 +372,7 @@ func (r *Repository) UpdateItem(ctx context.Context, userID, itemID string, in I
 		out.DataNonce = in.DataNonce
 		out.NotesCipher = in.NotesCipher
 		out.NotesNonce = in.NotesNonce
+		out.CryptoVersion = in.CryptoVersion
 		out.Favorite = in.Favorite
 		out.Reprompt = in.Reprompt
 		out.Revision = rev
@@ -614,6 +618,7 @@ func (r *Repository) ListItemRevisions(ctx context.Context, userID, itemID strin
 		SELECT r.id, r.item_id, COALESCE(r.type, i.type), COALESCE(r.folder_id, ''),
 		       r.name_cipher, r.name_nonce, r.data_cipher, r.data_nonce,
 		       COALESCE(r.notes_cipher, ''), COALESCE(r.notes_nonce, ''),
+		       COALESCE(r.crypto_version, i.crypto_version),
 		       COALESCE(r.favorite, i.favorite), COALESCE(r.reprompt, i.reprompt),
 		       r.revision, r.created_at
 		FROM vault_item_revisions r
@@ -631,7 +636,7 @@ func (r *Repository) ListItemRevisions(ctx context.Context, userID, itemID strin
 		var fav, rep int
 		if err := rows.Scan(&rev.ID, &rev.ItemID, &typ, &rev.FolderID,
 			&rev.NameCipher, &rev.NameNonce, &rev.DataCipher, &rev.DataNonce,
-			&rev.NotesCipher, &rev.NotesNonce, &fav, &rep, &rev.Revision, &rev.CreatedAt); err != nil {
+			&rev.NotesCipher, &rev.NotesNonce, &rev.CryptoVersion, &fav, &rep, &rev.Revision, &rev.CreatedAt); err != nil {
 			return nil, err
 		}
 		rev.Type = ItemType(typ)
@@ -649,6 +654,7 @@ func (r *Repository) GetItemRevision(ctx context.Context, userID, itemID, revID 
 		SELECT r.id, r.item_id, COALESCE(r.type, i.type), COALESCE(r.folder_id, ''),
 		       r.name_cipher, r.name_nonce, r.data_cipher, r.data_nonce,
 		       COALESCE(r.notes_cipher, ''), COALESCE(r.notes_nonce, ''),
+		       COALESCE(r.crypto_version, i.crypto_version),
 		       COALESCE(r.favorite, i.favorite), COALESCE(r.reprompt, i.reprompt),
 		       r.revision, r.created_at
 		FROM vault_item_revisions r
@@ -684,6 +690,7 @@ func (r *Repository) RestoreItemRevision(ctx context.Context, userID, itemID, re
 			SELECT r.id, r.item_id, COALESCE(r.type, i.type), COALESCE(r.folder_id, ''),
 			       r.name_cipher, r.name_nonce, r.data_cipher, r.data_nonce,
 			       COALESCE(r.notes_cipher, ''), COALESCE(r.notes_nonce, ''),
+			       COALESCE(r.crypto_version, i.crypto_version),
 			       COALESCE(r.favorite, i.favorite), COALESCE(r.reprompt, i.reprompt),
 			       r.revision, r.created_at
 			FROM vault_item_revisions r
@@ -713,11 +720,11 @@ func (r *Repository) RestoreItemRevision(ctx context.Context, userID, itemID, re
 			UPDATE vault_items SET
 			  type = ?, folder_id = ?, name_cipher = ?, name_nonce = ?,
 			  data_cipher = ?, data_nonce = ?, notes_cipher = ?, notes_nonce = ?,
-			  favorite = ?, reprompt = ?, revision = ?, updated_at = ?
+			  crypto_version = ?, favorite = ?, reprompt = ?, revision = ?, updated_at = ?
 			WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
 			string(snap.Type), nullable(folderID), snap.NameCipher, snap.NameNonce,
 			snap.DataCipher, snap.DataNonce, nullable(snap.NotesCipher), nullable(snap.NotesNonce),
-			boolToInt(snap.Favorite), boolToInt(snap.Reprompt), rev, now, itemID, userID); err != nil {
+			snap.CryptoVersion, boolToInt(snap.Favorite), boolToInt(snap.Reprompt), rev, now, itemID, userID); err != nil {
 			return fmt.Errorf("vault: restore item: %w", err)
 		}
 		out = cur
@@ -729,6 +736,7 @@ func (r *Repository) RestoreItemRevision(ctx context.Context, userID, itemID, re
 		out.DataNonce = snap.DataNonce
 		out.NotesCipher = snap.NotesCipher
 		out.NotesNonce = snap.NotesNonce
+		out.CryptoVersion = snap.CryptoVersion
 		out.Favorite = snap.Favorite
 		out.Reprompt = snap.Reprompt
 		out.Revision = rev
@@ -758,11 +766,12 @@ func archiveItemSnapshot(ctx context.Context, tx *sql.Tx, it Item) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO vault_item_revisions
 		  (id, item_id, type, folder_id, name_cipher, name_nonce, data_cipher, data_nonce,
-		   notes_cipher, notes_nonce, favorite, reprompt, revision, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   notes_cipher, notes_nonce, crypto_version, favorite, reprompt, revision, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id.New(), it.ID, string(it.Type), nullable(it.FolderID),
 		it.NameCipher, it.NameNonce, it.DataCipher, it.DataNonce,
 		nullable(it.NotesCipher), nullable(it.NotesNonce),
+		it.CryptoVersion,
 		boolToInt(it.Favorite), boolToInt(it.Reprompt), it.Revision, it.UpdatedAt)
 	return err
 }
@@ -791,9 +800,9 @@ func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []
 			f.UpdatedAt = now
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO vault_folders
-				  (id, user_id, name_cipher, name_nonce, revision, created_at, updated_at, deleted_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-				f.ID, f.UserID, f.NameCipher, f.NameNonce, rev, now, now,
+				  (id, user_id, name_cipher, name_nonce, crypto_version, revision, created_at, updated_at, deleted_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				f.ID, f.UserID, f.NameCipher, f.NameNonce, f.CryptoVersion, rev, now, now,
 				nullableTime(f.DeletedAt)); err != nil {
 				return fmt.Errorf("vault: import folder: %w", err)
 			}
@@ -827,11 +836,12 @@ func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []
 				INSERT INTO vault_items
 				  (id, user_id, type, folder_id, name_cipher, name_nonce,
 				   data_cipher, data_nonce, notes_cipher, notes_nonce,
-				   favorite, reprompt, revision, created_at, updated_at, deleted_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				   crypto_version, favorite, reprompt, revision, created_at, updated_at, deleted_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				it.ID, it.UserID, string(it.Type), nullable(it.FolderID),
 				it.NameCipher, it.NameNonce, it.DataCipher, it.DataNonce,
 				nullable(it.NotesCipher), nullable(it.NotesNonce),
+				it.CryptoVersion,
 				boolToInt(it.Favorite), boolToInt(it.Reprompt), rev, now, now,
 				nullableTime(it.DeletedAt)); err != nil {
 				return fmt.Errorf("vault: import item: %w", err)
@@ -849,10 +859,10 @@ func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO vault_attachments
 				  (id, item_id, blob_path, size_bytes,
-				   file_key_cipher, file_key_nonce, name_cipher, name_nonce, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				   file_key_cipher, file_key_nonce, name_cipher, name_nonce, crypto_version, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				id.New(), itemID, a.BlobPath, a.SizeBytes,
-				a.FileKeyCipher, a.FileKeyNonce, a.NameCipher, a.NameNonce, now); err != nil {
+				a.FileKeyCipher, a.FileKeyNonce, a.NameCipher, a.NameNonce, a.CryptoVersion, now); err != nil {
 				return fmt.Errorf("vault: import attachment: %w", err)
 			}
 			attachmentCount++
@@ -871,28 +881,28 @@ func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []
 const attachmentSelect = `
 	SELECT a.id, a.item_id, a.blob_path, a.size_bytes,
 	       a.file_key_cipher, a.file_key_nonce,
-	       a.name_cipher, a.name_nonce, a.created_at
+	       a.name_cipher, a.name_nonce, a.crypto_version, a.created_at
 	FROM vault_attachments a
 	JOIN vault_items i ON i.id = a.item_id
 	WHERE i.user_id = ? AND a.item_id = ? AND i.deleted_at IS NULL`
 
 // CreateAttachment records a new attachment row pointing at blobPath.
 func (r *Repository) CreateAttachment(ctx context.Context, userID, itemID, blobPath string,
-	sizeBytes int64, fkCipher, fkNonce, nameCipher, nameNonce string,
+	sizeBytes int64, fkCipher, fkNonce, nameCipher, nameNonce string, cryptoVersion int,
 ) (Attachment, error) {
 	a := Attachment{ID: id.New(), ItemID: itemID, BlobPath: blobPath, SizeBytes: sizeBytes,
-		FileKeyCipher: fkCipher, FileKeyNonce: fkNonce, NameCipher: nameCipher, NameNonce: nameNonce}
+		FileKeyCipher: fkCipher, FileKeyNonce: fkNonce, NameCipher: nameCipher, NameNonce: nameNonce, CryptoVersion: cryptoVersion}
 	now := time.Now().UTC().Truncate(time.Second)
 	a.CreatedAt = now
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO vault_attachments
 		  (id, item_id, blob_path, size_bytes,
-		   file_key_cipher, file_key_nonce, name_cipher, name_nonce, created_at)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+		   file_key_cipher, file_key_nonce, name_cipher, name_nonce, crypto_version, created_at)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE EXISTS (SELECT 1 FROM vault_items WHERE id = ? AND user_id = ? AND deleted_at IS NULL)
 	`,
 		a.ID, a.ItemID, a.BlobPath, a.SizeBytes,
-		a.FileKeyCipher, a.FileKeyNonce, a.NameCipher, a.NameNonce, now,
+		a.FileKeyCipher, a.FileKeyNonce, a.NameCipher, a.NameNonce, a.CryptoVersion, now,
 		itemID, userID,
 	)
 	if err != nil {
@@ -927,7 +937,7 @@ func (r *Repository) ListAllAttachments(ctx context.Context, userID string) ([]A
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT a.id, a.item_id, a.blob_path, a.size_bytes,
 		       a.file_key_cipher, a.file_key_nonce,
-		       a.name_cipher, a.name_nonce, a.created_at
+		       a.name_cipher, a.name_nonce, a.crypto_version, a.created_at
 		FROM vault_attachments a
 		JOIN vault_items i ON i.id = a.item_id
 		WHERE i.user_id = ? AND i.deleted_at IS NULL
@@ -1025,7 +1035,7 @@ func scanAttachment(row scanner) (Attachment, error) {
 	err := row.Scan(
 		&a.ID, &a.ItemID, &a.BlobPath, &a.SizeBytes,
 		&a.FileKeyCipher, &a.FileKeyNonce,
-		&a.NameCipher, &a.NameNonce, &a.CreatedAt,
+		&a.NameCipher, &a.NameNonce, &a.CryptoVersion, &a.CreatedAt,
 	)
 	if err != nil {
 		return Attachment{}, err
@@ -1100,7 +1110,7 @@ func ensureFolderOwned(ctx context.Context, tx *sql.Tx, userID, folderID string)
 }
 
 const folderSelect = `
-	SELECT id, user_id, name_cipher, name_nonce, revision,
+	SELECT id, user_id, name_cipher, name_nonce, crypto_version, revision,
 	       created_at, updated_at, deleted_at
 	FROM vault_folders`
 
@@ -1108,7 +1118,7 @@ const itemSelect = `
 	SELECT id, user_id, type, COALESCE(folder_id,''),
 	       name_cipher, name_nonce, data_cipher, data_nonce,
 	       COALESCE(notes_cipher,''), COALESCE(notes_nonce,''),
-	       favorite, reprompt, revision, created_at, updated_at, deleted_at
+	       crypto_version, favorite, reprompt, revision, created_at, updated_at, deleted_at
 	FROM vault_items`
 
 type scanner interface {
@@ -1118,7 +1128,7 @@ type scanner interface {
 func scanFolder(row scanner) (Folder, error) {
 	var f Folder
 	var deleted sql.NullTime
-	err := row.Scan(&f.ID, &f.UserID, &f.NameCipher, &f.NameNonce, &f.Revision,
+	err := row.Scan(&f.ID, &f.UserID, &f.NameCipher, &f.NameNonce, &f.CryptoVersion, &f.Revision,
 		&f.CreatedAt, &f.UpdatedAt, &deleted)
 	if err != nil {
 		return Folder{}, err
@@ -1137,7 +1147,7 @@ func scanItem(row scanner) (Item, error) {
 	var deleted sql.NullTime
 	err := row.Scan(&it.ID, &it.UserID, &typ, &it.FolderID,
 		&it.NameCipher, &it.NameNonce, &it.DataCipher, &it.DataNonce,
-		&it.NotesCipher, &it.NotesNonce, &fav, &rep,
+		&it.NotesCipher, &it.NotesNonce, &it.CryptoVersion, &fav, &rep,
 		&it.Revision, &it.CreatedAt, &it.UpdatedAt, &deleted)
 	if err != nil {
 		return Item{}, err
@@ -1157,7 +1167,7 @@ func scanItemRevision(row scanner, rev *ItemRevision) error {
 	var fav, rep int
 	if err := row.Scan(&rev.ID, &rev.ItemID, &typ, &rev.FolderID,
 		&rev.NameCipher, &rev.NameNonce, &rev.DataCipher, &rev.DataNonce,
-		&rev.NotesCipher, &rev.NotesNonce, &fav, &rep, &rev.Revision, &rev.CreatedAt); err != nil {
+		&rev.NotesCipher, &rev.NotesNonce, &rev.CryptoVersion, &fav, &rep, &rev.Revision, &rev.CreatedAt); err != nil {
 		return err
 	}
 	rev.Type = ItemType(typ)

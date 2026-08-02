@@ -44,8 +44,9 @@ master password ──Argon2id(salt, m/t/p)──▶ master key (32 B, client on
   so no separate HMAC key is needed (unlike CBC+HMAC). Each ciphertext stores its
   own 12 B random nonce alongside.
 - **AAD**: new envelope, item, folder, and attachment ciphertexts bind an
-  operation-specific associated-data label to AES-GCM. Older ciphertext without
-  AAD still decrypts through a compatibility fallback.
+  operation-specific associated-data label to AES-GCM and are stored with
+  `crypto_version = 2`. Older version-1 ciphertext without AAD still decrypts
+  through a compatibility fallback; version-2 rows must authenticate with AAD.
 - **Vault key**: 32 random bytes, generated once at setup, constant for the
   account lifetime. Rotating it (rare) means re-encrypting all items.
 - **Per-attachment keys**: each attachment gets its own 32 B file key, itself

@@ -48,6 +48,7 @@ type KeyEnvelope struct {
 	KDFParallelism      int
 	ProtectedVaultKey   string
 	ProtectedVaultNonce string
+	CryptoVersion       int
 	Version             int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -74,51 +75,54 @@ func (t ItemType) Valid() bool {
 
 // Folder is an encrypted folder (only its name is encrypted).
 type Folder struct {
-	ID         string
-	UserID     string
-	NameCipher string
-	NameNonce  string
-	Revision   int64
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	DeletedAt  *time.Time
+	ID            string
+	UserID        string
+	NameCipher    string
+	NameNonce     string
+	CryptoVersion int
+	Revision      int64
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeletedAt     *time.Time
 }
 
 // Item is a single encrypted vault entry. DataCipher holds the type-specific
 // JSON (username/password/uris/totp for logins, card fields, identity fields,
 // custom fields) so the server treats all item kinds uniformly.
 type Item struct {
-	ID          string
-	UserID      string
-	Type        ItemType
-	FolderID    string
-	NameCipher  string
-	NameNonce   string
-	DataCipher  string
-	DataNonce   string
-	NotesCipher string
-	NotesNonce  string
-	Favorite    bool
-	Reprompt    bool
-	Revision    int64
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	DeletedAt   *time.Time
+	ID            string
+	UserID        string
+	Type          ItemType
+	FolderID      string
+	NameCipher    string
+	NameNonce     string
+	DataCipher    string
+	DataNonce     string
+	NotesCipher   string
+	NotesNonce    string
+	CryptoVersion int
+	Favorite      bool
+	Reprompt      bool
+	Revision      int64
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeletedAt     *time.Time
 }
 
 // ItemInput carries the encrypted, user-controlled fields of an item. It is
 // used for both create and update.
 type ItemInput struct {
-	Type        ItemType
-	FolderID    string
-	NameCipher  string
-	NameNonce   string
-	DataCipher  string
-	DataNonce   string
-	NotesCipher string
-	NotesNonce  string
-	Favorite    bool
-	Reprompt    bool
+	Type          ItemType
+	FolderID      string
+	NameCipher    string
+	NameNonce     string
+	DataCipher    string
+	DataNonce     string
+	NotesCipher   string
+	NotesNonce    string
+	CryptoVersion int
+	Favorite      bool
+	Reprompt      bool
 }
 
 // Attachment is an encrypted file attached to an item. The file contents are
@@ -135,6 +139,7 @@ type Attachment struct {
 	FileKeyNonce  string
 	NameCipher    string
 	NameNonce     string
+	CryptoVersion int
 	CreatedAt     time.Time
 }
 
@@ -142,18 +147,19 @@ type Attachment struct {
 // fields, captured each time the item is updated. The client decrypts it with
 // the vault key to show "previous versions" and to restore.
 type ItemRevision struct {
-	ID          string
-	ItemID      string
-	Type        ItemType
-	FolderID    string
-	NameCipher  string
-	NameNonce   string
-	DataCipher  string
-	DataNonce   string
-	NotesCipher string
-	NotesNonce  string
-	Favorite    bool
-	Reprompt    bool
-	Revision    int64
-	CreatedAt   time.Time
+	ID            string
+	ItemID        string
+	Type          ItemType
+	FolderID      string
+	NameCipher    string
+	NameNonce     string
+	DataCipher    string
+	DataNonce     string
+	NotesCipher   string
+	NotesNonce    string
+	CryptoVersion int
+	Favorite      bool
+	Reprompt      bool
+	Revision      int64
+	CreatedAt     time.Time
 }

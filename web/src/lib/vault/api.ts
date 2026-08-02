@@ -15,6 +15,7 @@ export type Envelope = {
   kdf_parallelism: number;
   protected_vault_key: string;
   protected_vault_nonce: string;
+  crypto_version?: number;
   version: number;
   updated_at: string;
 };
@@ -23,6 +24,7 @@ export type VaultFolder = {
   id: string;
   name_cipher: string;
   name_nonce: string;
+  crypto_version?: number;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -39,6 +41,7 @@ export type VaultItem = {
   data_nonce: string;
   notes_cipher: string;
   notes_nonce: string;
+  crypto_version?: number;
   favorite: boolean;
   reprompt: boolean;
   revision: number;
@@ -62,6 +65,7 @@ export type EnvelopeInput = {
   kdf_parallelism: number;
   protected_vault_key: string;
   protected_vault_nonce: string;
+  crypto_version?: number;
   if_version?: number;
 };
 
@@ -74,6 +78,7 @@ export type ItemInput = {
   data_nonce: string;
   notes_cipher: string;
   notes_nonce: string;
+  crypto_version?: number;
   favorite: boolean;
   reprompt: boolean;
   if_revision?: number;
@@ -129,10 +134,12 @@ export function deleteItem(
 export function createFolder(
   nameCipher: string,
   nameNonce: string,
+  cryptoVersion?: number,
 ): Promise<VaultFolder> {
   return api.post<VaultFolder>("/api/vault/folders", {
     name_cipher: nameCipher,
     name_nonce: nameNonce,
+    crypto_version: cryptoVersion,
   });
 }
 
@@ -140,11 +147,13 @@ export function updateFolder(
   id: string,
   nameCipher: string,
   nameNonce: string,
+  cryptoVersion: number | undefined,
   ifRevision: number,
 ): Promise<VaultFolder> {
   return api.putRaw<VaultFolder>(`/api/vault/folders/${id}`, {
     name_cipher: nameCipher,
     name_nonce: nameNonce,
+    crypto_version: cryptoVersion,
     if_revision: ifRevision,
   });
 }
@@ -164,6 +173,7 @@ export type AttachmentMeta = {
   name_nonce: string;
   file_key_cipher: string;
   file_key_nonce: string;
+  crypto_version?: number;
   size_bytes: number;
   created_at: string;
 };
@@ -249,6 +259,7 @@ export type ItemRevision = {
   data_nonce: string;
   notes_cipher: string;
   notes_nonce: string;
+  crypto_version?: number;
   favorite: boolean;
   reprompt: boolean;
   revision: number;
@@ -287,6 +298,7 @@ export type ExportAttachment = {
   name_nonce: string;
   file_key_cipher: string;
   file_key_nonce: string;
+  crypto_version?: number;
   size_bytes: number;
   payload: string;
 };
@@ -305,6 +317,7 @@ export type ImportBundleInput = {
     id?: string;
     name_cipher: string;
     name_nonce: string;
+    crypto_version?: number;
     deleted_at?: string | null;
   }[];
   items: (ItemInput & { id?: string; deleted_at?: string | null })[];

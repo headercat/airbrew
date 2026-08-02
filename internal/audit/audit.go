@@ -69,10 +69,14 @@ func (s *Service) Log(ctx context.Context, e Entry) {
 		meta,
 		now,
 	)
-	slog.Default().Info(humanMessage(s.db, ctx, e),
+	// Resolve the actor's email once and reuse it for both the human message
+	// and the structured log attr. Previously this fired two SELECTs per log.
+	actor := actorEmail(s.db, ctx, e.ActorUserID, e.ActorClientID)
+	target := targetLabel(e.TargetType, e.TargetID)
+	slog.Default().Info(humanMessage(actor, target, e),
 		"event", e.EventType,
-		"actor", actorLabel(s.db, ctx, e.ActorUserID, e.ActorClientID),
-		"target", targetLabel(e.TargetType, e.TargetID),
+		"actor", actor,
+		"target", target,
 		"ip", e.IPAddress,
 	)
 }
@@ -191,9 +195,7 @@ func nullable(s string) any {
 	return s
 }
 
-func humanMessage(db *sql.DB, ctx context.Context, e Entry) string {
-	actor := actorLabel(db, ctx, e.ActorUserID, e.ActorClientID)
-	target := targetLabel(e.TargetType, e.TargetID)
+func humanMessage(actor, target string, e Entry) string {
 	switch e.EventType {
 	case "admin.bootstrap":
 		return "Bootstrap admin account was created"
@@ -231,6 +233,26 @@ func humanMessage(db *sql.DB, ctx context.Context, e Entry) string {
 		return fmt.Sprintf("%s updated their profile", actor)
 	case "avatar.uploaded":
 		return fmt.Sprintf("%s uploaded an avatar", actor)
+	case "vault.setup":
+		return fmt.Sprintf("%s initialized their password vault", actor)
+	case "vault.keys_rotated":
+		return fmt.Sprintf("%s rotated their vault master password", actor)
+	case "vault.item_created":
+		return fmt.Sprintf("%s created a vault item", actor)
+	case "vault.item_updated":
+		return fmt.Sprintf("%s updated vault item %s", actor, e.TargetID)
+	case "vault.item_deleted":
+		return fmt.Sprintf("%s deleted vault item %s", actor, e.TargetID)
+	case "vault.folder_created":
+		return fmt.Sprintf("%s created a vault folder", actor)
+	case "vault.folder_updated":
+		return fmt.Sprintf("%s updated vault folder %s", actor, e.TargetID)
+	case "vault.folder_deleted":
+		return fmt.Sprintf("%s deleted vault folder %s", actor, e.TargetID)
+	case "vault.export":
+		return fmt.Sprintf("%s exported their vault", actor)
+	case "vault.import":
+		return fmt.Sprintf("%s imported %s entries into their vault", actor, metadataValue(e, "count"))
 	default:
 		if target != "" {
 			return fmt.Sprintf("%s performed %s on %s", actor, e.EventType, target)
@@ -239,7 +261,10 @@ func humanMessage(db *sql.DB, ctx context.Context, e Entry) string {
 	}
 }
 
-func actorLabel(db *sql.DB, ctx context.Context, userID, clientID string) string {
+// actorEmail resolves a single human-readable label for the actor. It performs
+// at most one DB lookup per call (the previous implementation queried once per
+// human message AND once per log attr).
+func actorEmail(db *sql.DB, ctx context.Context, userID, clientID string) string {
 	if userID != "" && db != nil {
 		var email string
 		if err := db.QueryRowContext(ctx, "SELECT email FROM users WHERE id = ?", userID).Scan(&email); err == nil && email != "" {

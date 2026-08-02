@@ -228,6 +228,7 @@ func (h *Handler) createFolder(w http.ResponseWriter, r *http.Request) {
 		writeVaultError(w, err)
 		return
 	}
+	h.auditVault(r, "vault.folder_created", f.ID, nil)
 	response.JSON(w, http.StatusCreated, toFolderResp(f))
 }
 
@@ -247,6 +248,7 @@ func (h *Handler) updateFolder(w http.ResponseWriter, r *http.Request) {
 		writeVaultError(w, err)
 		return
 	}
+	h.auditVault(r, "vault.folder_updated", f.ID, nil)
 	response.JSON(w, http.StatusOK, toFolderResp(f))
 }
 
@@ -261,6 +263,7 @@ func (h *Handler) deleteFolder(w http.ResponseWriter, r *http.Request) {
 		writeVaultError(w, err)
 		return
 	}
+	h.auditVault(r, "vault.folder_deleted", id, nil)
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -340,6 +343,7 @@ func (h *Handler) createItem(w http.ResponseWriter, r *http.Request) {
 		writeVaultError(w, err)
 		return
 	}
+	h.auditVault(r, "vault.item_created", it.ID, map[string]any{"type": string(it.Type)})
 	response.JSON(w, http.StatusCreated, toItemResp(it))
 }
 
@@ -373,6 +377,7 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 		writeVaultError(w, err)
 		return
 	}
+	h.auditVault(r, "vault.item_updated", it.ID, nil)
 	response.JSON(w, http.StatusOK, toItemResp(it))
 }
 
@@ -394,6 +399,7 @@ func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 			_ = h.blobs.Delete(r.Context(), p)
 		}
 	}
+	h.auditVault(r, "vault.item_deleted", id, nil)
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -436,6 +442,27 @@ func requireSession(w http.ResponseWriter, r *http.Request) (*session.Session, b
 		return nil, false
 	}
 	return sess, true
+}
+
+// auditVault records a vault event scoped to the session user. It is best-effort
+// (the audit service never returns an error that would fail the request).
+func (h *Handler) auditVault(r *http.Request, eventType, targetID string, meta map[string]any) {
+	if h.audit == nil {
+		return
+	}
+	sess, ok := session.FromContext(r.Context())
+	if !ok {
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType:   eventType,
+		ActorUserID: sess.UserID,
+		TargetType:  "vault",
+		TargetID:    targetID,
+		IPAddress:   clientIP(r),
+		UserAgent:   r.UserAgent(),
+		Metadata:    meta,
+	})
 }
 
 // writeVaultError maps a vault service error to an HTTP status. Conflict errors

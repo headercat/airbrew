@@ -218,7 +218,7 @@ func (r *Repository) SetActive(ctx context.Context, userID, id string, active bo
 		}
 		// (Re)mint webhook token on activation so revoking truly revokes.
 		if defn.TriggerTypeOf(w.Definition.TriggerNode().Type) == TriggerWebhook {
-			w.WebhookToken = id.New()
+			w.WebhookToken = newID()
 		}
 	} else {
 		w.WebhookToken = ""

@@ -627,6 +627,7 @@
     "newFolder": "새 폴더",
     "upload": "업로드",
     "uploading": "업로드 중…",
+    "uploadsFailed": "업로드 실패",
     "searchPlaceholder": "파일 검색…",
     "dropToUpload": "업로드하려면 파일을 여기에 놓으세요",
     "empty": "이 폴더가 비어 있습니다.",
@@ -663,6 +664,7 @@
     "copied": "복사됨!",
     "copyLink": "링크 복사",
     "expires": "만료",
+    "expired": "만료됨",
     "downloads": "다운로드",
     "views": {
       "files": "내 파일",

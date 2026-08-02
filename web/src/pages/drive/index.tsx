@@ -182,11 +182,19 @@ export default function DrivePage() {
       if (!files || (files as FileList).length === 0) return;
       setBusy(true);
       setError(null);
+      const failed: string[] = [];
       try {
         for (const f of Array.from(files)) {
-          await drive.upload(f, parent);
+          try {
+            await drive.upload(f, parent);
+          } catch {
+            failed.push(f.name);
+          }
         }
         await Promise.all([refresh(), refreshUsage()]);
+        if (failed.length > 0) {
+          setError(`${t("drive.uploadsFailed")}: ${failed.join(", ")}`);
+        }
       } catch (e) {
         setError(errMsg(e));
       } finally {
@@ -773,14 +781,17 @@ function SharedView() {
     );
   return (
     <div className="divide-y divide-border">
-      {shares.map((s) => (
-        <div
-          key={s.id}
-          className={cn(
-            "flex items-center gap-3 px-4 py-2.5",
-            (s.node_trashed || !s.is_active) && "opacity-60",
-          )}
-        >
+      {shares.map((s) => {
+        const expired = isExpiredShare(s);
+        const unavailable = s.node_trashed || !s.is_active || expired;
+        return (
+          <div
+            key={s.id}
+            className={cn(
+              "flex items-center gap-3 px-4 py-2.5",
+              unavailable && "opacity-60",
+            )}
+          >
           <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
@@ -795,6 +806,11 @@ function SharedView() {
               {!s.is_active && !s.node_trashed && (
                 <Badge variant="secondary" className="text-[10px]">
                   {t("drive.disabled")}
+                </Badge>
+              )}
+              {expired && s.is_active && !s.node_trashed && (
+                <Badge variant="secondary" className="text-[10px]">
+                  {t("drive.expired")}
                 </Badge>
               )}
               {s.has_password && (
@@ -818,7 +834,7 @@ function SharedView() {
           <Button
             variant="outline"
             size="sm"
-            disabled={s.node_trashed}
+            disabled={unavailable}
             onClick={async () => {
               await navigator.clipboard.writeText(
                 window.location.origin + s.url,
@@ -840,8 +856,9 @@ function SharedView() {
           >
             <Trash2 className="h-4 w-4" />
           </Button>
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1320,6 +1337,10 @@ function isDescendantFolder(
     if (cur.parent_id === node.id) return true;
   }
   return false;
+}
+
+function isExpiredShare(s: DriveShare): boolean {
+  return !!s.expires_at && new Date(s.expires_at).getTime() <= Date.now();
 }
 
 function errMsg(e: unknown): string {

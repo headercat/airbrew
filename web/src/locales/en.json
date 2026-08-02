@@ -627,6 +627,7 @@
     "newFolder": "New folder",
     "upload": "Upload",
     "uploading": "Uploading…",
+    "uploadsFailed": "Upload failed",
     "searchPlaceholder": "Search files…",
     "dropToUpload": "Drop files here to upload",
     "empty": "This folder is empty.",
@@ -663,6 +664,7 @@
     "copied": "Copied!",
     "copyLink": "Copy link",
     "expires": "expires",
+    "expired": "Expired",
     "downloads": "downloads",
     "views": {
       "files": "My Files",

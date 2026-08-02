@@ -207,12 +207,23 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	pw := req.Password
+	generated := false
+	if pw == "" {
+		var err error
+		pw, err = generateTempPassword()
+		if err != nil {
+			response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+			return
+		}
+		generated = true
+	}
 	var u *user.User
 	var err error
 	if req.Role == "admin" {
-		u, err = h.userSvc.RegisterAdmin(r.Context(), req.Email, req.Password, req.DisplayName)
+		u, err = h.userSvc.RegisterAdmin(r.Context(), req.Email, pw, req.DisplayName)
 	} else {
-		u, err = h.userSvc.Register(r.Context(), req.Email, req.Password, req.DisplayName)
+		u, err = h.userSvc.Register(r.Context(), req.Email, pw, req.DisplayName)
 	}
 	if err != nil {
 		if errors.Is(err, user.ErrEmailTaken) {
@@ -228,7 +239,11 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{"email": u.Email, "role": string(u.Role)},
 	})
-	response.JSON(w, http.StatusCreated, toUserDTO(u))
+	resp := map[string]any{"user": toUserDTO(u)}
+	if generated {
+		resp["temp_password"] = pw
+	}
+	response.JSON(w, http.StatusCreated, resp)
 }
 
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
@@ -332,6 +347,42 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.JSON(w, http.StatusOK, toUserDTO(updated))
+}
+
+func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	target, err := h.userRepo.GetByID(r.Context(), id)
+	if err != nil {
+		response.Error(w, http.StatusNotFound, "not_found", "user not found")
+		return
+	}
+	callerID := callerUserID(r)
+	if id == callerID {
+		response.Error(w, http.StatusBadRequest, "cannot_delete_self", "you cannot delete yourself")
+		return
+	}
+	if target.Role == user.RoleAdmin {
+		count, err := h.userRepo.CountByRole(r.Context(), user.RoleAdmin)
+		if err != nil {
+			response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+			return
+		}
+		if count <= 1 {
+			response.Error(w, http.StatusBadRequest, "last_admin", "cannot delete the last admin")
+			return
+		}
+	}
+	if err := h.userRepo.SetStatus(r.Context(), id, user.StatusDeleted); err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "user.deleted", ActorUserID: callerID,
+		TargetType: "user", TargetID: id,
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"from": string(target.Status), "to": string(user.StatusDeleted)},
+	})
+	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 type resetPasswordReq struct {
@@ -733,6 +784,88 @@ func (h *Handler) revokeSession(w http.ResponseWriter, r *http.Request) {
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
 	})
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (h *Handler) listUserSessions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := h.userRepo.GetByID(r.Context(), id); err != nil {
+		response.Error(w, http.StatusNotFound, "not_found", "user not found")
+		return
+	}
+	rows, err := h.db.QueryContext(r.Context(), `
+		SELECT s.id, s.user_id, COALESCE(u.email,''), s.ip_address, s.user_agent, s.created_at, s.expires_at
+		FROM sessions s
+		LEFT JOIN users u ON u.id = s.user_id
+		WHERE s.user_id = ? AND s.revoked_at IS NULL AND s.expires_at > ?
+		ORDER BY s.created_at DESC
+		LIMIT 100
+	`, id, time.Now().UTC())
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	defer rows.Close()
+	var out []sessionDTO
+	for rows.Next() {
+		var s sessionDTO
+		var ip, ua sql.NullString
+		if err := rows.Scan(&s.ID, &s.UserID, &s.UserEmail, &ip, &ua, &s.CreatedAt, &s.ExpiresAt); err != nil {
+			response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+			return
+		}
+		s.IPAddress = ip.String
+		s.UserAgent = ua.String
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]any{"sessions": out})
+}
+
+func (h *Handler) revokeUserSessions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := h.userRepo.GetByID(r.Context(), id); err != nil {
+		response.Error(w, http.StatusNotFound, "not_found", "user not found")
+		return
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	res, err := h.db.ExecContext(r.Context(), `
+		UPDATE sessions
+		SET revoked_at = ?
+		WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
+	`, now, id, now)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "session.revoked", ActorUserID: callerUserID(r),
+		TargetType: "user", TargetID: id,
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{"count": n},
+	})
+	response.JSON(w, http.StatusOK, map[string]any{"ok": true, "revoked": n})
+}
+
+func (h *Handler) userActivity(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := h.userRepo.GetByID(r.Context(), id); err != nil {
+		response.Error(w, http.StatusNotFound, "not_found", "user not found")
+		return
+	}
+	entries, total, err := h.audit.List(r.Context(), audit.ListFilter{
+		TargetType: "user",
+		TargetID:   id,
+		Limit:      25,
+	})
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]any{"entries": entries, "total": total})
 }
 
 // ---- Branding ----

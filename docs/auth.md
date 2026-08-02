@@ -25,7 +25,7 @@ registration, social login, WebAuthn/passkeys, multi-tenant issuer.
 | # | Milestone                                            | Status |
 | - | ---------------------------------------------------- | ------ |
 | 1 | User/password/session model + register/login/logout  | ✅ Done |
-| 2 | OAuth client CRUD + admin endpoints                  | ⏳     |
+| 2 | OAuth client CRUD + admin endpoints                  | ✅ Done |
 | 3 | `/oauth/authorize` request validation                | ⏳     |
 | 4 | Login flow + consent screen                          | ⏳     |
 | 5 | Authorization code issuance + `/oauth/token`         | ⏳     |
@@ -58,6 +58,22 @@ implement them.
 - Users: `id` (internal FK) and a separate `public_subject` used as the OIDC
   `sub`. The two are unrelated so a user PK migration would not invalidate
   issued tokens.
+
+## OAuth client registration policies
+
+- `client_id` values are generated server-side with the `airbrew_` prefix.
+- Confidential client secrets are shown once, stored only as SHA-256 hashes, and
+  can be rotated from the admin UI.
+- Confidential clients may use `client_secret_basic` or `client_secret_post`;
+  public clients always use `none`.
+- Token endpoint helpers reject inactive clients, wrong client auth methods,
+  bad secrets, and duplicate Basic/body credentials.
+- Redirect URIs are exact-match values with no fragments. HTTPS is accepted for
+  web clients, HTTP is accepted only for loopback hosts, and public clients may
+  use reverse-domain private-use schemes such as
+  `com.example.app:/oauth/callback`.
+- Scope values are normalized, deduplicated, sorted, capped per client, and
+  validated against OAuth scope-token syntax.
 
 ## Endpoint inventory (target)
 

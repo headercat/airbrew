@@ -20,6 +20,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { isApiError } from "@/lib/api";
+import type { ExportBundle } from "@/lib/vault/api";
 import {
   evaluateMasterPassword,
   readVaultSecuritySettings,
@@ -72,25 +73,8 @@ export function VaultActions() {
     setInfo(null);
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as {
-        folders?: { id?: string; name_cipher: string; name_nonce: string }[];
-        items?: {
-          type: string;
-          folder_id: string;
-          name_cipher: string;
-          name_nonce: string;
-          data_cipher: string;
-          data_nonce: string;
-          notes_cipher?: string;
-          notes_nonce?: string;
-          favorite?: boolean;
-          reprompt?: boolean;
-        }[];
-      };
-      const counts = await importBundle(
-        parsed.folders ?? [],
-        (parsed.items ?? []) as never,
-      );
+      const parsed = JSON.parse(text) as ExportBundle;
+      const counts = await importBundle(parsed);
       setInfo(
         t("passwords.actions.imported", {
           folders: counts.folders,

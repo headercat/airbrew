@@ -296,10 +296,7 @@ type VaultContextValue = {
   verifyMasterPassword: (password: string) => Promise<boolean>;
   // exportBundle / importBundle wrap the encrypted backup/restore endpoints.
   exportBundle: () => Promise<VApi.ExportBundle>;
-  importBundle: (
-    folders: { id?: string; name_cipher: string; name_nonce: string }[],
-    items: VApi.ItemInput[],
-  ) => Promise<VApi.ImportCounts>;
+  importBundle: (bundle: VApi.ExportBundle) => Promise<VApi.ImportCounts>;
   // Folder CRUD (encrypts the folder name with the vault key).
   createFolder: (name: string) => Promise<DecryptedFolder>;
   renameFolder: (id: string, name: string) => Promise<void>;
@@ -799,10 +796,50 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const importBundle = useCallback(
-    async (
-      folders: { id?: string; name_cipher: string; name_nonce: string }[],
-      items: VApi.ItemInput[],
-    ) => {
+    async (bundle: VApi.ExportBundle) => {
+      const key = keyRef.current;
+      if (!key) throw new Error("vault locked");
+      const folders = [];
+      for (const f of bundle.folders ?? []) {
+        const name = await decryptString(key, f.name_cipher, f.name_nonce);
+        const enc = await encryptString(key, name);
+        folders.push({
+          id: f.id,
+          name_cipher: enc.cipher,
+          name_nonce: enc.nonce,
+        });
+      }
+      const items: VApi.ItemInput[] = [];
+      for (const it of bundle.items ?? []) {
+        const name = await decryptString(key, it.name_cipher, it.name_nonce);
+        const data = await decryptString(key, it.data_cipher, it.data_nonce);
+        const nameEnc = await encryptString(key, name);
+        const dataEnc = await encryptString(key, data);
+        let notes_cipher = "";
+        let notes_nonce = "";
+        if (it.notes_cipher && it.notes_nonce) {
+          const notes = await decryptString(
+            key,
+            it.notes_cipher,
+            it.notes_nonce,
+          );
+          const notesEnc = await encryptString(key, notes);
+          notes_cipher = notesEnc.cipher;
+          notes_nonce = notesEnc.nonce;
+        }
+        items.push({
+          type: it.type,
+          folder_id: it.folder_id,
+          name_cipher: nameEnc.cipher,
+          name_nonce: nameEnc.nonce,
+          data_cipher: dataEnc.cipher,
+          data_nonce: dataEnc.nonce,
+          notes_cipher,
+          notes_nonce,
+          favorite: it.favorite,
+          reprompt: it.reprompt,
+        });
+      }
       const counts = await VApi.importVault(folders, items);
       // Pull the freshly-imported rows into the decrypted cache.
       await syncAndDecrypt();

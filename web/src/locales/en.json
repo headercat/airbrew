@@ -553,11 +553,11 @@
     },
     "actions": {
       "title": "Vault actions",
-      "description": "Back up, restore, or change your master password.",
+      "description": "Back up or restore items/folders, or change your master password. Attachments are not included yet.",
       "export": "Export backup",
       "import": "Import backup",
       "exported": "Encrypted backup downloaded.",
-      "imported": "Imported {{folders}} folders and {{items}} items.",
+      "imported": "Verified the backup and re-encrypted {{folders}} folders and {{items}} items with this vault key.",
       "newFolder": "New folder",
       "newFolderPlaceholder": "Folder name",
       "add": "Add",

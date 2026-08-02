@@ -20,6 +20,7 @@ package mail
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -29,6 +30,8 @@ import (
 	"github.com/headercat/airbrew/internal/mail/handler"
 	"github.com/headercat/airbrew/internal/mail/inbound"
 	"github.com/headercat/airbrew/internal/mail/inbox"
+	"github.com/headercat/airbrew/internal/mail/letter"
+	"github.com/headercat/airbrew/internal/mail/outbound"
 	"github.com/headercat/airbrew/internal/mail/provider"
 	"github.com/headercat/airbrew/internal/modules"
 )
@@ -109,6 +112,26 @@ func (m *Module) RegisterAdminRoutes(mux *http.ServeMux) {
 // exits when ctx is cancelled.
 func (m *Module) Start(ctx context.Context) {
 	go m.coord.Run(ctx)
+}
+
+// SendWorkflowMail lets the workflow module send mail through the configured
+// outbound provider while keeping workflow decoupled from mail internals.
+func (m *Module) SendWorkflowMail(ctx context.Context, userID, mailboxID, to, subject, body string) error {
+	addrs, err := letter.ParseAddressList(to)
+	if err != nil {
+		return fmt.Errorf("mail: parse workflow recipients: %w", err)
+	}
+	sender, err := outbound.Resolve(ctx, m.prov)
+	if err != nil {
+		return err
+	}
+	_, err = m.inbox.Send(ctx, userID, inbox.SendInput{
+		MailboxID: mailboxID,
+		To:        addrs,
+		Subject:   subject,
+		Text:      body,
+	}, sender)
+	return err
 }
 
 // ingestAdapter adapts inbox.Service.Ingest to the inbound.Ingester contract.

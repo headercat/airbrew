@@ -29,7 +29,7 @@ const (
 
 // MailSender is implemented by module wiring that can deliver workflow mail.
 type MailSender interface {
-	SendWorkflowMail(ctx context.Context, userID, to, subject, body string) error
+	SendWorkflowMail(ctx context.Context, userID, mailboxID, to, subject, body string) error
 }
 
 // Engine executes workflows.
@@ -262,9 +262,10 @@ func (e *Engine) runNode(ctx context.Context, userID string, st *runState, n *de
 		return e.httpAction(ctx, n, env)
 	case "action.mail":
 		var cfg struct {
-			To      string `json:"to"`
-			Subject string `json:"subject"`
-			Body    string `json:"body"`
+			MailboxID string `json:"mailbox_id"`
+			To        string `json:"to"`
+			Subject   string `json:"subject"`
+			Body      string `json:"body"`
 		}
 		if err := decodeConfig(n, &cfg); err != nil {
 			return nil, "", err
@@ -275,7 +276,11 @@ func (e *Engine) runNode(ctx context.Context, userID string, st *runState, n *de
 		to := render(cfg.To, env)
 		subject := render(cfg.Subject, env)
 		body := render(cfg.Body, env)
-		if err := e.mail.SendWorkflowMail(ctx, userID, to, subject, body); err != nil {
+		mailboxID := render(cfg.MailboxID, env)
+		if mailboxID == "" {
+			return nil, "", errors.New("workflow: mail action requires mailbox_id")
+		}
+		if err := e.mail.SendWorkflowMail(ctx, userID, mailboxID, to, subject, body); err != nil {
 			return nil, "", err
 		}
 		return map[string]any{"sent": true, "to": to}, "out", nil

@@ -134,7 +134,7 @@ func Build(d Deps) *http.ServeMux {
 	)))
 	// Workflow automation. Status + webhook triggers are public; authoring,
 	// manual runs and run history require a session plus module-enable gating.
-	workflowMod := workflow.New(d.DB.DB, stubState, adminMod.Audit())
+	workflowMod := workflow.New(d.DB.DB, stubState, adminMod.Audit(), mailMod)
 	workflowMod.RegisterPublicRoutes(mux)
 	workflowSub := http.NewServeMux()
 	workflowMod.RegisterRoutes(workflowSub)

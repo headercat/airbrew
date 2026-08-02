@@ -24,10 +24,10 @@ type Module struct {
 	scheduler *trigger.Scheduler
 }
 
-func New(db *sql.DB, state *modules.State, auditSvc *audit.Service) *Module {
+func New(db *sql.DB, state *modules.State, auditSvc *audit.Service, mailer wfexec.MailSender) *Module {
 	repo := run.NewRepository(db)
 	svc := run.NewService(repo, auditSvc)
-	engine := wfexec.New(svc, nil)
+	engine := wfexec.New(svc, mailer)
 	return &Module{
 		state: state, svc: svc, engine: engine,
 		h:         handler.New(svc, engine),

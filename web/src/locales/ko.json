@@ -238,12 +238,20 @@
       "title": "감사 로그",
       "description": "관리 작업과 인증 이벤트의 추가 전용 기록입니다.",
       "filterPlaceholder": "이벤트 유형으로 필터 (예: user.created)…",
+      "actorPlaceholder": "실행자 사용자 ID",
+      "targetTypePlaceholder": "대상 유형",
+      "targetIDPlaceholder": "대상 ID",
+      "from": "시작",
+      "to": "종료",
       "noEntries": "감사 항목이 없습니다.",
       "colEvent": "이벤트",
       "colActor": "실행자",
       "colTarget": "대상",
       "colIP": "IP",
-      "colTime": "시간"
+      "colTime": "시간",
+      "pageSummary": "전체 {{total}}건 중 {{start}}-{{end}}",
+      "previousPage": "이전",
+      "nextPage": "다음"
     },
     "permissions": {
       "title": "권한",

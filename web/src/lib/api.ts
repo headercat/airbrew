@@ -59,11 +59,13 @@ export type AdminDashboard = {
 export type AuditEntry = {
   id: string;
   actor_user_id: string;
+  actor_client_id: string;
   actor_email: string;
   event_type: string;
   target_type: string;
   target_id: string;
   ip_address: string;
+  user_agent: string;
   metadata: string;
   created_at: string;
 };

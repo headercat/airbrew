@@ -238,12 +238,20 @@
       "title": "Audit Log",
       "description": "Append-only record of admin actions and auth events.",
       "filterPlaceholder": "Filter by event type (e.g. user.created)…",
+      "actorPlaceholder": "Actor user ID",
+      "targetTypePlaceholder": "Target type",
+      "targetIDPlaceholder": "Target ID",
+      "from": "From",
+      "to": "To",
       "noEntries": "No audit entries found.",
       "colEvent": "Event",
       "colActor": "Actor",
       "colTarget": "Target",
       "colIP": "IP",
-      "colTime": "Time"
+      "colTime": "Time",
+      "pageSummary": "{{start}}-{{end}} of {{total}} entries",
+      "previousPage": "Previous",
+      "nextPage": "Next"
     },
     "permissions": {
       "title": "Permissions",

@@ -15,6 +15,7 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
+	"mime/quotedprintable"
 	"net/mail"
 	"net/textproto"
 	"strings"
@@ -91,19 +92,19 @@ func UnmarshalAddresses(s string) []Address {
 // transport; SMTP/SES use Raw (built by BuildRFC822) while HTTP APIs map the
 // fields onto their JSON payloads.
 type Outgoing struct {
-	From       Address
-	To         []Address
-	Cc         []Address
-	Bcc        []Address
-	ReplyTo    []Address
-	Subject    string
-	Text       string
-	HTML       string
-	MessageID  string // generated if empty
-	InReplyTo  string
-	References []string
+	From        Address
+	To          []Address
+	Cc          []Address
+	Bcc         []Address
+	ReplyTo     []Address
+	Subject     string
+	Text        string
+	HTML        string
+	MessageID   string // generated if empty
+	InReplyTo   string
+	References  []string
 	Attachments []Attachment
-	Headers    textproto.MIMEHeader // extra headers (attachments, custom)
+	Headers     textproto.MIMEHeader // extra headers (attachments, custom)
 }
 
 // Attachment is one file to attach to an outbound message. Data is the raw
@@ -309,17 +310,17 @@ func randHex(n int) string {
 // ParsedMessage is the result of parsing a raw RFC822 message into the fields
 // the inbox stores.
 type ParsedMessage struct {
-	MessageID string
-	Subject   string
-	From      []Address
-	To        []Address
-	Cc        []Address
-	Bcc       []Address
-	ReplyTo   []Address
-	Date      time.Time
-	References []string // normalized RFC5322 References list
-	Text      string
-	HTML      string
+	MessageID   string
+	Subject     string
+	From        []Address
+	To          []Address
+	Cc          []Address
+	Bcc         []Address
+	ReplyTo     []Address
+	Date        time.Time
+	References  []string // normalized RFC5322 References list
+	Text        string
+	HTML        string
 	Attachments []ParsedAttachment
 }
 
@@ -397,7 +398,7 @@ func extract(h mail.Header, body io.Reader) (text, html string, atts []ParsedAtt
 	}
 	if !strings.HasPrefix(mediatype, "multipart/") {
 		// Leaf at top level: text/plain, text/html, or a single attachment.
-		data, rerr := readDecoded(body)
+		data, rerr := readDecoded(body, h.Get("Content-Transfer-Encoding"))
 		if rerr != nil {
 			return "", "", nil, rerr
 		}
@@ -496,12 +497,12 @@ func dispositionOf(hdr textproto.MIMEHeader) string {
 	return "attachment"
 }
 
-func readDecoded(body io.Reader) (string, error) {
+func readDecoded(body io.Reader, cte string) (string, error) {
 	b, err := io.ReadAll(body)
 	if err != nil {
 		return "", err
 	}
-	return string(b), nil
+	return decodeCTE(b, cte), nil
 }
 
 // decodeCTE reverses common Content-Transfer-Encodings.
@@ -521,23 +522,11 @@ func decodeCTE(b []byte, cte string) string {
 }
 
 func decodeQP(b []byte) string {
-	var buf bytes.Buffer
-	for i := 0; i < len(b); i++ {
-		c := b[i]
-		if c == '=' {
-			if i+2 < len(b) {
-				var v byte
-				_, err := fmt.Sscanf(string(b[i+1:i+3]), "%02X", &v)
-				if err == nil {
-					buf.WriteByte(v)
-					i += 2
-					continue
-				}
-			}
-		}
-		buf.WriteByte(c)
+	out, err := io.ReadAll(quotedprintable.NewReader(bytes.NewReader(b)))
+	if err != nil {
+		return string(b)
 	}
-	return buf.String()
+	return string(out)
 }
 
 // decodeHeader decodes an RFC2047-encoded header value.
@@ -585,4 +574,3 @@ func ThreadKey(messageID, inReplyTo string, references []string) string {
 	}
 	return strings.ToLower(strings.Trim(messageID, "<> "))
 }
-

@@ -44,7 +44,7 @@ export const MODULES: ModuleMeta[] = [
     descriptionKey: "dashboard.modules.mail.description",
     icon: Mailbox,
     path: "/mail",
-    status: "not_implemented",
+    status: "alpha",
   },
   {
     key: "drive",
@@ -60,7 +60,7 @@ export const MODULES: ModuleMeta[] = [
     descriptionKey: "dashboard.modules.contacts.description",
     icon: Contact,
     path: "/contacts",
-    status: "not_implemented",
+    status: "alpha",
   },
   {
     key: "chat",
@@ -118,7 +118,6 @@ export const NAV_TREE: NavNode[] = [
     labelKey: "dashboard.modules.mail.label",
     to: "/mail",
     icon: Mailbox,
-    badge: "planned",
     children: [
       { labelKey: "nav.mail.inbox", to: "/mail", icon: Inbox },
       { labelKey: "nav.mail.sent", to: "/mail?box=sent", icon: Send },
@@ -140,7 +139,6 @@ export const NAV_TREE: NavNode[] = [
     labelKey: "dashboard.modules.contacts.label",
     to: "/contacts",
     icon: Contact,
-    badge: "planned",
     children: [
       { labelKey: "nav.contacts.all", to: "/contacts", icon: Contact },
       {

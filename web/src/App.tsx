@@ -1,7 +1,11 @@
 import { Outlet, Routes, Route } from "react-router-dom";
 
 import { AppLayout } from "@/components/layout/app-layout";
-import { RedirectIfSignedIn, RequireAdmin, RequireAuth } from "@/components/auth-route";
+import {
+  RedirectIfSignedIn,
+  RequireAdmin,
+  RequireAuth,
+} from "@/components/auth-route";
 import AdminLayout from "@/pages/admin";
 import AdminOverview from "@/pages/admin/overview";
 import AdminUsers from "@/pages/admin/users";
@@ -13,10 +17,12 @@ import AdminBranding from "@/pages/admin/branding";
 import AdminOAuth from "@/pages/admin/oauth";
 import AdminSystem from "@/pages/admin/system";
 import AdminAI from "@/pages/admin/ai";
+import ContactsPage from "@/pages/contacts";
 import DashboardPage from "@/pages/dashboard";
 import DrivePage from "@/pages/drive";
 import DriveSharePage from "@/pages/drive/share";
 import LoginPage from "@/pages/login";
+import MailPage from "@/pages/mail";
 import ModuleStubPage from "@/pages/module-stub";
 import NotFoundPage from "@/pages/not-found";
 import PasswordsPage from "@/pages/passwords";
@@ -60,7 +66,14 @@ export default function App() {
         <Route path="/profile" element={<ProfilePage />} />
 
         {/* Admin — nested layout with grouped sidebar */}
-        <Route path="/admin" element={<RequireAdmin><AdminLayout /></RequireAdmin>}>
+        <Route
+          path="/admin"
+          element={
+            <RequireAdmin>
+              <AdminLayout />
+            </RequireAdmin>
+          }
+        >
           <Route index element={<AdminOverview />} />
           <Route path="users" element={<AdminUsers />} />
           <Route path="modules" element={<AdminModules />} />
@@ -79,6 +92,9 @@ export default function App() {
         <Route path="/ai" element={<AIPage />} />
         <Route path="/ai/:id" element={<AIPage />} />
 
+        {/* Mail — mailbox folders, reading, composing, and attachments. */}
+        <Route path="/mail" element={<MailPage />} />
+
         {/* Password vault — shared VaultProvider so unlock state persists
             across the list and editor routes. */}
         <Route path="/passwords" element={<VaultLayout />}>
@@ -90,6 +106,9 @@ export default function App() {
 
         {/* Drive — file storage with folders, shares, trash. */}
         <Route path="/drive" element={<DrivePage />} />
+
+        {/* Contacts — address book with groups and vCard import/export. */}
+        <Route path="/contacts" element={<ContactsPage />} />
 
         <Route path="/:module" element={<ModuleStubPage />} />
       </Route>

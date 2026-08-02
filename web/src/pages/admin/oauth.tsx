@@ -7,6 +7,7 @@ import {
   KeyRound,
   Lock,
   Plus,
+  RotateCcw,
   Save,
   Trash2,
   X,
@@ -279,6 +280,7 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(clientId));
   const [saving, setSaving] = useState(false);
+  const [rotatingSecret, setRotatingSecret] = useState(false);
   const [createdSecret, setCreatedSecret] = useState<CreatedSecret | null>(
     () => locationState?.createdSecret ?? null,
   );
@@ -385,6 +387,38 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
       setError(
         isApiError(err) ? (err.error_description ?? err.error) : "error",
       );
+    }
+  }
+
+  async function rotateSecret() {
+    if (!clientId || !client) return;
+    if (!confirm(t("admin.oauth.confirmRotateSecret", { name: form.name })))
+      return;
+    setRotatingSecret(true);
+    setError(null);
+    try {
+      const res = await api.post<{ client_secret: string }>(
+        `/api/admin/oauth/clients/${clientId}/secret`,
+      );
+      setCreatedSecret({
+        client_id: client.client_id,
+        client_secret: res.client_secret,
+      });
+      navigate(location.pathname, {
+        replace: true,
+        state: {
+          createdSecret: {
+            client_id: client.client_id,
+            client_secret: res.client_secret,
+          },
+        },
+      });
+    } catch (err) {
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : "error",
+      );
+    } finally {
+      setRotatingSecret(false);
     }
   }
 
@@ -537,14 +571,33 @@ function OAuthClientSettings({ clientId }: { clientId?: string }) {
                       />
                     )}
                     <div className="rounded-md border border-border p-3">
-                      <p className="text-sm font-medium">
-                        {t("admin.oauth.quickStartTitle")}
-                      </p>
-                      <ol className="mt-2 space-y-1 pl-4 text-xs leading-5 text-muted-foreground">
-                        <li>{t("admin.oauth.quickStartStep1")}</li>
-                        <li>{t("admin.oauth.quickStartStep2")}</li>
-                        <li>{t("admin.oauth.quickStartStep3")}</li>
-                      </ol>
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-sm font-medium">
+                            {t("admin.oauth.quickStartTitle")}
+                          </p>
+                          <ol className="mt-2 space-y-1 pl-4 text-xs leading-5 text-muted-foreground">
+                            <li>{t("admin.oauth.quickStartStep1")}</li>
+                            <li>{t("admin.oauth.quickStartStep2")}</li>
+                            <li>{t("admin.oauth.quickStartStep3")}</li>
+                          </ol>
+                        </div>
+                        {client.client_type === "confidential" && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            disabled={rotatingSecret}
+                            onClick={rotateSecret}
+                          >
+                            <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                            {rotatingSecret
+                              ? t("admin.oauth.rotatingSecret")
+                              : t("admin.oauth.rotateSecret")}
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </section>

@@ -51,6 +51,7 @@ export type SyncResponse = {
   cursor: number;
   folders: VaultFolder[];
   items: VaultItem[];
+  has_more?: boolean;
 };
 
 export type EnvelopeInput = {
@@ -106,8 +107,10 @@ export function rotateKeys(input: EnvelopeInput): Promise<{ ok: true }> {
   return api.post("/api/vault/keys/rotate", input);
 }
 
-export function sync(since: number): Promise<SyncResponse> {
-  return api.get<SyncResponse>(`/api/vault/sync?since=${since}`);
+export function sync(since: number, limit = 500): Promise<SyncResponse> {
+  return api.get<SyncResponse>(
+    `/api/vault/sync?since=${since}&limit=${limit}`,
+  );
 }
 
 export function createItem(input: ItemInput): Promise<VaultItem> {
@@ -215,3 +218,55 @@ export async function uploadAttachment(
   }
   return body as AttachmentMeta;
 }
+
+// ---- item history ----
+
+export type ItemRevision = {
+  id: string;
+  name_cipher: string;
+  name_nonce: string;
+  data_cipher: string;
+  data_nonce: string;
+  revision: number;
+  created_at: string;
+};
+
+export function listRevisions(itemId: string): Promise<ItemRevision[]> {
+  return api
+    .get<{ revisions: ItemRevision[] }>(
+      `/api/vault/items/${itemId}/revisions`,
+    )
+    .then((r) => r.revisions ?? []);
+}
+
+export function restoreRevision(
+  itemId: string,
+  revId: string,
+  ifRevision: number,
+): Promise<VaultItem> {
+  return api.post<VaultItem>(
+    `/api/vault/items/${itemId}/revisions/${revId}/restore?if_revision=${ifRevision}`,
+  );
+}
+
+// ---- export / import ----
+
+export type ExportBundle = {
+  envelope: Envelope;
+  folders: VaultFolder[];
+  items: VaultItem[];
+};
+
+export function exportVault(): Promise<ExportBundle> {
+  return api.get<ExportBundle>("/api/vault/export");
+}
+
+export type ImportCounts = { folders: number; items: number };
+
+export function importVault(
+  folders: { name_cipher: string; name_nonce: string }[],
+  items: ItemInput[],
+): Promise<ImportCounts> {
+  return api.post<ImportCounts>("/api/vault/import", { folders, items });
+}
+

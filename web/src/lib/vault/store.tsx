@@ -283,6 +283,17 @@ type VaultContextValue = {
     itemId: string,
     att: Attachment,
   ) => Promise<{ blob: Blob; name: string }>;
+  // verifyMasterPassword re-derives the master key from the stored envelope and
+  // a supplied password, decrypts the wrapped vault key, and reports whether it
+  // matches the key currently in memory. Used by the "reprompt" feature so a
+  // sensitive item is only revealed after re-entering the master password.
+  verifyMasterPassword: (password: string) => Promise<boolean>;
+  // exportBundle / importBundle wrap the encrypted backup/restore endpoints.
+  exportBundle: () => Promise<VApi.ExportBundle>;
+  importBundle: (
+    folders: { name_cipher: string; name_nonce: string }[],
+    items: VApi.ItemInput[],
+  ) => Promise<VApi.ImportCounts>;
 };
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -299,45 +310,88 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const keyRef = useRef<Uint8Array | null>(null);
   const envelopeRef = useRef<Envelope | null>(null);
 
-  // Full sync from the server, decrypt, and merge into local state.
+  // cursorRef / itemsRef mirror the state so syncAndDecrypt can read the
+  // current values synchronously without closing over stale React state (the
+  // previous version captured `cursor`/`items` in its useCallback deps and
+  // used a stale copy when called right after a setState in the same tick,
+  // e.g. on unlock). They are always updated together with their state.
+  const cursorRef = useRef(0);
+  const itemsRef = useRef<DecryptedItem[]>([]);
+
+  // zeroize wipes a key buffer in place. JS GC is not immediate, but filling
+  // the backing ArrayBuffer with zeros is the best-effort mitigation available
+  // and removes the key from reachable memory as soon as the vault locks.
+  function zeroize(buf: Uint8Array | null) {
+    if (buf && buf.buffer instanceof ArrayBuffer) {
+      try {
+        new Uint8Array(buf.buffer).fill(0);
+      } catch {
+        /* detached/shared buffer — nothing to do */
+      }
+    }
+  }
+
+  const commitItems = useCallback((next: DecryptedItem[]) => {
+    itemsRef.current = next;
+    setItems(next);
+  }, []);
+  const commitCursor = useCallback((next: number) => {
+    cursorRef.current = next;
+    setCursor(next);
+  }, []);
+
+  // Full/delta sync from the server, decrypt, and merge into local state.
+  // Loops on has_more so a large vault streams in bounded pages. Reads inputs
+  // from refs so it is safe to call immediately after a state reset.
   const syncAndDecrypt = useCallback(async () => {
     const key = keyRef.current;
     if (!key) return;
-    const res = await VApi.sync(cursor);
-    const byId = new Map(items.map((it) => [it.id, it]));
-    for (const raw of res.items) {
-      if (raw.deleted_at) {
-        byId.delete(raw.id);
-        continue;
-      }
-      byId.set(raw.id, await decryptItem(key, raw));
-    }
-    const next = Array.from(byId.values()).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
-    setItems(next);
-
-    if (res.folders.length) {
-      const decFolders: DecryptedFolder[] = [];
-      for (const f of res.folders) {
-        if (f.deleted_at) continue;
-        try {
-          const name = await decryptString(key, f.name_cipher, f.name_nonce);
-          decFolders.push({ id: f.id, name, revision: f.revision });
-        } catch {
-          decFolders.push({ id: f.id, name: "•••", revision: f.revision });
+    let since = cursorRef.current;
+    const folderMap = new Map(foldersRef.current.map((f) => [f.id, f]));
+    const byId = new Map(itemsRef.current.map((it) => [it.id, it]));
+    let changed = false;
+    // Page through all pending changes in this sync run.
+    for (;;) {
+      const res = await VApi.sync(since);
+      for (const raw of res.items) {
+        if (raw.deleted_at) {
+          byId.delete(raw.id);
+        } else {
+          byId.set(raw.id, await decryptItem(key, raw));
         }
       }
-      setFolders((prev) => {
-        const map = new Map(prev.map((f) => [f.id, f]));
-        for (const f of decFolders) map.set(f.id, f);
-        return Array.from(map.values()).sort((a, b) =>
-          a.name.localeCompare(b.name),
-        );
-      });
+      for (const f of res.folders) {
+        if (f.deleted_at) {
+          folderMap.delete(f.id);
+          continue;
+        }
+        try {
+          const name = await decryptString(key, f.name_cipher, f.name_nonce);
+          folderMap.set(f.id, { id: f.id, name, revision: f.revision });
+        } catch {
+          folderMap.set(f.id, { id: f.id, name: "•••", revision: f.revision });
+        }
+      }
+      since = res.cursor;
+      if (res.items.length || res.folders.length) changed = true;
+      if (!res.has_more) break;
     }
-    setCursor(res.cursor);
-  }, [cursor, items]);
+    if (changed) {
+      const nextItems = Array.from(byId.values()).sort((a, b) =>
+        a.name.localeCompare(b.name),
+      );
+      const nextFolders = Array.from(folderMap.values()).sort((a, b) =>
+        a.name.localeCompare(b.name),
+      );
+      commitItems(nextItems);
+      foldersRef.current = nextFolders;
+      setFolders(nextFolders);
+    }
+    commitCursor(since);
+  }, [commitItems, commitCursor]);
+
+  // foldersRef mirrors folders state (see cursorRef/itemsRef rationale).
+  const foldersRef = useRef<DecryptedFolder[]>([]);
 
   const bootstrap = useCallback(async () => {
     setError(null);
@@ -386,6 +440,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			version: 1,
 			updated_at: new Date().toISOString(),
 		};
+        cursorRef.current = 0;
+        itemsRef.current = [];
+        foldersRef.current = [];
         setCursor(0);
         setItems([]);
         setFolders([]);
@@ -426,17 +483,23 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         );
         let vaultKey: Uint8Array;
         try {
+          // AES-GCM auth-tag verification is the sole integrity check: a wrong
+          // master password yields a tag mismatch here, surfaced as
+          // WrongMasterPassword. (The derived key is never sent to the server.)
           vaultKey = await decryptBytes(
             masterKey,
             envNow.protected_vault_key,
             envNow.protected_vault_nonce,
           );
         } catch {
+          zeroize(masterKey);
           throw new WrongMasterPassword();
         }
-        // Verify by re-wrapping and comparing — cheap integrity check that the
-        // derived key matches the one used at setup.
+        zeroize(masterKey);
         keyRef.current = vaultKey;
+        cursorRef.current = 0;
+        itemsRef.current = [];
+        foldersRef.current = [];
         setCursor(0);
         setItems([]);
         setFolders([]);
@@ -450,7 +513,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   );
 
   const lock = useCallback(() => {
+    zeroize(keyRef.current);
     keyRef.current = null;
+    itemsRef.current = [];
+    foldersRef.current = [];
+    cursorRef.current = 0;
     setItems([]);
     setFolders([]);
     setCursor(0);
@@ -473,13 +540,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const input = await encryptItemInput(key, draft);
       const raw = await VApi.createItem(input);
       const dec = await decryptItem(key, raw);
-      setItems((prev) =>
-        [...prev, dec].sort((a, b) => a.name.localeCompare(b.name)),
+      const next = [...itemsRef.current, dec].sort((a, b) =>
+        a.name.localeCompare(b.name),
       );
-      setCursor(raw.revision);
+      commitItems(next);
+      commitCursor(raw.revision);
       return dec;
     },
-    [],
+    [commitItems, commitCursor],
   );
 
   const updateItem = useCallback(
@@ -494,23 +562,22 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       input.if_revision = ifRevision;
       const raw = await VApi.updateItem(id, input);
       const dec = await decryptItem(key, raw);
-      setItems((prev) =>
-        prev
-          .map((it) => (it.id === id ? dec : it))
-          .sort((a, b) => a.name.localeCompare(b.name)),
-      );
-      setCursor(raw.revision);
+      const next = itemsRef.current
+        .map((it) => (it.id === id ? dec : it))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      commitItems(next);
+      commitCursor(raw.revision);
       return dec;
     },
-    [],
+    [commitItems, commitCursor],
   );
 
   const deleteItem = useCallback(
     async (id: string, ifRevision: number): Promise<void> => {
       await VApi.deleteItem(id, ifRevision);
-      setItems((prev) => prev.filter((it) => it.id !== id));
+      commitItems(itemsRef.current.filter((it) => it.id !== id));
     },
-    [],
+    [commitItems],
   );
 
   // --- attachments ---
@@ -598,13 +665,64 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // verifyMasterPassword re-derives the master key from the live envelope and
+  // the supplied password, decrypts the wrapped vault key, and checks it byte-
+  // for-byte against the key currently in memory. It is the backing check for
+  // the "reprompt" toggle on sensitive items.
+  const verifyMasterPassword = useCallback(
+    async (password: string): Promise<boolean> => {
+      const env = envelopeRef.current;
+      const live = keyRef.current;
+      if (!env || !live) return false;
+      const params: KdfParams = {
+        memoryKiB: env.kdf_memory_kib,
+        iterations: env.kdf_iterations,
+        parallelism: env.kdf_parallelism,
+      };
+      const masterKey = await deriveMasterKey(password, env.kdf_salt, params);
+      try {
+        const candidate = await decryptBytes(
+          masterKey,
+          env.protected_vault_key,
+          env.protected_vault_nonce,
+        );
+        zeroize(masterKey);
+        if (candidate.length !== live.length) return false;
+        let match = 0;
+        for (let i = 0; i < candidate.length; i++) {
+          match |= candidate[i] ^ live[i];
+        }
+        zeroize(candidate);
+        return match === 0;
+      } catch {
+        zeroize(masterKey);
+        return false;
+      }
+    },
+    [],
+  );
+
+  const exportBundle = useCallback(async () => {
+    return VApi.exportVault();
+  }, []);
+
+  const importBundle = useCallback(
+    async (
+      folders: { name_cipher: string; name_nonce: string }[],
+      items: VApi.ItemInput[],
+    ) => {
+      const counts = await VApi.importVault(folders, items);
+      // Pull the freshly-imported rows into the decrypted cache.
+      await syncAndDecrypt();
+      return counts;
+    },
+    [syncAndDecrypt],
+  );
+
   // Auto-bootstrap on first mount so the page knows which gate to show.
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
-
-  // Best-effort: clear the key if the tab is hidden for a while would be a
-  // future enhancement; for now lock is manual.
 
   const value = useMemo<VaultContextValue>(
     () => ({
@@ -626,6 +744,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       uploadAttachment,
       deleteAttachment,
       downloadAttachment,
+      verifyMasterPassword,
+      exportBundle,
+      importBundle,
     }),
     [
       status,
@@ -646,6 +767,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       uploadAttachment,
       deleteAttachment,
       downloadAttachment,
+      verifyMasterPassword,
+      exportBundle,
+      importBundle,
     ],
   );
 

@@ -58,10 +58,13 @@ export default function PasswordView() {
 
   const item = items.find((it) => it.id === id);
 
-  if (status !== "unlocked") {
-    navigate("/passwords");
-    return null;
-  }
+  // Redirect when the vault is no longer unlocked. Done in an effect (not
+  // during render) so we don't trigger a state update mid-render.
+  useEffect(() => {
+    if (status !== "unlocked") navigate("/passwords");
+  }, [status, navigate]);
+
+  if (status !== "unlocked") return null;
 
   if (!item) {
     return (

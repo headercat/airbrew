@@ -32,9 +32,14 @@ const dec = new TextDecoder();
 
 // ---- encoding helpers ----
 
+// bytesToB64 / b64ToBytes use the native base64 helpers with bulk conversion
+// (faster than the previous per-byte charCode loop on large attachment blobs).
 export function bytesToB64(bytes: Uint8Array): string {
   let bin = "";
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  const chunk = 0x8000; // btoa accepts at most 8192 chars per call
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
   return btoa(bin);
 }
 
@@ -48,7 +53,7 @@ export function b64ToBytes(b64: string): Uint8Array {
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(hex.substr(i * 2, 2), 16);
+    out[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
   }
   return out;
 }
@@ -61,15 +66,61 @@ export function randomBytes(n: number): Uint8Array {
 
 // ---- key derivation ----
 
+// Worker singleton (lazily created). The worker keeps the heavy Argon2id pass
+// off the main thread so unlock doesn't freeze the UI. We fall back to an
+// in-line argon2id call if the worker can't be created (e.g. CSP / tests).
+let kdfWorker: Worker | null = null;
+let nextKdfId = 1;
+
+function getKdfWorker(): Worker | null {
+  if (kdfWorker) return kdfWorker;
+  try {
+    kdfWorker = new Worker(new URL("./kdf.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    return kdfWorker;
+  } catch {
+    return null;
+  }
+}
+
 // deriveMasterKey runs Argon2id over the master password with the per-user
 // salt and params, returning a 32-byte key. The result never leaves memory
-// and is never sent to the server.
+// and is never sent to the server. Runs in a Web Worker when available.
 export async function deriveMasterKey(
   password: string,
   saltB64: string,
   params: KdfParams,
 ): Promise<Uint8Array> {
   const salt = b64ToBytes(saltB64);
+  const worker = getKdfWorker();
+  if (worker) {
+    const id = nextKdfId++;
+    // Copy the salt so it is backed by a transferable buffer.
+    const saltCopy = new Uint8Array(salt);
+    return new Promise<Uint8Array>((resolve, reject) => {
+      const onMessage = (e: MessageEvent) => {
+        const msg = e.data as { id: number; ok: boolean; hex?: string; error?: string };
+        if (msg.id !== id) return;
+        worker.removeEventListener("message", onMessage);
+        if (msg.ok && msg.hex) resolve(hexToBytes(msg.hex));
+        else reject(new Error(msg.error ?? "kdf worker failed"));
+      };
+      worker.addEventListener("message", onMessage);
+      worker.postMessage(
+        {
+          id,
+          password,
+          salt: saltCopy,
+          memoryKiB: params.memoryKiB,
+          iterations: params.iterations,
+          parallelism: params.parallelism,
+        },
+        [saltCopy.buffer],
+      );
+    });
+  }
+  // Fallback (no worker available): run inline.
   const hex = await argon2id({
     password,
     salt,
@@ -87,6 +138,30 @@ export function generateVaultKey(): Uint8Array {
 
 export function generateSalt(): string {
   return bytesToB64(randomBytes(16));
+}
+
+// generatePassword produces a cryptographically random password of the given
+// length over alphabet. It uses rejection sampling to avoid the modulo bias of
+// "buf[i] % alphabet.length": values >= the largest multiple of the alphabet
+// size are discarded and re-rolled, so every character is uniformly chosen.
+const PASSWORD_ALPHABET =
+  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*";
+
+export function generatePassword(len = 20, alphabet = PASSWORD_ALPHABET): string {
+  const max = Math.floor(0xffffffff / alphabet.length) * alphabet.length;
+  const buf32 = new Uint32Array(len);
+  let out = "";
+  for (let i = 0; i < len; ) {
+    crypto.getRandomValues(buf32);
+    for (let j = 0; j < buf32.length && i < len; j++) {
+      const r = buf32[j];
+      if (r < max) {
+        out += alphabet[r % alphabet.length];
+        i++;
+      }
+    }
+  }
+  return out;
 }
 
 // ---- AES-256-GCM via WebCrypto ----

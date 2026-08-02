@@ -33,6 +33,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader, PageWrapper } from "@/components/page";
 import { isApiError } from "@/lib/api";
 import { isConflict } from "@/lib/vault/api";
+import { generatePassword } from "@/lib/vault/crypto";
 import {
   newField,
   PRESETS,
@@ -46,17 +47,6 @@ import { AttachmentsCard } from "./attachments";
 
 const TYPES: VaultItemType[] = ["login", "secure_note", "card", "identity"];
 const KINDS: FieldKind[] = ["text", "password", "totp", "url", "multiline"];
-
-const PW_ALPHABET =
-  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*";
-
-function generatePassword(len = 20): string {
-  const buf = new Uint32Array(len);
-  crypto.getRandomValues(buf);
-  let out = "";
-  for (let i = 0; i < len; i++) out += PW_ALPHABET[buf[i] % PW_ALPHABET.length];
-  return out;
-}
 
 function clonePreset(type: VaultItemType): Field[] {
   return PRESETS[type].map((f) => newField(f.kind, f.name));
@@ -94,10 +84,13 @@ export default function PasswordEditor() {
     setReprompt(existing.reprompt);
   }, [existing]);
 
-  if (status !== "unlocked") {
-    navigate("/passwords");
-    return null;
-  }
+  // Redirect when the vault is no longer unlocked. Done in an effect (not
+  // during render) to avoid a state update mid-render.
+  useEffect(() => {
+    if (status !== "unlocked") navigate("/passwords");
+  }, [status, navigate]);
+
+  if (status !== "unlocked") return null;
 
   if (isEdit && !existing) {
     return (

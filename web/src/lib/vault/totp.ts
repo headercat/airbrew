@@ -29,15 +29,17 @@ export function parseSecret(raw: string): string {
 }
 
 // base32Decode decodes RFC 4648 base32 (no padding required), ignoring spaces
-// and lowercase. Invalid characters are skipped.
-export function base32Decode(input: string): Uint8Array {
+// and lowercase. Unlike a lenient decoder it returns null when the input
+// contains characters outside the base32 alphabet, so the UI can report an
+// invalid secret instead of silently deriving the wrong code.
+export function base32Decode(input: string): Uint8Array | null {
   const clean = input.replace(/\s/g, "").toUpperCase().replace(/=+$/, "");
   const out: number[] = [];
   let buf = 0;
   let bits = 0;
   for (const ch of clean) {
     const v = BASE32_ALPHABET.indexOf(ch);
-    if (v < 0) continue;
+    if (v < 0) return null;
     buf = (buf << 5) | v;
     bits += 5;
     if (bits >= 8) {
@@ -59,8 +61,8 @@ export async function generateTotp(
   digits = 6,
 ): Promise<TotpCode> {
   const keyBytes = base32Decode(parseSecret(secret));
-  if (keyBytes.length === 0) {
-    throw new Error("totp: empty or invalid secret");
+  if (!keyBytes || keyBytes.length === 0) {
+    throw new Error("totp: empty or invalid base32 secret");
   }
   const counter = Math.floor(at / 1000 / period);
   // 64-bit big-endian counter; counter fits in 32 bits until 2106.

@@ -1,5 +1,9 @@
 import { isApiError } from "@/lib/api";
-import type { ContactPayload, ContactRecord } from "@/lib/contacts";
+import type {
+  ContactPayload,
+  ContactRecord,
+  ContactValue,
+} from "@/lib/contacts";
 
 export type ContactFormState = {
   displayName: string;
@@ -9,10 +13,8 @@ export type ContactFormState = {
   company: string;
   title: string;
   department: string;
-  email: string;
-  emailType: string;
-  phone: string;
-  phoneType: string;
+  emails: ContactValue[];
+  phones: ContactValue[];
   birthday: string;
   notes: string;
   isFavorite: boolean;
@@ -27,10 +29,8 @@ export const blankForm: ContactFormState = {
   company: "",
   title: "",
   department: "",
-  email: "",
-  emailType: "work",
-  phone: "",
-  phoneType: "mobile",
+  emails: [{ value: "", type: "work" }],
+  phones: [{ value: "", type: "mobile" }],
   birthday: "",
   notes: "",
   isFavorite: false,
@@ -47,10 +47,12 @@ export function contactToForm(contact: ContactRecord | null): ContactFormState {
     company: contact.company,
     title: contact.title,
     department: contact.department,
-    email: contact.emails[0]?.value ?? "",
-    emailType: contact.emails[0]?.type ?? "work",
-    phone: contact.phones[0]?.value ?? "",
-    phoneType: contact.phones[0]?.type ?? "mobile",
+    emails: contact.emails.length
+      ? contact.emails
+      : [{ value: "", type: "work" }],
+    phones: contact.phones.length
+      ? contact.phones
+      : [{ value: "", type: "mobile" }],
     birthday: contact.birthday ?? "",
     notes: contact.notes,
     isFavorite: contact.is_favorite,
@@ -67,13 +69,22 @@ export function formToPayload(form: ContactFormState): ContactPayload {
     company: form.company,
     title: form.title,
     department: form.department,
-    emails: form.email ? [{ value: form.email, type: form.emailType }] : [],
-    phones: form.phone ? [{ value: form.phone, type: form.phoneType }] : [],
+    emails: cleanValues(form.emails),
+    phones: cleanValues(form.phones),
     birthday: form.birthday,
     notes: form.notes,
     is_favorite: form.isFavorite,
     group_ids: form.groupIDs,
   };
+}
+
+function cleanValues(values: ContactValue[]) {
+  return values
+    .map((item) => ({
+      value: item.value.trim(),
+      type: item.type?.trim() || undefined,
+    }))
+    .filter((item) => item.value);
 }
 
 export function emptyContact(): ContactRecord {

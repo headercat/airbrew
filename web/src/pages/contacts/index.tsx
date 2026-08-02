@@ -38,6 +38,7 @@ import {
   type ContactGroup,
   type ContactPayload,
   type ContactRecord,
+  type ContactValue,
 } from "@/lib/contacts";
 import { cn } from "@/lib/utils";
 import {
@@ -698,31 +699,18 @@ function ContactEditor({
               onChange={(e) => set("title", e.target.value)}
             />
           </Field>
-          <Field label="이메일">
-            <div className="grid grid-cols-[1fr_96px] gap-2">
-              <Input
-                value={form.email}
-                onChange={(e) => set("email", e.target.value)}
-                placeholder="name@example.com"
-              />
-              <Input
-                value={form.emailType}
-                onChange={(e) => set("emailType", e.target.value)}
-              />
-            </div>
-          </Field>
-          <Field label="전화">
-            <div className="grid grid-cols-[1fr_96px] gap-2">
-              <Input
-                value={form.phone}
-                onChange={(e) => set("phone", e.target.value)}
-              />
-              <Input
-                value={form.phoneType}
-                onChange={(e) => set("phoneType", e.target.value)}
-              />
-            </div>
-          </Field>
+          <ValueListEditor
+            label="이메일"
+            placeholder="name@example.com"
+            values={form.emails}
+            onChange={(values) => set("emails", values)}
+          />
+          <ValueListEditor
+            label="전화"
+            placeholder="+82 10 0000 0000"
+            values={form.phones}
+            onChange={(values) => set("phones", values)}
+          />
           <Field label="생일">
             <Input
               type="date"
@@ -892,6 +880,72 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     <div className="space-y-2">
       <Label>{label}</Label>
       {children}
+    </div>
+  );
+}
+
+function ValueListEditor({
+  label,
+  placeholder,
+  values,
+  onChange,
+}: {
+  label: string;
+  placeholder: string;
+  values: ContactValue[];
+  onChange: (values: ContactValue[]) => void;
+}) {
+  const rows = values.length ? values : [{ value: "", type: "" }];
+
+  function update(index: number, patch: Partial<ContactValue>) {
+    onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  }
+
+  function remove(index: number) {
+    const next = rows.filter((_, i) => i !== index);
+    onChange(next.length ? next : [{ value: "", type: "" }]);
+  }
+
+  return (
+    <div className="space-y-2 sm:col-span-2">
+      <div className="flex items-center justify-between">
+        <Label>{label}</Label>
+        <button
+          type="button"
+          className="rounded p-1 text-muted-foreground hover:bg-accent"
+          onClick={() => onChange([...rows, { value: "", type: "" }])}
+          aria-label={`${label} 추가`}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="space-y-2">
+        {rows.map((row, index) => (
+          <div key={index} className="grid grid-cols-[1fr_96px_32px] gap-2">
+            <Input
+              value={row.value}
+              onChange={(e) => update(index, { value: e.target.value })}
+              placeholder={placeholder}
+            />
+            <Input
+              value={row.type ?? ""}
+              onChange={(e) => update(index, { type: e.target.value })}
+              placeholder="type"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-10 w-8"
+              onClick={() => remove(index)}
+              disabled={rows.length === 1 && !row.value}
+              aria-label={`${label} 삭제`}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

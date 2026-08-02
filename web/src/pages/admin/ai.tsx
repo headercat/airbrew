@@ -356,7 +356,7 @@ function AgentsSection() {
                     onClick={() => setEditing(a)}
                     className="text-xs text-primary hover:underline"
                   >
-                    {t("common.save") === "Save" ? "Edit" : "편집"}
+                    {t("common.edit")}
                   </button>
                   {!a.is_builtin && (
                     <button

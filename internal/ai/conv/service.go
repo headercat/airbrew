@@ -92,6 +92,11 @@ func (s *Service) Delete(ctx context.Context, userID, id string) error {
 	return s.repo.SoftDelete(ctx, userID, id)
 }
 
+// SetTitle renames a conversation (ownership-scoped).
+func (s *Service) SetTitle(ctx context.Context, userID, id, title string) error {
+	return s.repo.SetTitle(ctx, userID, id, strings.TrimSpace(title))
+}
+
 // AppendUserMessage records a user turn and returns the inserted row.
 func (s *Service) AppendUserMessage(ctx context.Context, userID, conversationID, content string) (Message, error) {
 	content = strings.TrimSpace(content)

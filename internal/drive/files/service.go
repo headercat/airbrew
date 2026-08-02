@@ -203,6 +203,11 @@ func (s *Service) Get(ctx context.Context, userID, id string) (*Node, error) {
 	return s.repo.GetNode(ctx, userID, id)
 }
 
+// GetPath returns the ancestor chain root→node for breadcrumb rendering.
+func (s *Service) GetPath(ctx context.Context, userID, id string) ([]*Node, error) {
+	return s.repo.GetPath(ctx, userID, id)
+}
+
 // List returns nodes matching the filter.
 func (s *Service) List(ctx context.Context, f ListFilter) ([]*Node, error) {
 	return s.repo.ListNodes(ctx, f)

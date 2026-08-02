@@ -125,7 +125,7 @@ export default function DrivePage() {
     void refresh();
   }, [refresh]);
 
-  // Breadcrumbs: rebuild when parent changes.
+  // Breadcrumbs: rebuild when parent changes, in a single round trip.
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -134,14 +134,9 @@ export default function DrivePage() {
         return;
       }
       try {
-        const chain: Crumb[] = [];
-        let id = parent;
-        while (id && alive) {
-          const n = await drive.get(id);
-          chain.unshift({ id: n.id, name: n.name });
-          id = n.parent_id;
-        }
-        if (alive) setCrumbs(chain);
+        const res = await drive.path(parent);
+        if (!alive) return;
+        setCrumbs((res.nodes ?? []).map((n) => ({ id: n.id, name: n.name })));
       } catch {
         if (alive) setCrumbs([]);
       }

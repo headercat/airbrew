@@ -51,6 +51,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		respondErr(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, inbox.ErrAddressTaken):
 		respondErr(w, http.StatusConflict, "address_taken", err.Error())
+	case errors.Is(err, inbox.ErrDuplicate):
+		respondErr(w, http.StatusConflict, "duplicate", err.Error())
 	case errors.Is(err, inbox.ErrInvalidInput), errors.Is(err, provider.ErrInvalidInput):
 		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
 	case errors.Is(err, inbox.ErrNoOutbound), errors.Is(err, provider.ErrNoActive):

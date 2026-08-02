@@ -38,6 +38,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/drive/folders", h.createFolder)
 
 	mux.HandleFunc("GET /api/drive/files/{id}", h.getFile)
+	mux.HandleFunc("GET /api/drive/files/{id}/path", h.getPath)
 	mux.HandleFunc("PATCH /api/drive/files/{id}", h.patchFile)
 	mux.HandleFunc("DELETE /api/drive/files/{id}", h.deleteFile)
 	mux.HandleFunc("POST /api/drive/files/{id}/restore", h.restoreFile)
@@ -293,6 +294,23 @@ func (h *Handler) getFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, toNodeResp(n))
+}
+
+func (h *Handler) getPath(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	chain, err := h.svc.GetPath(r.Context(), sess.UserID, r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	out := make([]nodeResp, 0, len(chain))
+	for _, n := range chain {
+		out = append(out, toNodeResp(n))
+	}
+	jsonResp(w, http.StatusOK, map[string]any{"nodes": out})
 }
 
 type patchFileReq struct {

@@ -457,6 +457,51 @@ func (r *Repository) IsDescendant(ctx context.Context, userID, rootID, maybeDesc
 	return false, nil
 }
 
+// GetPath returns the chain of ancestors from root down to (and including) the
+// node, in one recursive query. Used to render breadcrumbs without N round
+// trips. A trashed node's chain is still resolved so the trash UI can show it.
+func (r *Repository) GetPath(ctx context.Context, userID, id string) ([]*Node, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		WITH RECURSIVE chain(id) AS (
+		  SELECT id FROM drive_nodes WHERE id = ? AND user_id = ?
+		  UNION ALL
+		  SELECT n.id FROM drive_nodes n JOIN chain ON n.id = (SELECT parent_id FROM drive_nodes WHERE id = chain.id)
+		)
+		SELECT `+nodeColumns+` FROM drive_nodes WHERE id IN (SELECT id FROM chain)`,
+		id, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byID := map[string]*Node{}
+	var order []string
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		byID[n.ID] = n
+		order = append(order, n.ID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(byID) == 0 {
+		return nil, ErrNotFound
+	}
+	// Build root→node ordering by walking parent_id up from the target.
+	var chain []*Node
+	cur := byID[id]
+	for cur != nil {
+		chain = append([]*Node{cur}, chain...)
+		if cur.ParentID == "" {
+			break
+		}
+		cur = byID[cur.ParentID]
+	}
+	return chain, nil
+}
+
 // TotalSize returns the summed size of all live files owned by userID.
 func (r *Repository) TotalSize(ctx context.Context, userID string) (int64, error) {
 	var total sql.NullInt64

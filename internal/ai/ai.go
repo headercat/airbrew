@@ -11,6 +11,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -53,8 +54,10 @@ func New(
 	auditSvc *audit.Service,
 ) *Module {
 	var runtime *agent.Runtime
+	var autoTitle func(ctx context.Context, userID, conversationID, userMessage string) (string, error)
 	if resolveProvider != nil {
 		runtime = agent.New(convSvc, tools, resolveProvider)
+		autoTitle = runtime.AutoTitle
 	}
 	return &Module{
 		state:   state,
@@ -62,7 +65,7 @@ func New(
 		conv:    convSvc,
 		agents:  agentsRepo,
 		runtime: runtime,
-		user:    handler.New(convSvc, agentsRepo, runtime, auditSvc),
+		user:    handler.New(convSvc, agentsRepo, runtime, auditSvc).WithAutoTitle(autoTitle),
 		admin:   handler.NewAdmin(provRepo, agentsRepo, auditSvc),
 	}
 }
@@ -116,6 +119,16 @@ func (m *Module) Seed(ctx context.Context) error {
 		defaultModel = cli.Model()
 	}
 	return m.agents.Seed(ctx, agent.DefaultBuiltins(defaultModel))
+}
+
+// AutoTitle generates and stores a title for the named conversation. It
+// is best-effort: errors are swallowed by the caller (the stream
+// handler) so a title-gen failure never breaks chat.
+func (m *Module) AutoTitle(ctx context.Context, userID, conversationID, userMessage string) (string, error) {
+	if m.runtime == nil {
+		return "", errors.New("ai: runtime not configured")
+	}
+	return m.runtime.AutoTitle(ctx, userID, conversationID, userMessage)
 }
 
 // HeartbeatInterval is the keep-alive period for the SSE stream. Exported

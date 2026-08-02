@@ -78,6 +78,52 @@ func New(c *conv.Service, tools *ToolRegistry, resolve func(ctx context.Context)
 	return &Runtime{conv: c, tools: tools, ResolveProvider: resolve, Now: time.Now}
 }
 
+// AutoTitle runs a one-shot non-streaming turn that produces a short
+// title from the user's first message. It is best-effort: any failure
+// (no provider, upstream error, decode error) leaves the conversation
+// title untouched so the SPA can fall back to "Untitled".
+func (rt *Runtime) AutoTitle(ctx context.Context, userID, conversationID, userMessage string) (string, error) {
+	if rt.ResolveProvider == nil {
+		return "", errors.New("no provider resolver")
+	}
+	cli, err := rt.ResolveProvider(ctx)
+	if err != nil {
+		return "", err
+	}
+	prompt := "Generate a concise 3-6 word title for a conversation that " +
+		"begins with the user's message below. Reply with the title only — " +
+		"no quotes, no punctuation, no explanation.\n\nUser: " + userMessage
+	deltas := cli.ChatStream(ctx, provider.Request{
+		Model:    cli.Model(),
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: prompt}},
+		MaxTokens: 24,
+	})
+	var b strings.Builder
+	for d := range deltas {
+		switch d.Kind {
+		case provider.DeltaContent:
+			b.WriteString(d.Content)
+		case provider.DeltaError:
+			return "", d.Err
+		case provider.DeltaDone:
+			// continue to drain
+		}
+	}
+	title := strings.TrimSpace(b.String())
+	// Trim trailing period / quotes the model may add despite instructions.
+	title = strings.Trim(title, "\"'“”.")
+	if len(title) > conv.MaxTitleLen {
+		title = title[:conv.MaxTitleLen]
+	}
+	if title == "" {
+		return "", errors.New("empty title from provider")
+	}
+	if err := rt.conv.SetTitle(ctx, userID, conversationID, title); err != nil {
+		return "", err
+	}
+	return title, nil
+}
+
 // RunInput is one chat request.
 type RunInput struct {
 	UserID         string

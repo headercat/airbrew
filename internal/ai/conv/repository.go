@@ -124,6 +124,26 @@ func (r *Repository) SoftDelete(ctx context.Context, userID, id string) error {
 	return nil
 }
 
+// SetTitle renames a conversation. Empty titles are accepted so the SPA
+// can clear an auto-generated title the user dislikes.
+func (r *Repository) SetTitle(ctx context.Context, userID, id, title string) error {
+	if len(title) > MaxTitleLen {
+		return fmt.Errorf("%w: title too long", ErrInvalidInput)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE ai_conversations SET title = ?, updated_at = ?, revision = revision + 1
+		WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+		title, now, id, userID)
+	if err != nil {
+		return fmt.Errorf("conv: set title: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // BumpRevision increments the per-user sync cursor. Callers invoke it after
 // appending new messages so a separate poll can detect the change.
 func (r *Repository) BumpRevision(ctx context.Context, userID, id string) error {

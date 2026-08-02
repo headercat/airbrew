@@ -71,6 +71,8 @@ export const drive = {
     );
   },
   get: (id: string) => api.get<DriveNode>(`/api/drive/files/${id}`),
+  path: (id: string) =>
+    api.get<{ nodes: DriveNode[] }>(`/api/drive/files/${id}/path`),
   createFolder: (name: string, parent = "") =>
     api.post<DriveNode>("/api/drive/folders", { name, parent_id: parent }),
   upload: (file: File, parent = "", name?: string) => {

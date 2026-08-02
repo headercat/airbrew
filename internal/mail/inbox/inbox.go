@@ -21,6 +21,9 @@ var (
 	ErrAddressTaken = errors.New("inbox: address already taken")
 	// ErrInvalidInput is returned on shape-validation failure.
 	ErrInvalidInput = errors.New("inbox: invalid input")
+	// ErrDuplicate is returned by Ingest when the Message-ID is already stored
+	// in the target mailbox. Callers should treat it as success (idempotent).
+	ErrDuplicate = errors.New("inbox: duplicate message")
 )
 
 // Mailbox is one email address owned by a user.
@@ -50,7 +53,9 @@ type Message struct {
 	MailboxID  string
 	UserID     string
 	MessageID  string
+	ThreadID   string
 	InReplyTo  string
+	References []string
 	Subject    string
 	From       letter.Address
 	To         []letter.Address
@@ -70,6 +75,16 @@ type Message struct {
 	SentAt     *time.Time
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+}
+
+// Thread is a conversation summary: the latest message in the group plus counts.
+type Thread struct {
+	ThreadID    string
+	Subject     string
+	From        letter.Address
+	LastAt      time.Time
+	Count       int
+	UnreadCount int
 }
 
 // NewMailboxInput carries the editable fields for creating a mailbox.

@@ -63,6 +63,10 @@ func (h *WebhookHandler) receive(w http.ResponseWriter, r *http.Request) {
 	}
 	msg, err := h.inbox.Ingest(r.Context(), recipient, raw, time.Now().UTC())
 	if err != nil {
+		if errors.Is(err, inbox.ErrDuplicate) {
+			jsonResp(w, http.StatusOK, map[string]string{"status": "duplicate"})
+			return
+		}
 		if errors.Is(err, inbox.ErrMailboxNotFound) {
 			respondErr(w, http.StatusNotFound, "mailbox_not_found", "no mailbox for recipient")
 			return

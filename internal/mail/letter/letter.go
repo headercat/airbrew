@@ -256,6 +256,7 @@ type ParsedMessage struct {
 	Bcc       []Address
 	ReplyTo   []Address
 	Date      time.Time
+	References []string // normalized RFC5322 References list
 	Text      string
 	HTML      string
 }
@@ -272,13 +273,14 @@ func Parse(raw []byte) (*ParsedMessage, error) {
 	}
 	h := msg.Header
 	out := &ParsedMessage{
-		MessageID: strings.Trim(h.Get("Message-ID"), "<> "),
-		Subject:   decodeHeader(h.Get("Subject")),
-		From:      safeList(decodeHeader(h.Get("From"))),
-		To:        safeList(decodeHeader(h.Get("To"))),
-		Cc:        safeList(decodeHeader(h.Get("Cc"))),
-		Bcc:       safeList(decodeHeader(h.Get("Bcc"))),
-		ReplyTo:   safeList(decodeHeader(h.Get("Reply-To"))),
+		MessageID:  strings.Trim(h.Get("Message-ID"), "<> "),
+		Subject:    decodeHeader(h.Get("Subject")),
+		From:       safeList(decodeHeader(h.Get("From"))),
+		To:         safeList(decodeHeader(h.Get("To"))),
+		Cc:         safeList(decodeHeader(h.Get("Cc"))),
+		Bcc:        safeList(decodeHeader(h.Get("Bcc"))),
+		ReplyTo:    safeList(decodeHeader(h.Get("Reply-To"))),
+		References: parseMsgIDList(h.Get("References"), h.Get("In-Reply-To")),
 	}
 	if d := h.Get("Date"); d != "" {
 		if t, err := mail.ParseDate(d); err == nil {
@@ -425,3 +427,40 @@ func decodeHeader(s string) string {
 	}
 	return out
 }
+
+// parseMsgIDList splits one or more whitespace-separated "<id>" fields (the
+// RFC5322 References header plus an optional In-Reply-To) into a de-duplicated,
+// lowercased, angle-bracket-stripped list in the order they appear.
+func parseMsgIDList(fields ...string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, f := range fields {
+		for _, token := range strings.Fields(f) {
+			id := strings.ToLower(strings.Trim(token, "<>,;"))
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// ThreadKey returns the stable conversation key for a message given its own
+// Message-ID, In-Reply-To and References. The oldest ancestor id wins; a
+// message with no references starts a new thread keyed by its own id.
+func ThreadKey(messageID, inReplyTo string, references []string) string {
+	chain := parseMsgIDList(strings.Join(references, " "), inReplyTo)
+	if len(chain) > 0 {
+		return chain[0]
+	}
+	if messageID == "" {
+		return "no-id"
+	}
+	return strings.ToLower(strings.Trim(messageID, "<> "))
+}
+

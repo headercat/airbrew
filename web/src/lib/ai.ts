@@ -110,6 +110,13 @@ export async function deleteConversation(id: string): Promise<void> {
   await api.del<{ ok: true }>(`/api/ai/conversations/${id}`);
 }
 
+export async function patchConversation(
+  id: string,
+  patch: { title?: string },
+): Promise<Conversation> {
+  return api.patch<Conversation>(`/api/ai/conversations/${id}`, patch);
+}
+
 // ---- Admin API ----
 
 export async function adminListProviders(): Promise<AIProvider[]> {
@@ -180,7 +187,12 @@ export type StreamEvent =
       args: string;
       result: string;
     }
-  | { kind: "done"; message_id?: string; usage?: Usage }
+  | {
+      kind: "done";
+      message_id?: string;
+      title?: string;
+      usage?: Usage;
+    }
   | { kind: "error"; error: { code: string; description: string } };
 
 export type Usage = {
@@ -289,6 +301,7 @@ function parseFrame(frame: string): StreamEvent | null {
       return {
         kind: "done",
         message_id: payload.message_id,
+        title: payload.title,
         usage: payload.usage,
       };
     case "error":

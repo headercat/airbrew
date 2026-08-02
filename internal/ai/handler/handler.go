@@ -44,12 +44,23 @@ type Handler struct {
 	agents   *agent.DefinitionRepo
 	runtime  Runtime
 	audit    *audit.Service
+	// autoTitle is the optional Module hook that generates a short title
+	// after the first user message. nil leaves chat without auto-titles.
+	autoTitle func(ctx context.Context, userID, conversationID, userMessage string) (string, error)
 }
 
 // New builds a Handler. runtime may be nil when providers are not
 // configured; in that case chat returns a friendly 503.
 func New(c *conv.Service, a *agent.DefinitionRepo, rt Runtime, auditSvc *audit.Service) *Handler {
 	return &Handler{conv: c, agents: a, runtime: rt, audit: auditSvc}
+}
+
+// WithAutoTitle wires the Module-level AutoTitle hook. Streams whose
+// conversation has no title yet will trigger a background title
+// generation that emits an extra "title" event when it succeeds.
+func (h *Handler) WithAutoTitle(fn func(ctx context.Context, userID, conversationID, userMessage string) (string, error)) *Handler {
+	h.autoTitle = fn
+	return h
 }
 
 // RegisterUserRoutes mounts the session-protected routes on mux. The
@@ -59,6 +70,7 @@ func (h *Handler) RegisterUserRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ai/conversations", h.listConversations)
 	mux.HandleFunc("POST /api/ai/conversations", h.createConversation)
 	mux.HandleFunc("GET /api/ai/conversations/{id}", h.getConversation)
+	mux.HandleFunc("PATCH /api/ai/conversations/{id}", h.patchConversation)
 	mux.HandleFunc("DELETE /api/ai/conversations/{id}", h.deleteConversation)
 	mux.HandleFunc("POST /api/ai/conversations/{id}/stream", h.stream)
 }
@@ -254,6 +266,37 @@ func (h *Handler) deleteConversation(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+type patchConvReq struct {
+	Title *string `json:"title"`
+}
+
+func (h *Handler) patchConversation(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	var req patchConvReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if req.Title == nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", "no fields to update")
+		return
+	}
+	if err := h.conv.SetTitle(r.Context(), sess.UserID, id, *req.Title); err != nil {
+		writeConvError(w, err)
+		return
+	}
+	c, _, err := h.conv.Get(r.Context(), sess.UserID, id)
+	if err != nil {
+		writeConvError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, toConvResp(c))
+}
+
 // --- stream (SSE chat) ----------------------------------------------------
 
 type streamReq struct {
@@ -311,6 +354,28 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		"agent_id": conv0.AgentID, "streaming": true,
 	})
 
+	// If the conversation is still untitled, fire a background title
+	// generation as soon as the user message has been persisted. The
+	// generated title is emitted as an out-of-band event.
+	needTitle := h.autoTitle != nil && conv0.Title == ""
+	var titleCh chan string
+	if needTitle {
+		titleCh = make(chan string, 1)
+		bgCtx, cancel := context.WithCancel(context.Background())
+		go func() {
+			defer close(titleCh)
+			t, err := h.autoTitle(bgCtx, sess.UserID, id, req.Message)
+			if err != nil {
+				return
+			}
+			select {
+			case titleCh <- t:
+			case <-bgCtx.Done():
+			}
+		}()
+		defer cancel()
+	}
+
 	for ev := range events {
 		switch ev.Kind {
 		case agent.EventMetadata:
@@ -329,6 +394,17 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 			}
 			if ev.Usage != nil {
 				payload["usage"] = ev.Usage
+			}
+			// Drain a pending title result before closing the stream so
+			// the SPA receives the rename atomically with the done event.
+			if titleCh != nil {
+				select {
+				case t := <-titleCh:
+					if t != "" {
+						payload["title"] = t
+					}
+				default:
+				}
 			}
 			_ = sse.Event("done", payload)
 			return

@@ -3,6 +3,7 @@ package inbox
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -102,24 +103,48 @@ func (r *Repository) CreateMessage(ctx context.Context, m *Message) error {
 	if from == "" {
 		from = "{}"
 	}
+	refs, _ := json.Marshal(m.References)
+	if m.ThreadID == "" {
+		m.ThreadID = letter.ThreadKey(m.MessageID, m.InReplyTo, m.References)
+	}
 	if _, err := r.db.ExecContext(ctx, `
 		INSERT INTO mail_messages
-		  (id, mailbox_id, user_id, message_id, in_reply_to, subject,
+		  (id, mailbox_id, user_id, message_id, thread_id, in_reply_to, refs, subject,
 		   from_addr, to_addrs, cc_addrs, bcc_addrs, reply_to_addrs,
 		   direction, raw_path, body_text, body_html,
 		   is_read, is_starred, is_draft, is_outbox, size_bytes,
 		   received_at, sent_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		m.ID, m.MailboxID, m.UserID, nullable(m.MessageID), nullable(m.InReplyTo), nullable(m.Subject),
+		m.ID, m.MailboxID, m.UserID, nullable(m.MessageID), nullable(m.ThreadID), nullable(m.InReplyTo), string(refs), nullable(m.Subject),
 		from, to, cc, bcc, rt,
 		string(m.Direction), nullable(m.RawPath), nullable(m.BodyText), nullable(m.BodyHTML),
 		boolToInt(m.IsRead), boolToInt(m.IsStarred), boolToInt(m.IsDraft), boolToInt(m.IsOutbox), m.SizeBytes,
 		nullableTime(m.ReceivedAt), nullableTime(m.SentAt), now, now,
 	); err != nil {
+		if isUniqueViolation(err) {
+			return ErrDuplicate
+		}
 		return fmt.Errorf("inbox: insert message: %w", err)
 	}
 	return nil
+}
+
+// ExistsByMessageID reports whether a message with the same Message-ID is
+// already stored in mailboxID. Used to short-circuit ingest before parsing.
+func (r *Repository) ExistsByMessageID(ctx context.Context, mailboxID, messageID string) (bool, error) {
+	if messageID == "" {
+		return false, nil
+	}
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM mail_messages WHERE mailbox_id = ? AND message_id = ?",
+		mailboxID, messageID,
+	).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // GetMessage returns one message owned by userID.
@@ -139,6 +164,7 @@ type ListFilter struct {
 	MailboxID string
 	Direction Direction
 	Folder    string // "inbox", "sent", "draft", "starred", "unread"
+	ThreadID  string // restrict to one conversation
 	Limit     int
 	Offset    int
 }
@@ -173,6 +199,10 @@ func (r *Repository) ListMessages(ctx context.Context, f ListFilter) ([]*Message
 	case "unread":
 		q += " AND is_read = 0 AND direction = 'inbound'"
 	}
+	if f.ThreadID != "" {
+		q += " AND thread_id = ?"
+		args = append(args, f.ThreadID)
+	}
 	q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
 	args = append(args, f.Limit, f.Offset)
 
@@ -190,6 +220,73 @@ func (r *Repository) ListMessages(ctx context.Context, f ListFilter) ([]*Message
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// ListThreads returns one summary row per conversation (thread_id) for the
+// user, newest activity first. Each row carries the latest message's subject/
+// sender/time plus total and unread counts within the thread.
+func (r *Repository) ListThreads(ctx context.Context, userID, mailboxID string, limit, offset int) ([]Thread, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	q := `
+		SELECT t.thread_id,
+		       (SELECT COALESCE(subject,'')  FROM mail_messages WHERE user_id = ? AND thread_id = t.thread_id` + mailboxFilter(mailboxID) + ` ORDER BY created_at DESC LIMIT 1),
+		       (SELECT COALESCE(from_addr,'{}') FROM mail_messages WHERE user_id = ? AND thread_id = t.thread_id` + mailboxFilter(mailboxID) + ` ORDER BY created_at DESC LIMIT 1),
+		       CAST(strftime('%s', t.last_at) AS INTEGER), t.cnt, t.unread
+		FROM (
+		  SELECT thread_id,
+		         MAX(CASE WHEN direction='inbound' THEN created_at ELSE COALESCE(sent_at, created_at) END) AS last_at,
+		         COUNT(*) AS cnt,
+		         SUM(CASE WHEN is_read=0 AND direction='inbound' THEN 1 ELSE 0 END) AS unread
+		  FROM mail_messages
+		  WHERE user_id = ?` + mailboxFilter(mailboxID) + `
+		  GROUP BY thread_id
+		) t
+		ORDER BY t.last_at DESC
+		LIMIT ? OFFSET ?`
+	args := []any{userID, userID, userID}
+	if mailboxID != "" {
+		args = []any{userID, mailboxID, userID, mailboxID, userID, mailboxID}
+	}
+	args = append(args, limit, offset)
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("inbox: list threads: %w", err)
+	}
+	defer rows.Close()
+	var out []Thread
+	for rows.Next() {
+		var th Thread
+		var fromJSON string
+		var epoch int64
+		var cnt, unread int
+		if err := rows.Scan(&th.ThreadID, &th.Subject, &fromJSON, &epoch, &cnt, &unread); err != nil {
+			return nil, err
+		}
+		if fa := letter.UnmarshalAddresses(fromJSON); len(fa) > 0 {
+			th.From = fa[0]
+		}
+		if epoch > 0 {
+			th.LastAt = time.Unix(epoch, 0).UTC()
+		}
+		th.Count = cnt
+		th.UnreadCount = unread
+		out = append(out, th)
+	}
+	return out, rows.Err()
+}
+
+// mailboxFilter returns " AND mailbox_id = ?" fragment placeholder-less; the
+// caller threads the matching args. Empty mailboxID means "all mailboxes".
+func mailboxFilter(mailboxID string) string {
+	if mailboxID == "" {
+		return ""
+	}
+	return " AND mailbox_id = ?"
 }
 
 // FlagPatch is a partial update of message flags. nil pointers are untouched.
@@ -260,7 +357,8 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-const messageColumns = `id, mailbox_id, user_id, COALESCE(message_id,''), COALESCE(in_reply_to,''),
+const messageColumns = `id, mailbox_id, user_id, COALESCE(message_id,''),
+	COALESCE(thread_id,''), COALESCE(in_reply_to,''), COALESCE(refs,'[]'),
 	COALESCE(subject,''), COALESCE(from_addr,'{}'), COALESCE(to_addrs,'[]'), COALESCE(cc_addrs,'[]'),
 	COALESCE(bcc_addrs,'[]'), COALESCE(reply_to_addrs,'[]'), direction, COALESCE(raw_path,''),
 	COALESCE(body_text,''), COALESCE(body_html,''),
@@ -283,12 +381,12 @@ func scanMessage(row scanner) (*Message, error) {
 	var m Message
 	var dir string
 	var read, starred, draft, outbox int
-	var fromJSON string
+	var fromJSON, refsJSON string
 	var toJSON, ccJSON, bccJSON, rtJSON string
 	var received, sent sql.NullTime
 	err := row.Scan(
-		&m.ID, &m.MailboxID, &m.UserID, &m.MessageID, &m.InReplyTo, &m.Subject,
-		&fromJSON, &toJSON, &ccJSON, &bccJSON, &rtJSON, &dir, &m.RawPath,
+		&m.ID, &m.MailboxID, &m.UserID, &m.MessageID, &m.ThreadID, &m.InReplyTo, &refsJSON,
+		&m.Subject, &fromJSON, &toJSON, &ccJSON, &bccJSON, &rtJSON, &dir, &m.RawPath,
 		&m.BodyText, &m.BodyHTML,
 		&read, &starred, &draft, &outbox, &m.SizeBytes, &received, &sent,
 		&m.CreatedAt, &m.UpdatedAt,
@@ -308,6 +406,7 @@ func scanMessage(row scanner) (*Message, error) {
 	m.Cc = letter.UnmarshalAddresses(ccJSON)
 	m.Bcc = letter.UnmarshalAddresses(bccJSON)
 	m.ReplyTo = letter.UnmarshalAddresses(rtJSON)
+	_ = json.Unmarshal([]byte(refsJSON), &m.References)
 	if received.Valid {
 		t := received.Time.UTC()
 		m.ReceivedAt = &t

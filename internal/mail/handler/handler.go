@@ -34,6 +34,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mail/mailboxes", h.createMailbox)
 	mux.HandleFunc("DELETE /api/mail/mailboxes/{id}", h.deleteMailbox)
 
+	mux.HandleFunc("GET /api/mail/threads", h.listThreads)
 	mux.HandleFunc("GET /api/mail/messages", h.listMessages)
 	mux.HandleFunc("GET /api/mail/messages/{id}", h.getMessage)
 	mux.HandleFunc("PATCH /api/mail/messages/{id}", h.patchMessage)
@@ -124,6 +125,9 @@ type messageResp struct {
 	ID         string           `json:"id"`
 	MailboxID  string           `json:"mailbox_id"`
 	MessageID  string           `json:"message_id"`
+	ThreadID   string           `json:"thread_id"`
+	InReplyTo  string           `json:"in_reply_to"`
+	References []string         `json:"references"`
 	Subject    string           `json:"subject"`
 	From       letter.Address   `json:"from"`
 	To         []letter.Address `json:"to"`
@@ -144,7 +148,9 @@ type messageResp struct {
 
 func toMessageResp(m *inbox.Message) messageResp {
 	out := messageResp{
-		ID: m.ID, MailboxID: m.MailboxID, MessageID: m.MessageID, Subject: m.Subject,
+		ID: m.ID, MailboxID: m.MailboxID, MessageID: m.MessageID,
+		ThreadID: m.ThreadID, InReplyTo: m.InReplyTo, References: m.References,
+		Subject: m.Subject,
 		From: m.From, To: m.To, Cc: m.Cc, Bcc: m.Bcc, ReplyTo: m.ReplyTo,
 		Direction: string(m.Direction), BodyText: m.BodyText, BodyHTML: m.BodyHTML,
 		IsRead: m.IsRead, IsStarred: m.IsStarred, IsDraft: m.IsDraft,
@@ -160,6 +166,9 @@ func toMessageResp(m *inbox.Message) messageResp {
 	if out.To == nil {
 		out.To = []letter.Address{}
 	}
+	if out.References == nil {
+		out.References = []string{}
+	}
 	return out
 }
 
@@ -172,6 +181,7 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 		UserID:    sess.UserID,
 		MailboxID: r.URL.Query().Get("mailbox"),
 		Folder:    r.URL.Query().Get("folder"),
+		ThreadID:  r.URL.Query().Get("thread"),
 		Limit:     parseInt(r.URL.Query().Get("limit")),
 		Offset:    parseInt(r.URL.Query().Get("offset")),
 	}
@@ -185,6 +195,39 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toMessageResp(m))
 	}
 	jsonResp(w, http.StatusOK, map[string]any{"messages": out})
+}
+
+type threadResp struct {
+	ThreadID    string         `json:"thread_id"`
+	Subject     string         `json:"subject"`
+	From        letter.Address `json:"from"`
+	LastAt      string         `json:"last_at"`
+	Count       int            `json:"count"`
+	UnreadCount int            `json:"unread_count"`
+}
+
+func (h *Handler) listThreads(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	threads, err := h.inbox.ListThreads(r.Context(), sess.UserID,
+		r.URL.Query().Get("mailbox"),
+		parseInt(r.URL.Query().Get("limit")),
+		parseInt(r.URL.Query().Get("offset")))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	out := make([]threadResp, 0, len(threads))
+	for _, t := range threads {
+		out = append(out, threadResp{
+			ThreadID: t.ThreadID, Subject: t.Subject, From: t.From,
+			LastAt: t.LastAt.UTC().Format(timeRFC3339),
+			Count:  t.Count, UnreadCount: t.UnreadCount,
+		})
+	}
+	jsonResp(w, http.StatusOK, map[string]any{"threads": out})
 }
 
 func (h *Handler) getMessage(w http.ResponseWriter, r *http.Request) {

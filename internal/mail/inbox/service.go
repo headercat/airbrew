@@ -67,17 +67,23 @@ func (s *Service) DeleteMailbox(ctx context.Context, userID, id string) error {
 	return s.repo.DeleteMailbox(ctx, userID, id)
 }
 
-// Ingest stores one inbound raw RFC822 message, routing it to the mailbox that
-// owns recipientAddress. Returns ErrMailboxNotFound if no mailbox matches.
+// Ingest stores one inbound raw RFC822 message. Routing: the explicit
+// recipientAddress (envelope) wins; otherwise the To/Cc headers are scanned for
+// a mailbox this deployment owns. A message whose Message-ID is already stored
+// in the resolved mailbox returns ErrDuplicate (callers treat as idempotent).
 func (s *Service) Ingest(ctx context.Context, recipientAddress string, raw []byte, receivedAt time.Time) (*Message, error) {
-	recipientAddress = strings.ToLower(strings.TrimSpace(recipientAddress))
-	mb, err := s.repo.GetMailboxByAddress(ctx, recipientAddress)
-	if err != nil {
-		return nil, err
-	}
 	parsed, err := letter.Parse(raw)
 	if err != nil {
 		return nil, err
+	}
+	mb, err := s.resolveMailbox(ctx, recipientAddress, parsed)
+	if err != nil {
+		return nil, err
+	}
+	if exists, err := s.repo.ExistsByMessageID(ctx, mb.ID, parsed.MessageID); err != nil {
+		return nil, err
+	} else if exists {
+		return nil, ErrDuplicate
 	}
 	if receivedAt.IsZero() {
 		receivedAt = time.Now().UTC()
@@ -101,31 +107,54 @@ func (s *Service) Ingest(ctx context.Context, recipientAddress string, raw []byt
 		from.Address = "unknown@"
 	}
 	msg := &Message{
-		ID:        nextID(),
-		MailboxID: mb.ID,
-		UserID:    mb.UserID,
-		MessageID: parsed.MessageID,
-		Subject:   parsed.Subject,
-		From:      from,
-		To:        parsed.To,
-		Cc:        parsed.Cc,
-		Bcc:       parsed.Bcc,
-		ReplyTo:   parsed.ReplyTo,
+		ID: nextID(), MailboxID: mb.ID, UserID: mb.UserID,
+		MessageID: parsed.MessageID, InReplyTo: firstID(parsed.References),
+		References: parsed.References,
+		Subject:    parsed.Subject, From: from,
+		To: parsed.To, Cc: parsed.Cc, Bcc: parsed.Bcc, ReplyTo: parsed.ReplyTo,
 		Direction: DirectionInbound,
-		RawPath:   rawPath,
-		BodyText:  parsed.Text,
-		BodyHTML:  parsed.HTML,
+		RawPath:   rawPath, BodyText: parsed.Text, BodyHTML: parsed.HTML,
 		SizeBytes: int64(len(raw)),
 	}
 	rt := receivedAt.UTC().Truncate(time.Second)
 	msg.ReceivedAt = &rt
 	if err := s.repo.CreateMessage(ctx, msg); err != nil {
+		if errors.Is(err, ErrDuplicate) {
+			if s.blobs != nil && rawPath != "" {
+				_ = s.blobs.Delete(ctx, rawPath)
+			}
+			return nil, ErrDuplicate
+		}
 		if s.blobs != nil && rawPath != "" {
 			_ = s.blobs.Delete(ctx, rawPath)
 		}
 		return nil, err
 	}
 	return msg, nil
+}
+
+// resolveMailbox finds the destination mailbox, preferring the envelope
+// recipient and falling back to the first To/Cc address this deployment owns.
+func (s *Service) resolveMailbox(ctx context.Context, recipient string, p *letter.ParsedMessage) (*Mailbox, error) {
+	if recipient = strings.ToLower(strings.TrimSpace(recipient)); recipient != "" {
+		if mb, err := s.repo.GetMailboxByAddress(ctx, recipient); err == nil {
+			return mb, nil
+		}
+	}
+	for _, a := range append(append([]letter.Address{}, p.To...), p.Cc...) {
+		if mb, err := s.repo.GetMailboxByAddress(ctx, strings.ToLower(a.Address)); err == nil {
+			return mb, nil
+		}
+	}
+	return nil, ErrMailboxNotFound
+}
+
+func firstID(refs []string) string {
+	// In-Reply-To: pick the last referenced id (the immediate parent), if any.
+	if len(refs) == 0 {
+		return ""
+	}
+	return refs[len(refs)-1]
 }
 
 // Send validates an outgoing message, hands it to sender, then stores it.
@@ -169,7 +198,8 @@ func (s *Service) Send(ctx context.Context, userID string, in SendInput, sender 
 	now := time.Now().UTC().Truncate(time.Second)
 	msg := &Message{
 		ID: nextID(), MailboxID: mb.ID, UserID: userID,
-		MessageID: out.MessageID, Subject: in.Subject,
+		MessageID: out.MessageID, InReplyTo: in.InReplyTo, References: in.References,
+		Subject: in.Subject,
 		From: letter.Address{Name: mb.DisplayName, Address: mb.Address},
 		To:   in.To, Cc: in.Cc, Bcc: in.Bcc, ReplyTo: in.ReplyTo,
 		Direction: DirectionOutbound,
@@ -184,6 +214,11 @@ func (s *Service) Send(ctx context.Context, userID string, in SendInput, sender 
 		return nil, err
 	}
 	return msg, nil
+}
+
+// ListThreads returns conversation summaries for the user.
+func (s *Service) ListThreads(ctx context.Context, userID, mailboxID string, limit, offset int) ([]Thread, error) {
+	return s.repo.ListThreads(ctx, userID, mailboxID, limit, offset)
 }
 
 // ListMessages returns messages for a mailbox/folder.

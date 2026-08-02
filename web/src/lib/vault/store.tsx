@@ -30,6 +30,11 @@ import {
   DEFAULT_KDF_PARAMS,
   type KdfParams,
 } from "@/lib/vault/crypto";
+import {
+  getVaultCache,
+  putVaultCache,
+  userIdForEnvelope,
+} from "@/lib/vault/cache";
 import * as VApi from "@/lib/vault/api";
 import type {
   AttachmentMeta,
@@ -355,6 +360,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setCursor(next);
   }, []);
 
+  // Raw ciphertext rows, kept in lockstep with the decrypted cache so the
+  // IndexedDB ciphertext cache (see lib/vault/cache.ts) can be written without
+  // a second network round-trip. Cleared on lock.
+  const rawItemsRef = useRef<Map<string, VApi.VaultItem>>(new Map());
+  const rawFoldersRef = useRef<Map<string, VApi.VaultFolder>>(new Map());
+
+  // cacheUserIdRef holds the IndexedDB cache key derived from the envelope salt.
+  const cacheUserIdRef = useRef<string>("");
+
   // Full/delta sync from the server, decrypt, and merge into local state.
   // Loops on has_more so a large vault streams in bounded pages. Reads inputs
   // from refs so it is safe to call immediately after a state reset.
@@ -371,13 +385,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       for (const raw of res.items) {
         if (raw.deleted_at) {
           byId.delete(raw.id);
+          rawItemsRef.current.delete(raw.id);
         } else {
           byId.set(raw.id, await decryptItem(key, raw));
+          rawItemsRef.current.set(raw.id, raw);
         }
       }
       for (const f of res.folders) {
         if (f.deleted_at) {
           folderMap.delete(f.id);
+          rawFoldersRef.current.delete(f.id);
           continue;
         }
         try {
@@ -386,6 +403,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         } catch {
           folderMap.set(f.id, { id: f.id, name: "•••", revision: f.revision });
         }
+        rawFoldersRef.current.set(f.id, f);
       }
       since = res.cursor;
       if (res.items.length || res.folders.length) changed = true;
@@ -403,6 +421,52 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setFolders(nextFolders);
     }
     commitCursor(since);
+    // Persist the ciphertext bundle so the next unlock can render instantly
+    // (and survive being offline). Ciphertext only — the key is memory-only.
+    if (cacheUserIdRef.current) {
+      void putVaultCache({
+        userId: cacheUserIdRef.current,
+        cursor: since,
+        folders: Array.from(rawFoldersRef.current.values()),
+        items: Array.from(rawItemsRef.current.values()),
+      });
+    }
+  }, [commitItems, commitCursor]);
+
+  // hydrateFromCache decrypts the IndexedDB ciphertext cache (if any) into the
+  // decrypted cache so the UI can render before the network sync completes.
+  // Sets the cursor to the cached value so the subsequent sync is a true delta.
+  const hydrateFromCache = useCallback(async () => {
+    const key = keyRef.current;
+    const uid = cacheUserIdRef.current;
+    if (!key || !uid) return;
+    const cached = await getVaultCache(uid);
+    if (!cached) return;
+    const folderMap = new Map(foldersRef.current.map((f) => [f.id, f]));
+    const byId = new Map(itemsRef.current.map((it) => [it.id, it]));
+    for (const raw of cached.items as VApi.VaultItem[]) {
+      byId.set(raw.id, await decryptItem(key, raw));
+      rawItemsRef.current.set(raw.id, raw);
+    }
+    for (const f of cached.folders as VApi.VaultFolder[]) {
+      try {
+        const name = await decryptString(key, f.name_cipher, f.name_nonce);
+        folderMap.set(f.id, { id: f.id, name, revision: f.revision });
+      } catch {
+        folderMap.set(f.id, { id: f.id, name: "•••", revision: f.revision });
+      }
+      rawFoldersRef.current.set(f.id, f);
+    }
+    const nextItems = Array.from(byId.values()).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+    const nextFolders = Array.from(folderMap.values()).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+    commitItems(nextItems);
+    foldersRef.current = nextFolders;
+    setFolders(nextFolders);
+    commitCursor(cached.cursor);
   }, [commitItems, commitCursor]);
 
   // foldersRef mirrors folders state (see cursorRef/itemsRef rationale).
@@ -455,9 +519,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			version: 1,
 			updated_at: new Date().toISOString(),
 		};
+        cacheUserIdRef.current = userIdForEnvelope(salt);
         cursorRef.current = 0;
         itemsRef.current = [];
         foldersRef.current = [];
+        rawItemsRef.current = new Map();
+        rawFoldersRef.current = new Map();
         setCursor(0);
         setItems([]);
         setFolders([]);
@@ -512,19 +579,24 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         }
         zeroize(masterKey);
         keyRef.current = vaultKey;
+        cacheUserIdRef.current = userIdForEnvelope(envNow.kdf_salt);
         cursorRef.current = 0;
         itemsRef.current = [];
         foldersRef.current = [];
+        rawItemsRef.current = new Map();
+        rawFoldersRef.current = new Map();
         setCursor(0);
         setItems([]);
         setFolders([]);
         setStatus("unlocked");
+        // Render from the ciphertext cache first (instant), then delta-sync.
+        await hydrateFromCache();
         await syncAndDecrypt();
       } finally {
         setBusy(false);
       }
     },
-    [syncAndDecrypt],
+    [syncAndDecrypt, hydrateFromCache],
   );
 
   const lock = useCallback(() => {
@@ -532,6 +604,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     keyRef.current = null;
     itemsRef.current = [];
     foldersRef.current = [];
+    rawItemsRef.current = new Map();
+    rawFoldersRef.current = new Map();
     cursorRef.current = 0;
     setItems([]);
     setFolders([]);

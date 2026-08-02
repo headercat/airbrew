@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Loader2, Plus, Send, Trash2, Wrench } from "lucide-react";
+import { ArrowLeft, Plus, Send, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
@@ -19,9 +19,11 @@ import {
   getConversation,
   listAgents,
   listConversations,
+  patchConversation,
   streamChat,
 } from "@/lib/ai";
 import { isApiError } from "@/lib/api";
+import { MessageBubble } from "./message-bubble";
 
 type ToolNotice = {
   id: string;
@@ -37,6 +39,8 @@ type ChatMessage = Message & {
   streaming?: boolean;
   toolNotices?: ToolNotice[];
 };
+
+export type { ChatMessage, ToolNotice };
 
 export default function AIPage() {
   const { t } = useTranslation();
@@ -191,6 +195,16 @@ export default function AIPage() {
                   cur.prompt_tokens = ev.usage.prompt_tokens;
                   cur.completion_tokens = ev.usage.completion_tokens;
                 }
+                if (ev.title) {
+                  setDetail((prev) =>
+                    prev ? { ...prev, title: ev.title! } : prev,
+                  );
+                  setConversations((prev) =>
+                    prev.map((c) =>
+                      c.id === detail.id ? { ...c, title: ev.title! } : c,
+                    ),
+                  );
+                }
                 break;
               case "error":
                 cur.streaming = false;
@@ -239,6 +253,101 @@ export default function AIPage() {
     setMessages((prev) =>
       prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
     );
+  }
+
+  // Regenerate swaps the assistant message at idx for a fresh stream.
+  // The previous user message is reused (not re-persisted): the runtime
+  // appends a new user message on every call, so we re-send the prior
+  // user content. The replaced assistant + tool rows are dropped from
+  // the local view (they remain in history server-side; a re-fetch would
+  // surface them, but for UX a clean replace reads better).
+  async function regenerateLastAssistant(idx: number) {
+    if (!detail || busy) return;
+    // Find the most recent user message before idx.
+    let userText = "";
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages[i].role === "user") {
+        userText = messages[i].content;
+        break;
+      }
+    }
+    if (!userText) return;
+
+    const assistantId = `tmp-asst-${Date.now()}`;
+    const replacement: ChatMessage = {
+      id: assistantId,
+      conversation_id: detail.id,
+      role: "assistant",
+      content: "",
+      seq: (messages[idx]?.seq ?? messages.at(-1)?.seq ?? 0) + 1,
+      created_at: new Date().toISOString(),
+      streaming: true,
+      toolNotices: [],
+    };
+    setMessages((prev) => [...prev.slice(0, idx), replacement]);
+    setBusy(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      await streamChat({
+        conversationId: detail.id,
+        message: userText,
+        signal: ctrl.signal,
+        onEvent: (ev: StreamEvent) => {
+          setMessages((prev) => {
+            const next = [...prev];
+            const i = next.findIndex((m) => m.id === assistantId);
+            if (i === -1) return prev;
+            const cur = { ...next[i] };
+            switch (ev.kind) {
+              case "delta":
+                cur.content += ev.content;
+                break;
+              case "tool":
+                cur.toolNotices = [
+                  ...(cur.toolNotices ?? []),
+                  {
+                    id: ev.id,
+                    name: ev.name,
+                    args: ev.args,
+                    result: ev.result,
+                    pending: false,
+                  },
+                ];
+                break;
+              case "done":
+                cur.streaming = false;
+                if (ev.message_id) cur.id = ev.message_id;
+                if (ev.usage) {
+                  cur.prompt_tokens = ev.usage.prompt_tokens;
+                  cur.completion_tokens = ev.usage.completion_tokens;
+                }
+                break;
+              case "error":
+                cur.streaming = false;
+                cur.content +=
+                  (cur.content ? "\n\n" : "") +
+                  `_${t("ai.streamError", {
+                    msg: `${ev.error.code}: ${ev.error.description}`,
+                  })}_`;
+                break;
+              case "metadata":
+                break;
+            }
+            next[i] = cur;
+            return next;
+          });
+        },
+      });
+    } catch (err) {
+      if (!ctrl.signal.aborted) {
+        setError(fmtErr(err));
+      }
+    } finally {
+      setBusy(false);
+      abortRef.current = null;
+      refreshConversations();
+    }
   }
 
   return (
@@ -330,14 +439,28 @@ export default function AIPage() {
           ) : (
             <>
               <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => navigate("/ai")}
-                >
-                  <ArrowLeft className="mr-1 h-4 w-4" />
-                  {t("common.back")}
-                </Button>
+                <div className="flex min-w-0 items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => navigate("/ai")}
+                  >
+                    <ArrowLeft className="mr-1 h-4 w-4" />
+                    {t("common.back")}
+                  </Button>
+                  <TitleEditor
+                    initial={detail.title}
+                    onCommit={(title) =>
+                      patchConversation(detail.id, { title })
+                        .then((c) =>
+                          setDetail((prev) =>
+                            prev ? { ...prev, title: c.title } : prev,
+                          ),
+                        )
+                        .catch((e) => setError(fmtErr(e)))
+                    }
+                  />
+                </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Badge variant="outline" className="text-[10px]">
                     {detail.model}
@@ -353,9 +476,19 @@ export default function AIPage() {
               <div
                 ref={scrollRef}
                 className="flex-1 space-y-4 overflow-y-auto p-4"
+                aria-live="polite"
+                aria-relevant="additions"
               >
-                {messages.map((m) => (
-                  <MessageBubble key={m.id} message={m} />
+                {messages.map((m, idx) => (
+                  <MessageBubble
+                    key={m.id}
+                    message={m}
+                    onRegenerate={
+                      m.role === "assistant" && !busy
+                        ? () => regenerateLastAssistant(idx)
+                        : undefined
+                    }
+                  />
                 ))}
               </div>
 
@@ -399,62 +532,55 @@ export default function AIPage() {
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function TitleEditor({
+  initial,
+  onCommit,
+}: {
+  initial: string;
+  onCommit: (title: string) => void;
+}) {
   const { t } = useTranslation();
-  const isUser = message.role === "user";
-  const isTool = message.role === "tool";
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(initial);
 
-  if (isTool) {
-    // Tool result messages are rolled up into the assistant bubble via
-    // toolNotices; the raw tool row is hidden to avoid duplication.
-    return null;
-  }
+  useEffect(() => {
+    if (!editing) setValue(initial);
+  }, [initial, editing]);
 
-  return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`max-w-[85%] space-y-2 rounded-2xl px-4 py-2 text-sm ${
-          isUser
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted text-foreground"
-        }`}
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="truncate text-sm text-muted-foreground hover:text-foreground"
+        title={t("ai.editTitle")}
       >
-        <div className="whitespace-pre-wrap break-words">
-          {message.content}
-          {message.streaming && (
-            <Loader2 className="ml-1 inline h-3 w-3 animate-spin align-middle" />
-          )}
-        </div>
-
-        {message.toolNotices && message.toolNotices.length > 0 && (
-          <div className="space-y-1 border-t border-border/40 pt-2 text-xs">
-            {message.toolNotices.map((tc, i) => (
-              <div
-                key={`${tc.id}-${i}`}
-                className="flex items-start gap-2 text-muted-foreground"
-              >
-                <Wrench className="mt-0.5 h-3 w-3 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <div className="font-mono">{tc.name}</div>
-                  <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words text-[10px]">
-                    {tc.result}
-                  </pre>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {!isUser && (message.prompt_tokens || message.completion_tokens) ? (
-          <div className="text-right text-[10px] opacity-60">
-            {t("ai.tokens", {
-              prompt: message.prompt_tokens ?? 0,
-              completion: message.completion_tokens ?? 0,
-            })}
-          </div>
-        ) : null}
-      </div>
-    </div>
+        {initial || t("ai.untitled")}
+      </button>
+    );
+  }
+  return (
+    <input
+      autoFocus
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => {
+        setEditing(false);
+        if (value.trim() && value.trim() !== initial) {
+          onCommit(value.trim());
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          (e.target as HTMLInputElement).blur();
+        } else if (e.key === "Escape") {
+          setValue(initial);
+          setEditing(false);
+        }
+      }}
+      className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm"
+    />
   );
 }
 

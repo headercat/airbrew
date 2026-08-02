@@ -301,8 +301,13 @@ export type ImportCounts = {
   attachments?: number;
 };
 export type ImportBundleInput = {
-  folders: { id?: string; name_cipher: string; name_nonce: string }[];
-  items: (ItemInput & { id?: string })[];
+  folders: {
+    id?: string;
+    name_cipher: string;
+    name_nonce: string;
+    deleted_at?: string | null;
+  }[];
+  items: (ItemInput & { id?: string; deleted_at?: string | null })[];
   attachments?: ExportAttachment[];
 };
 

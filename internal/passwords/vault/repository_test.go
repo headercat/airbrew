@@ -417,6 +417,36 @@ func TestImportBundleReinsertsWithFreshIDs(t *testing.T) {
 	}
 }
 
+func TestImportBundlePreservesTombstones(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	deleted := time.Now().UTC().Truncate(time.Second)
+	fc, ic, _, err := repo.ImportBundle(ctx, "u1",
+		[]Folder{{ID: "old-folder", NameCipher: cipherFixture(24, 180), NameNonce: nonceFixture(181), DeletedAt: &deleted}},
+		[]Item{{
+			ID: "old-item", Type: ItemLogin, FolderID: "old-folder",
+			NameCipher: cipherFixture(24, 182), NameNonce: nonceFixture(183),
+			DataCipher: cipherFixture(32, 184), DataNonce: nonceFixture(185),
+			DeletedAt: &deleted,
+		}}, nil)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if fc != 1 || ic != 1 {
+		t.Fatalf("counts = folders %d items %d, want 1/1", fc, ic)
+	}
+	res, err := repo.Sync(ctx, "u1", 0, 0)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if len(res.Folders) != 1 || res.Folders[0].DeletedAt == nil {
+		t.Fatalf("imported folder tombstone = %#v, want deleted_at", res.Folders)
+	}
+	if len(res.Items) != 1 || res.Items[0].DeletedAt == nil {
+		t.Fatalf("imported item tombstone = %#v, want deleted_at", res.Items)
+	}
+}
+
 func TestImportBundleRemapsFolderIDs(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
@@ -481,6 +511,20 @@ func TestImportBundleRemapsAttachmentItemIDs(t *testing.T) {
 	}
 	if atts[0].ItemID != res.Items[0].ID {
 		t.Fatalf("attachment item_id = %q, want %q", atts[0].ItemID, res.Items[0].ID)
+	}
+}
+
+func TestImportBundleRejectsOrphanAttachments(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	_, _, _, err := repo.ImportBundle(ctx, "u1", nil, nil,
+		[]Attachment{{
+			ItemID: "missing-item", BlobPath: "vault-attachments/orphan.bin", SizeBytes: 12,
+			FileKeyCipher: cipherFixture(48, 190), FileKeyNonce: nonceFixture(191),
+			NameCipher: cipherFixture(24, 192), NameNonce: nonceFixture(193),
+		}})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("orphan attachment import = %v, want ErrInvalidInput", err)
 	}
 }
 

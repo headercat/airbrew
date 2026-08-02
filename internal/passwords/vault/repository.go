@@ -844,7 +844,7 @@ func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []
 		for _, a := range attachments {
 			itemID, ok := itemIDs[a.ItemID]
 			if !ok {
-				continue
+				return fmt.Errorf("%w: attachment references missing imported item", ErrInvalidInput)
 			}
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO vault_attachments

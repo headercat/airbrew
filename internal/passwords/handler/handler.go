@@ -8,6 +8,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -589,6 +590,7 @@ type importFolderReq struct {
 	ID         string `json:"id"`
 	NameCipher string `json:"name_cipher"`
 	NameNonce  string `json:"name_nonce"`
+	DeletedAt  string `json:"deleted_at"`
 }
 
 type importItemReq struct {
@@ -603,6 +605,7 @@ type importItemReq struct {
 	NotesNonce  string         `json:"notes_nonce"`
 	Favorite    bool           `json:"favorite"`
 	Reprompt    bool           `json:"reprompt"`
+	DeletedAt   string         `json:"deleted_at"`
 }
 
 type importAttachmentReq struct {
@@ -628,8 +631,13 @@ func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
 	}
 	folders := make([]vault.Folder, 0, len(req.Folders))
 	for _, f := range req.Folders {
+		deletedAt, err := parseOptionalTime(f.DeletedAt)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, "invalid_request", "invalid folder deleted_at")
+			return
+		}
 		folders = append(folders, vault.Folder{
-			ID: f.ID, NameCipher: f.NameCipher, NameNonce: f.NameNonce,
+			ID: f.ID, NameCipher: f.NameCipher, NameNonce: f.NameNonce, DeletedAt: deletedAt,
 		})
 	}
 	items := make([]vault.Item, 0, len(req.Items))
@@ -638,14 +646,17 @@ func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusBadRequest, "invalid_request", "invalid item type in import bundle")
 			return
 		}
-		// Tombstones round-trip: a deleted_at in the request marks the row as
-		// already-deleted so a re-import faithfully reproduces the vault.
+		deletedAt, err := parseOptionalTime(it.DeletedAt)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, "invalid_request", "invalid item deleted_at")
+			return
+		}
 		items = append(items, vault.Item{
 			ID: it.ID, Type: it.Type, FolderID: it.FolderID,
 			NameCipher: it.NameCipher, NameNonce: it.NameNonce,
 			DataCipher: it.DataCipher, DataNonce: it.DataNonce,
 			NotesCipher: it.NotesCipher, NotesNonce: it.NotesNonce,
-			Favorite: it.Favorite, Reprompt: it.Reprompt,
+			Favorite: it.Favorite, Reprompt: it.Reprompt, DeletedAt: deletedAt,
 		})
 	}
 	var attachments []vault.Attachment
@@ -657,10 +668,12 @@ func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
 	for _, a := range req.Attachments {
 		payload, err := base64.StdEncoding.Strict().DecodeString(a.Payload)
 		if err != nil {
+			cleanupBlobs(r.Context(), h.blobs, savedBlobPaths)
 			response.Error(w, http.StatusBadRequest, "invalid_request", "attachment payload must be base64")
 			return
 		}
 		if len(payload) > maxAttachmentBytes {
+			cleanupBlobs(r.Context(), h.blobs, savedBlobPaths)
 			response.Error(w, http.StatusBadRequest, "invalid_request", "attachment payload too large")
 			return
 		}
@@ -678,9 +691,7 @@ func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
 	}
 	fc, ic, ac, err := h.svc.ImportBundle(r.Context(), sess.UserID, folders, items, attachments)
 	if err != nil {
-		for _, p := range savedBlobPaths {
-			_ = h.blobs.Delete(r.Context(), p)
-		}
+		cleanupBlobs(r.Context(), h.blobs, savedBlobPaths)
 		writeVaultError(w, err)
 		return
 	}
@@ -752,7 +763,7 @@ func writeVaultError(w http.ResponseWriter, err error) {
 // malicious oversized body from exhausting server memory. Attachment uploads
 // are handled separately (multipart) with their own cap.
 const maxJSONBody = 256 << 10
-const maxImportJSONBody = 50 << 20
+const maxImportJSONBody = 256 << 20
 
 func decodeJSON(r *http.Request, v any) error {
 	return decodeJSONLimit(r, v, maxJSONBody)
@@ -767,6 +778,27 @@ func decodeJSONLimit(r *http.Request, v any, limit int64) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
+}
+
+func parseOptionalTime(value string) (*time.Time, error) {
+	if value == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return nil, err
+	}
+	u := t.UTC()
+	return &u, nil
+}
+
+func cleanupBlobs(ctx context.Context, store blob.Store, paths []string) {
+	if store == nil {
+		return
+	}
+	for _, p := range paths {
+		_ = store.Delete(ctx, p)
+	}
 }
 
 func clientIP(r *http.Request) string {
@@ -847,9 +879,22 @@ func (h *Handler) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 	nameCipher := r.FormValue("name_cipher")
 	nameNonce := r.FormValue("name_nonce")
 	sizeBytes, _ := strconv.ParseInt(r.FormValue("size_bytes"), 10, 64)
+	sealed, err := io.ReadAll(io.LimitReader(file, maxAttachmentBytes+1))
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", "failed to read file: "+err.Error())
+		return
+	}
+	if len(sealed) > maxAttachmentBytes {
+		response.Error(w, http.StatusBadRequest, "invalid_request", "attachment too large")
+		return
+	}
+	if sizeBytes < 0 || int64(len(sealed)) != sizeBytes+28 {
+		response.Error(w, http.StatusBadRequest, "invalid_request", "attachment size mismatch")
+		return
+	}
 
 	// Stream the encrypted payload straight to the blob store.
-	blobPath, err := h.blobs.Save(r.Context(), "vault-attachments", "application/octet-stream", file)
+	blobPath, err := h.blobs.Save(r.Context(), "vault-attachments", "application/octet-stream", bytes.NewReader(sealed))
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return

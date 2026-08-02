@@ -816,9 +816,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           id: f.id,
           name_cipher: enc.cipher,
           name_nonce: enc.nonce,
+          deleted_at: f.deleted_at,
         });
       }
-      const items: (VApi.ItemInput & { id?: string })[] = [];
+      const items: (VApi.ItemInput & {
+        id?: string;
+        deleted_at?: string | null;
+      })[] = [];
       for (const it of bundle.items ?? []) {
         const name = await decryptString(key, it.name_cipher, it.name_nonce);
         const data = await decryptString(key, it.data_cipher, it.data_nonce);
@@ -848,6 +852,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           notes_nonce,
           favorite: it.favorite,
           reprompt: it.reprompt,
+          deleted_at: it.deleted_at,
         });
       }
       const attachments: VApi.ExportAttachment[] = [];

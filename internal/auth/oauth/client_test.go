@@ -86,6 +86,27 @@ func TestClientServiceRejectsPlainHTTPRedirectURIExceptLoopback(t *testing.T) {
 	}
 }
 
+func TestClientServiceAllowsPrivateUseRedirectURIForPublicClients(t *testing.T) {
+	svc := testClientService(t)
+	_, err := svc.Create(context.Background(), ClientCreate{
+		Name:         "Native App",
+		ClientType:   ClientTypePublic,
+		RedirectURIs: []string{"com.example.airbrew:/oauth/callback"},
+	})
+	if err != nil {
+		t.Fatalf("expected private-use URI for public client to be accepted: %v", err)
+	}
+
+	_, err = svc.Create(context.Background(), ClientCreate{
+		Name:         "Server App",
+		ClientType:   ClientTypeConfidential,
+		RedirectURIs: []string{"com.example.airbrew:/oauth/callback"},
+	})
+	if !errors.Is(err, ErrInvalidRedirectURI) {
+		t.Fatalf("expected ErrInvalidRedirectURI for confidential client, got %v", err)
+	}
+}
+
 func TestClientServiceRejectsInvalidScopeSyntax(t *testing.T) {
 	svc := testClientService(t)
 	_, err := svc.Create(context.Background(), ClientCreate{

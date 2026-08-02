@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   ChevronRight,
@@ -1024,18 +1024,12 @@ function MoveModal({
   onDone: () => void;
   t: (k: string) => string;
 }) {
-  const [folders, setFolders] = useState<DriveNode[]>([]);
+  const opts = useFolderOptions(node, node?.parent_id ? [node.parent_id] : []);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     if (node) {
       setErr(null);
-      // List every folder at any depth (parent:"*" = any parent) so the user
-      // can move into nested folders, not just top-level ones.
-      drive
-        .list({ kind: "folder", parent: "*" })
-        .then((r) => setFolders(r.nodes ?? []))
-        .catch(() => setFolders([]));
     }
   }, [node]);
   if (!node) return null;
@@ -1050,12 +1044,6 @@ function MoveModal({
       setBusy(false);
     }
   };
-  const opts = folders.filter(
-    (f) =>
-      f.id !== node.id &&
-      f.id !== node.parent_id &&
-      !isDescendantFolder(f.id, node, folders),
-  );
   return (
     <Modal open={!!node} onClose={onClose} title={t("drive.move")}>
       {err && <p className="mb-2 text-sm text-destructive">{err}</p>}
@@ -1102,7 +1090,7 @@ function CopyModal({
   onDone: () => void;
   t: (k: string) => string;
 }) {
-  const [folders, setFolders] = useState<DriveNode[]>([]);
+  const opts = useFolderOptions(node);
   const [target, setTarget] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1112,10 +1100,6 @@ function CopyModal({
       setTarget(currentParent);
       setName(`Copy of ${node.name}`);
       setErr(null);
-      drive
-        .list({ kind: "folder", parent: "*" })
-        .then((r) => setFolders(r.nodes ?? []))
-        .catch(() => setFolders([]));
     }
   }, [node, currentParent]);
   if (!node) return null;
@@ -1131,9 +1115,6 @@ function CopyModal({
       setBusy(false);
     }
   };
-  const opts = folders.filter(
-    (f) => f.id !== node.id && !isDescendantFolder(f.id, node, folders),
-  );
   return (
     <Modal open={!!node} onClose={onClose} title={t("drive.copy")}>
       <div className="space-y-3">
@@ -1326,12 +1307,34 @@ function formatBytes(n: number): string {
   return `${(n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+function useFolderOptions(node: DriveNode | null, excludedIDs: string[] = []) {
+  const [folders, setFolders] = useState<DriveNode[]>([]);
+  useEffect(() => {
+    if (!node) return;
+    // List every folder at any depth (parent:"*" = any parent) so the user
+    // can move/copy into nested folders, not just top-level ones.
+    drive
+      .list({ kind: "folder", parent: "*" })
+      .then((r) => setFolders(r.nodes ?? []))
+      .catch(() => setFolders([]));
+  }, [node]);
+  return useMemo(() => {
+    const excluded = new Set(excludedIDs.filter(Boolean));
+    return folders.filter(
+      (f) =>
+        f.id !== node?.id &&
+        !excluded.has(f.id) &&
+        !isDescendantFolder(f.id, node, folders),
+    );
+  }, [excludedIDs, folders, node]);
+}
+
 function isDescendantFolder(
   folderID: string,
-  node: DriveNode,
+  node: DriveNode | null,
   folders: DriveNode[],
 ): boolean {
-  if (node.kind !== "folder") return false;
+  if (node?.kind !== "folder") return false;
   const byID = new Map(folders.map((f) => [f.id, f]));
   for (let cur = byID.get(folderID); cur; cur = byID.get(cur.parent_id)) {
     if (cur.parent_id === node.id) return true;

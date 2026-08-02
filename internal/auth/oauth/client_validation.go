@@ -41,7 +41,7 @@ func validateClient(c *Client) error {
 		return ErrTooManyRedirectURIs
 	}
 	for _, uri := range c.RedirectURIs {
-		if err := validateRedirectURI(uri); err != nil {
+		if err := validateRedirectURI(uri, c.ClientType); err != nil {
 			return err
 		}
 	}
@@ -49,7 +49,7 @@ func validateClient(c *Client) error {
 		return ErrTooManyPostLogoutURIs
 	}
 	for _, uri := range c.PostLogoutRedirectURIs {
-		if err := validateRedirectURI(uri); err != nil {
+		if err := validateRedirectURI(uri, c.ClientType); err != nil {
 			return err
 		}
 	}
@@ -64,22 +64,39 @@ func validateClient(c *Client) error {
 	return nil
 }
 
-func validateRedirectURI(raw string) error {
+func validateRedirectURI(raw string, clientType ClientType) error {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Host == "" || u.Fragment != "" {
+	if err != nil || u.Scheme == "" || u.Fragment != "" {
 		return ErrInvalidRedirectURI
 	}
 	switch u.Scheme {
 	case "https":
+		if u.Host == "" {
+			return ErrInvalidRedirectURI
+		}
 		return nil
 	case "http":
-		if isLoopbackHost(u.Hostname()) {
+		if u.Host != "" && isLoopbackHost(u.Hostname()) {
 			return nil
 		}
 		return ErrInvalidRedirectURI
 	default:
+		if clientType == ClientTypePublic && validPrivateUseScheme(u) {
+			return nil
+		}
 		return ErrInvalidRedirectURI
 	}
+}
+
+func validPrivateUseScheme(u *url.URL) bool {
+	if u.Opaque != "" || u.Host != "" || u.Path == "" {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme == "urn" || scheme == "file" || scheme == "data" || scheme == "javascript" {
+		return false
+	}
+	return strings.Contains(scheme, ".")
 }
 
 func isLoopbackHost(host string) bool {

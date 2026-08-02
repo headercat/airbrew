@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +45,13 @@ func NewToolRegistry() *ToolRegistry {
 // Register adds a tool under key. Panics on duplicates so a startup bug
 // fails loudly.
 func (r *ToolRegistry) Register(key string, t Tool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		panic("agent: empty tool key")
+	}
+	if t == nil {
+		panic("agent: nil tool " + key)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.tools[key]; exists {
@@ -54,6 +62,9 @@ func (r *ToolRegistry) Register(key string, t Tool) {
 
 // Get returns the tool registered under key.
 func (r *ToolRegistry) Get(key string) (Tool, bool) {
+	if r == nil {
+		return nil, false
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	t, ok := r.tools[key]
@@ -63,10 +74,22 @@ func (r *ToolRegistry) Get(key string) (Tool, bool) {
 // SchemasFor returns the wire schemas for the listed keys, ignoring any
 // unknown keys so a stale conversation snapshot does not abort a turn.
 func (r *ToolRegistry) SchemasFor(keys []string) []provider.ToolSchema {
+	if r == nil {
+		return nil
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]provider.ToolSchema, 0, len(keys))
+	seen := map[string]struct{}{}
 	for _, k := range keys {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
 		if t, ok := r.tools[k]; ok {
 			out = append(out, t.Schema())
 		}
@@ -76,18 +99,26 @@ func (r *ToolRegistry) SchemasFor(keys []string) []provider.ToolSchema {
 
 // Keys returns all registered tool keys in stable (insertion-ish) order.
 func (r *ToolRegistry) Keys() []string {
+	if r == nil {
+		return nil
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]string, 0, len(r.tools))
 	for k := range r.tools {
 		out = append(out, k)
 	}
+	sort.Strings(out)
 	return out
 }
 
 // ErrToolNotFound is returned by dispatch when the model asks for a tool
 // not in the conversation's allow-list.
 var ErrToolNotFound = errors.New("agent: tool not found")
+
+// ErrToolNotAllowed is returned when a model asks for a registered tool
+// that is not in the conversation snapshot's allow-list.
+var ErrToolNotAllowed = errors.New("agent: tool not allowed")
 
 // ErrToolTimeout wraps the per-tool deadline.
 var ErrToolTimeout = errors.New("agent: tool timed out")
@@ -97,10 +128,16 @@ const DefaultToolTimeout = 10 * time.Second
 
 // dispatch invokes the named tool with bounded timeout and JSON-encodes a
 // consistent error string on failure so the model can recover.
-func dispatch(ctx context.Context, reg *ToolRegistry, key, args string) (string, error) {
+func dispatch(ctx context.Context, reg *ToolRegistry, allowed map[string]struct{}, key, args string) (string, error) {
+	if key == "" {
+		return "tool error: missing tool name", nil
+	}
+	if _, ok := allowed[key]; !ok {
+		return "tool error: " + ErrToolNotAllowed.Error(), nil
+	}
 	t, ok := reg.Get(key)
 	if !ok {
-		return "", fmt.Errorf("%w: %s", ErrToolNotFound, key)
+		return "tool error: " + ErrToolNotFound.Error(), nil
 	}
 	tctx, cancel := context.WithTimeout(ctx, DefaultToolTimeout)
 	defer cancel()
@@ -135,7 +172,7 @@ func (clockTool) Schema() provider.ToolSchema {
 		Name:        "clock",
 		Description: "Report the current server time in RFC3339 format. Use whenever the user asks what time or date it is.",
 		Parameters: map[string]any{
-			"type": "object",
+			"type":       "object",
 			"properties": map[string]any{},
 		},
 	}

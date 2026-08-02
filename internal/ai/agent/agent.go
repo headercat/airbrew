@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/headercat/airbrew/internal/ai/conv"
 	"github.com/headercat/airbrew/internal/ai/provider"
@@ -38,11 +37,11 @@ type Event struct {
 type EventKind string
 
 const (
-	EventDelta    EventKind = "delta"     // assistant content fragment
-	EventTool     EventKind = "tool"      // tool call + result
-	EventDone     EventKind = "done"      // turn finished
-	EventError    EventKind = "error"     // fatal error
-	EventMetadata EventKind = "metadata"  // out-of-band info (model id, etc)
+	EventDelta    EventKind = "delta"    // assistant content fragment
+	EventTool     EventKind = "tool"     // tool call + result
+	EventDone     EventKind = "done"     // turn finished
+	EventError    EventKind = "error"    // fatal error
+	EventMetadata EventKind = "metadata" // out-of-band info (model id, etc)
 )
 
 // ErrorBody is the wire shape for Event.Err.
@@ -64,19 +63,17 @@ type Spec struct {
 
 // Runtime wires together everything Run needs.
 type Runtime struct {
-	conv *conv.Service
+	conv  *conv.Service
 	tools *ToolRegistry
 	// ResolveProvider returns an LLMClient for the active provider. It is
 	// injected so the runtime does not import the provider repository
 	// (and tests can substitute a fake).
 	ResolveProvider func(ctx context.Context) (provider.LLMClient, error)
-	// Now is the clock used for usage rollups; tests override it.
-	Now func() time.Time
 }
 
 // New returns a Runtime. tools and ResolveProvider are required.
 func New(c *conv.Service, tools *ToolRegistry, resolve func(ctx context.Context) (provider.LLMClient, error)) *Runtime {
-	return &Runtime{conv: c, tools: tools, ResolveProvider: resolve, Now: time.Now}
+	return &Runtime{conv: c, tools: tools, ResolveProvider: resolve}
 }
 
 // AutoTitle runs a one-shot non-streaming turn that produces a short
@@ -95,8 +92,8 @@ func (rt *Runtime) AutoTitle(ctx context.Context, userID, conversationID, userMe
 		"begins with the user's message below. Reply with the title only — " +
 		"no quotes, no punctuation, no explanation.\n\nUser: " + userMessage
 	deltas := cli.ChatStream(ctx, provider.Request{
-		Model:    cli.Model(),
-		Messages: []provider.Message{{Role: provider.RoleUser, Content: prompt}},
+		Model:     cli.Model(),
+		Messages:  []provider.Message{{Role: provider.RoleUser, Content: prompt}},
 		MaxTokens: 24,
 	})
 	var b strings.Builder
@@ -175,6 +172,7 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 	if maxTurns <= 0 {
 		maxTurns = 6
 	}
+	allowedTools := toolAllowList(in.Spec.Tools)
 
 	var lastUsage provider.Usage
 	for turn := 0; turn < maxTurns; turn++ {
@@ -200,6 +198,7 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 		}
 
 		deltas := cli.ChatStream(ctx, req)
+		streamDone := false
 	accLoop:
 		for d := range deltas {
 			switch d.Kind {
@@ -211,6 +210,7 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 			case provider.DeltaToolCallArgs:
 				acc.appendToolArgs(d.Index, d.Content)
 			case provider.DeltaDone:
+				streamDone = true
 				if d.Usage != nil {
 					lastUsage = *d.Usage
 				}
@@ -221,6 +221,9 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 				}
 				return fmt.Errorf("provider stream: %w", d.Err)
 			}
+		}
+		if !streamDone {
+			return errors.New("provider stream closed without done")
 		}
 
 		// 4. No tool calls => terminal turn. Persist and emit done.
@@ -233,7 +236,7 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 			out <- Event{
 				Kind: EventDone, MessageID: amsg.ID,
 				Usage: &provider.Usage{
-					PromptTokens: lastUsage.PromptTokens,
+					PromptTokens:     lastUsage.PromptTokens,
 					CompletionTokens: lastUsage.CompletionTokens,
 				},
 			}
@@ -243,12 +246,13 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 		// 5. Dispatch each tool call, emit results, and append the tool
 		//    messages so the next turn sees them.
 		persistedToolCalls := make([]provider.ToolCall, 0, len(acc.toolCalls))
-		for _, tc := range acc.toolCalls {
+		for i, tc := range acc.toolCalls {
 			if tc == nil {
 				continue
 			}
+			id := normalizedToolCallID(tc.id, turn, i)
 			persistedToolCalls = append(persistedToolCalls, provider.ToolCall{
-				ID: tc.id, Name: tc.name, Args: tc.args.String(),
+				ID: id, Name: tc.name, Args: tc.args.String(),
 			})
 		}
 		// Persist the assistant turn that issued the tool calls first,
@@ -260,31 +264,58 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 			return fmt.Errorf("append assistant tool turn: %w", err)
 		}
 
-		for _, tc := range acc.toolCalls {
+		for i, tc := range acc.toolCalls {
 			if tc == nil {
 				continue
 			}
+			id := normalizedToolCallID(tc.id, turn, i)
 			argsStr := tc.args.String()
-			result, _ := dispatch(ctx, rt.tools, tc.name, argsStr)
+			result, _ := dispatch(ctx, rt.tools, allowedTools, tc.name, argsStr)
+			result = truncateToolResult(result)
 			out <- Event{
-				Kind: EventTool, ToolCallID: tc.id, ToolName: tc.name,
+				Kind: EventTool, ToolCallID: id, ToolName: tc.name,
 				ToolArgs: argsStr, ToolResult: result,
 			}
 			if _, err := rt.conv.AppendToolMessage(ctx, in.UserID, in.ConversationID,
-				tc.id, tc.name, result,
+				id, tc.name, result,
 			); err != nil {
 				return fmt.Errorf("append tool message: %w", err)
 			}
 		}
 	}
 
-	// Hit the turn cap with no terminal assistant message: emit a best
-	// effort done with the trailing usage so the SSE stream closes cleanly.
-	out <- Event{Kind: EventDone, Usage: &provider.Usage{
-		PromptTokens: lastUsage.PromptTokens,
-		CompletionTokens: lastUsage.CompletionTokens,
-	}}
 	return fmt.Errorf("agent: hit max_turns (%d) without a terminal assistant turn", maxTurns)
+}
+
+func toolAllowList(keys []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		k = strings.TrimSpace(k)
+		if k != "" {
+			out[k] = struct{}{}
+		}
+	}
+	return out
+}
+
+func normalizedToolCallID(id string, turn, index int) string {
+	id = strings.TrimSpace(id)
+	if id != "" {
+		return id
+	}
+	return fmt.Sprintf("call_%d_%d", turn, index)
+}
+
+func truncateToolResult(s string) string {
+	if len(s) <= conv.MaxContentLen {
+		return s
+	}
+	const suffix = "\n\n[tool result truncated]"
+	limit := conv.MaxContentLen - len(suffix)
+	if limit < 0 {
+		limit = conv.MaxContentLen
+	}
+	return s[:limit] + suffix
 }
 
 // MaxHistoryMessages bounds the number of past turns replayed to the

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/headercat/airbrew/internal/ai/conv"
 	"github.com/headercat/airbrew/internal/ai/provider"
@@ -15,9 +14,10 @@ import (
 // script is returned as one assistant turn; the runtime loops until a
 // turn has no tool calls.
 type fakeProvider struct {
-	model   string
-	script  []fakeTurn
-	calls   int
+	model    string
+	script   []fakeTurn
+	calls    int
+	omitDone bool
 }
 
 type fakeTurn struct {
@@ -32,7 +32,9 @@ func (f *fakeProvider) ChatStream(_ context.Context, _ provider.Request) <-chan 
 	go func() {
 		defer close(out)
 		if f.calls >= len(f.script) {
-			out <- provider.Delta{Kind: provider.DeltaDone}
+			if !f.omitDone {
+				out <- provider.Delta{Kind: provider.DeltaDone}
+			}
 			return
 		}
 		turn := f.script[f.calls]
@@ -50,7 +52,9 @@ func (f *fakeProvider) ChatStream(_ context.Context, _ provider.Request) <-chan 
 				Kind: provider.DeltaToolCallArgs, Index: i, Content: tc.Args,
 			}
 		}
-		out <- provider.Delta{Kind: provider.DeltaDone, Usage: &turn.usage}
+		if !f.omitDone {
+			out <- provider.Delta{Kind: provider.DeltaDone, Usage: &turn.usage}
+		}
 	}()
 	return out
 }
@@ -64,7 +68,6 @@ func newRuntime(t *testing.T, script []fakeTurn) (*Runtime, *conv.Service, strin
 		ResolveProvider: func(context.Context) (provider.LLMClient, error) {
 			return &fakeProvider{model: "fake-1", script: script}, nil
 		},
-		Now: func() time.Time { return time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC) },
 	}
 	return rt, r, uid, agentID
 }
@@ -160,6 +163,112 @@ func TestRuntimeHitsTurnCap(t *testing.T) {
 	}
 }
 
+type countingTool struct {
+	calls int
+}
+
+func (t *countingTool) Schema() provider.ToolSchema {
+	return provider.ToolSchema{
+		Name:        "secret.search",
+		Description: "Test-only protected tool.",
+		Parameters:  map[string]any{"type": "object"},
+	}
+}
+
+func (t *countingTool) Call(context.Context, string) (string, error) {
+	t.calls++
+	return "secret", nil
+}
+
+func TestRuntimeDoesNotDispatchToolsOutsideAllowList(t *testing.T) {
+	rt, _, uid, agentID := newRuntime(t, []fakeTurn{
+		{
+			toolCalls: []provider.ToolCall{{ID: "call_1", Name: "secret.search", Args: "{}"}},
+			usage:     provider.Usage{PromptTokens: 8, CompletionTokens: 4},
+		},
+		{content: "I cannot use that tool."},
+	})
+	spy := &countingTool{}
+	rt.tools.Register("secret.search", spy)
+	c, _ := rt.conv.Create(context.Background(), conv.CreateInput{
+		UserID: uid, AgentID: agentID, SnapModel: "fake-1",
+		SnapTools: []string{"clock"}, SnapMaxTurns: 6,
+	})
+	events := collectEvents(rt.Run(context.Background(), RunInput{
+		UserID: uid, ConversationID: c.ID, UserMessage: "find it",
+		Spec: Spec{Model: "fake-1", MaxTurns: 4, Tools: []string{"clock"}},
+	}))
+	if !events.done || events.err != "" {
+		t.Fatalf("expected recovery after blocked tool, got %+v", events)
+	}
+	if spy.calls != 0 {
+		t.Fatalf("unallowed tool was dispatched %d times", spy.calls)
+	}
+	if len(events.toolCalls) != 1 || !strings.Contains(events.toolCalls[0].result, "not allowed") {
+		t.Fatalf("expected not-allowed tool result, got %+v", events.toolCalls)
+	}
+}
+
+func TestRuntimeSynthesizesMissingToolCallID(t *testing.T) {
+	rt, _, uid, agentID := newRuntime(t, []fakeTurn{
+		{
+			toolCalls: []provider.ToolCall{{Name: "clock", Args: "{}"}},
+			usage:     provider.Usage{PromptTokens: 8, CompletionTokens: 4},
+		},
+		{content: "done"},
+	})
+	Builtin(rt.tools)
+	c, _ := rt.conv.Create(context.Background(), conv.CreateInput{
+		UserID: uid, AgentID: agentID, SnapModel: "fake-1",
+		SnapTools: []string{"clock"}, SnapMaxTurns: 6,
+	})
+	events := collectEvents(rt.Run(context.Background(), RunInput{
+		UserID: uid, ConversationID: c.ID, UserMessage: "what time?",
+		Spec: Spec{Model: "fake-1", MaxTurns: 4, Tools: []string{"clock"}},
+	}))
+	if !events.done || events.err != "" {
+		t.Fatalf("expected done, got %+v", events)
+	}
+	if len(events.toolCalls) != 1 || events.toolCalls[0].id != "call_0_0" {
+		t.Fatalf("expected synthesized tool id, got %+v", events.toolCalls)
+	}
+	hist, _ := rt.conv.History(context.Background(), uid, c.ID)
+	if len(hist) != 4 || hist[2].ToolCallID != "call_0_0" {
+		t.Fatalf("tool history missing synthesized id: %+v", hist)
+	}
+}
+
+func TestRuntimeErrorsWhenProviderClosesWithoutDone(t *testing.T) {
+	r, uid, agentID := newTestService(t)
+	rt := &Runtime{
+		conv:  r,
+		tools: NewToolRegistry(),
+		ResolveProvider: func(context.Context) (provider.LLMClient, error) {
+			return &fakeProvider{
+				model: "fake-1",
+				script: []fakeTurn{
+					{content: "partial response"},
+				},
+				omitDone: true,
+			}, nil
+		},
+	}
+	c, _ := rt.conv.Create(context.Background(), conv.CreateInput{
+		UserID: uid, AgentID: agentID, SnapModel: "fake-1", SnapMaxTurns: 6,
+	})
+	events := collectEvents(rt.Run(context.Background(), RunInput{
+		UserID: uid, ConversationID: c.ID, UserMessage: "hi",
+		Spec: Spec{Model: "fake-1", MaxTurns: 3},
+	}))
+	if events.err == "" {
+		t.Fatalf("expected error for incomplete provider stream, got %+v", events)
+	}
+	hist, _ := rt.conv.History(context.Background(), uid, c.ID)
+	if len(hist) != 1 || hist[0].Role != provider.RoleUser {
+		t.Fatalf("partial assistant should not be persisted: %+v", hist)
+	}
+}
+
 func TestRuntimeProviderError(t *testing.T) {
 	rt := &Runtime{
 		conv:  mustService(t),
@@ -167,7 +276,6 @@ func TestRuntimeProviderError(t *testing.T) {
 		ResolveProvider: func(context.Context) (provider.LLMClient, error) {
 			return nil, errors.New("no provider configured")
 		},
-		Now: time.Now,
 	}
 	events := collectEvents(rt.Run(context.Background(), RunInput{
 		UserID: "u1", ConversationID: "nope", UserMessage: "x",
@@ -197,7 +305,7 @@ func TestBuildProviderMessagesReplacesStaleSystem(t *testing.T) {
 // --- helpers --------------------------------------------------------------
 
 type collected struct {
-	deltas   []string
+	deltas    []string
 	toolCalls []struct {
 		id, name, result string
 	}

@@ -465,6 +465,12 @@ func (h *Handler) listOAuthClients(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	clients, total, err := h.oauthSvc.List(r.Context(), limit, offset)
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
@@ -496,7 +502,8 @@ func (h *Handler) createOAuthClient(w http.ResponseWriter, r *http.Request) {
 		RequireConsent:          req.RequireConsent,
 	})
 	if err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		code, status := oauthClientError(err)
+		response.Error(w, status, code, err.Error())
 		return
 	}
 	h.audit.Log(r.Context(), audit.Entry{
@@ -551,7 +558,8 @@ func (h *Handler) updateOAuthClient(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusNotFound, "not_found", "OAuth client not found")
 			return
 		}
-		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		code, status := oauthClientError(err)
+		response.Error(w, status, code, err.Error())
 		return
 	}
 	h.audit.Log(r.Context(), audit.Entry{
@@ -589,6 +597,53 @@ func (h *Handler) deleteOAuthClient(w http.ResponseWriter, r *http.Request) {
 		Metadata: map[string]any{"client_id": c.ClientID, "name": c.Name},
 	})
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// rotateOAuthClientSecret issues a fresh one-time secret for a confidential
+// client. The previous secret stops working immediately.
+func (h *Handler) rotateOAuthClientSecret(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	secret, err := h.oauthSvc.RotateSecret(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, oauth.ErrClientNotFound) {
+			response.Error(w, http.StatusNotFound, "not_found", "OAuth client not found")
+			return
+		}
+		if errors.Is(err, oauth.ErrPublicClientSecret) {
+			response.Error(w, http.StatusBadRequest, "invalid_request", "only confidential clients have a secret")
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "oauth.client_secret_rotated", ActorUserID: callerUserID(r),
+		TargetType: "oauth_client", TargetID: id,
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
+	response.JSON(w, http.StatusOK, map[string]string{"client_secret": secret})
+}
+
+// oauthClientError maps an oauth.ClientService validation/persistence error to
+// an OAuth-style error code and HTTP status.
+func oauthClientError(err error) (string, int) {
+	switch {
+	case errors.Is(err, oauth.ErrClientIDTaken):
+		return "client_id_taken", http.StatusConflict
+	case errors.Is(err, oauth.ErrNameRequired),
+		errors.Is(err, oauth.ErrNameTooLong),
+		errors.Is(err, oauth.ErrInvalidClientType),
+		errors.Is(err, oauth.ErrPublicClientAuthMethod),
+		errors.Is(err, oauth.ErrConfidentialAuthMethod),
+		errors.Is(err, oauth.ErrRedirectURIRequired),
+		errors.Is(err, oauth.ErrInvalidRedirectURI),
+		errors.Is(err, oauth.ErrTooManyRedirectURIs),
+		errors.Is(err, oauth.ErrTooManyPostLogoutURIs),
+		errors.Is(err, oauth.ErrTooManyScopes):
+		return "invalid_request", http.StatusBadRequest
+	default:
+		return "invalid_request", http.StatusBadRequest
+	}
 }
 
 // ---- helpers ----

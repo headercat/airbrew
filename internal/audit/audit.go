@@ -261,6 +261,28 @@ func humanMessage(actor, target string, e Entry) string {
 		return fmt.Sprintf("%s revoked share %s", actor, target)
 	case "drive.config_updated":
 		return fmt.Sprintf("%s updated drive storage limits", actor)
+	case "contacts.contact_created":
+		return fmt.Sprintf("%s created contact %s", actor, metadataOrTarget(e, "name", target))
+	case "contacts.contact_updated":
+		return fmt.Sprintf("%s updated contact %s", actor, target)
+	case "contacts.contact_deleted":
+		return fmt.Sprintf("%s deleted contact %s", actor, target)
+	case "contacts.avatar_set":
+		return fmt.Sprintf("%s set an avatar for %s", actor, target)
+	case "contacts.avatar_cleared":
+		return fmt.Sprintf("%s removed the avatar for %s", actor, target)
+	case "contacts.groups_set":
+		return fmt.Sprintf("%s updated group membership for %s", actor, target)
+	case "contacts.group_created":
+		return fmt.Sprintf("%s created group %s", actor, metadataOrTarget(e, "name", target))
+	case "contacts.group_updated":
+		return fmt.Sprintf("%s updated group %s", actor, target)
+	case "contacts.group_deleted":
+		return fmt.Sprintf("%s deleted group %s", actor, target)
+	case "contacts.import":
+		return fmt.Sprintf("%s imported %s contacts", actor, metadataValue(e, "count"))
+	case "contacts.export":
+		return fmt.Sprintf("%s exported their contacts", actor)
 	case "mail.provider_upserted":
 		return fmt.Sprintf("%s configured mail provider %s (%s)", actor, metadataValue(e, "driver"), metadataValue(e, "direction"))
 	case "mail.provider_deleted":

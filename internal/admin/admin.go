@@ -10,6 +10,7 @@ import (
 	"github.com/headercat/airbrew/internal/auth/session"
 	"github.com/headercat/airbrew/internal/auth/user"
 	"github.com/headercat/airbrew/internal/modules"
+	"github.com/headercat/airbrew/internal/security"
 )
 
 // Module wires the admin HTTP surface.
@@ -17,6 +18,7 @@ type Module struct {
 	state    *modules.State
 	userRepo *user.Repository
 	userSvc  *user.Service
+	security *security.Service
 	audit    *audit.Service
 	handler  *Handler
 }
@@ -25,7 +27,9 @@ type Module struct {
 func New(db *sql.DB) *Module {
 	state := modules.NewState(db)
 	userRepo := user.NewRepository(db)
+	sec := security.NewService(db)
 	userSvc := user.NewService(userRepo)
+	userSvc.SetPasswordPolicyChecker(sec)
 	oauthRepo := oauth.NewClientRepository(db)
 	oauthSvc := oauth.NewClientService(oauthRepo)
 	auditSvc := audit.NewService(db)
@@ -34,14 +38,18 @@ func New(db *sql.DB) *Module {
 		state:    state,
 		userRepo: userRepo,
 		userSvc:  userSvc,
+		security: sec,
 		oauthSvc: oauthSvc,
 		audit:    auditSvc,
 	}
-	return &Module{state: state, userRepo: userRepo, userSvc: userSvc, audit: auditSvc, handler: h}
+	return &Module{state: state, userRepo: userRepo, userSvc: userSvc, security: sec, audit: auditSvc, handler: h}
 }
 
 // Audit returns the audit service so other modules can use it.
 func (m *Module) Audit() *audit.Service { return m.audit }
+
+// Security returns the security policy service.
+func (m *Module) Security() *security.Service { return m.security }
 
 // RegisterPublicRoutes mounts routes that should be reachable without
 // admin authentication (e.g. public branding info for the login page).
@@ -69,6 +77,7 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("GET /api/admin/oauth/clients/{id}", m.handler.getOAuthClient)
 	admin.HandleFunc("PATCH /api/admin/oauth/clients/{id}", m.handler.updateOAuthClient)
 	admin.HandleFunc("DELETE /api/admin/oauth/clients/{id}", m.handler.deleteOAuthClient)
+	admin.HandleFunc("POST /api/admin/oauth/clients/{id}/secret", m.handler.rotateOAuthClientSecret)
 	admin.HandleFunc("GET /api/admin/sessions", m.handler.listSessions)
 	admin.HandleFunc("DELETE /api/admin/sessions/{id}", m.handler.revokeSession)
 	admin.HandleFunc("GET /api/admin/branding", m.handler.getBranding)

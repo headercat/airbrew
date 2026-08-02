@@ -144,6 +144,24 @@ func (r *Repository) SetTitle(ctx context.Context, userID, id, title string) err
 	return nil
 }
 
+// SetTitleIfEmpty renames a conversation only if its title is still empty.
+func (r *Repository) SetTitleIfEmpty(ctx context.Context, userID, id, title string) (bool, error) {
+	title = strings.TrimSpace(title)
+	if len(title) > MaxTitleLen {
+		return false, fmt.Errorf("%w: title too long", ErrInvalidInput)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE ai_conversations SET title = ?, updated_at = ?, revision = revision + 1
+		WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND title = ''`,
+		title, now, id, userID)
+	if err != nil {
+		return false, fmt.Errorf("conv: set title if empty: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // BumpRevision increments the per-user sync cursor. Callers invoke it after
 // appending new messages so a separate poll can detect the change.
 func (r *Repository) BumpRevision(ctx context.Context, userID, id string) error {
@@ -151,6 +169,71 @@ func (r *Repository) BumpRevision(ctx context.Context, userID, id string) error 
 		"UPDATE ai_conversations SET revision = revision + 1 WHERE id = ? AND user_id = ?",
 		id, userID)
 	return err
+}
+
+// AcquireRunLease creates a durable per-conversation run lease. Existing
+// non-expired leases cause ErrConflict.
+func (r *Repository) AcquireRunLease(ctx context.Context, userID, conversationID, runID string, ttl time.Duration) error {
+	if userID == "" || conversationID == "" || runID == "" {
+		return fmt.Errorf("%w: missing run lease ids", ErrInvalidInput)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	nowStr := now.Format(time.RFC3339)
+	expires := now.Add(ttl).Format(time.RFC3339)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("conv: begin run lease: %w", err)
+	}
+	defer tx.Rollback()
+
+	var owner string
+	err = tx.QueryRowContext(ctx,
+		"SELECT user_id FROM ai_conversations WHERE id = ? AND deleted_at IS NULL",
+		conversationID,
+	).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("conv: run lease owner: %w", err)
+	}
+	if owner != userID {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM ai_run_locks WHERE conversation_id = ? AND expires_at <= ?",
+		conversationID, nowStr,
+	); err != nil {
+		return fmt.Errorf("conv: clear expired run lease: %w", err)
+	}
+	_, err = tx.ExecContext(ctx,
+		"INSERT INTO ai_run_locks (conversation_id, run_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+		conversationID, runID, expires, nowStr,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrConflict
+		}
+		return fmt.Errorf("conv: insert run lease: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("conv: commit run lease: %w", err)
+	}
+	return nil
+}
+
+// ReleaseRunLease drops a run lease if it is still owned by runID.
+func (r *Repository) ReleaseRunLease(ctx context.Context, conversationID, runID string) error {
+	if conversationID == "" || runID == "" {
+		return nil
+	}
+	if _, err := r.db.ExecContext(ctx,
+		"DELETE FROM ai_run_locks WHERE conversation_id = ? AND run_id = ?",
+		conversationID, runID,
+	); err != nil {
+		return fmt.Errorf("conv: release run lease: %w", err)
+	}
+	return nil
 }
 
 // AppendMessage inserts a message with seq assigned inside the transaction

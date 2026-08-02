@@ -206,15 +206,24 @@ provider. Orphan `tool` rows and incomplete `assistant(tool_calls)` /
 valid. `revision` on `ai_conversations` is bumped on every append so a
 multi-tab SPA can poll for changes and resync.
 
+## Run concurrency
+
+Each assistant run takes an in-memory lock and a durable
+`ai_run_locks` lease scoped to the conversation. The in-memory lock
+prevents overlap inside one process; the database lease prevents overlap
+across processes and survives until release or expiry. Stale client
+snapshots are rejected with a revision conflict before appending the user
+message.
+
 ## Title auto-generation
 
 On the first turn of an untitled conversation the stream handler fires
 a background `AutoTitle` turn — a low-token, single-shot completion
 that summarises the user's first message into a 3-6 word title. The
-result is persisted via `SetTitle` and emitted alongside the `done`
-event so the SPA updates both the chat header and the sidebar
-atomically. Manual rename via `PATCH /api/ai/conversations/{id}`
-overrides the auto-generated title.
+result is persisted only while the title is still empty and emitted
+alongside the `done` event so the SPA updates both the chat header and
+the sidebar atomically. Manual rename via
+`PATCH /api/ai/conversations/{id}` wins over a late auto-title response.
 
 ## SSE recovery
 

@@ -79,6 +79,32 @@ func TestOwnershipGuard(t *testing.T) {
 	}
 }
 
+func TestSetTitleIfEmptyDoesNotOverwriteManualTitle(t *testing.T) {
+	r, uid, agentID := testRepo(t)
+	ctx := context.Background()
+	c, _ := r.Create(ctx, Conversation{
+		UserID: uid, AgentID: agentID, SnapModel: "x", SnapMaxTurns: 6,
+	})
+	ok, err := r.SetTitleIfEmpty(ctx, uid, c.ID, "auto title")
+	if err != nil || !ok {
+		t.Fatalf("SetTitleIfEmpty first ok=%v err=%v", ok, err)
+	}
+	if err := r.SetTitle(ctx, uid, c.ID, "manual title"); err != nil {
+		t.Fatalf("SetTitle: %v", err)
+	}
+	ok, err = r.SetTitleIfEmpty(ctx, uid, c.ID, "late auto title")
+	if err != nil {
+		t.Fatalf("SetTitleIfEmpty second: %v", err)
+	}
+	if ok {
+		t.Fatal("late auto-title should not overwrite manual title")
+	}
+	got, _ := r.Get(ctx, uid, c.ID)
+	if got.Title != "manual title" {
+		t.Fatalf("title overwritten: %q", got.Title)
+	}
+}
+
 func TestAppendMessageSeq(t *testing.T) {
 	r, uid, agentID := testRepo(t)
 	ctx := context.Background()
@@ -148,6 +174,27 @@ func TestAppendMessageIfRevisionRejectsStaleSnapshot(t *testing.T) {
 		ConversationID: c.ID, Role: provider.RoleUser, Content: "stale",
 	}, c.Revision); err != ErrConflict {
 		t.Fatalf("expected ErrConflict for stale revision, got %v", err)
+	}
+}
+
+func TestRunLeasePreventsOverlap(t *testing.T) {
+	r, uid, agentID := testRepo(t)
+	ctx := context.Background()
+	c, _ := r.Create(ctx, Conversation{
+		UserID: uid, AgentID: agentID, SnapModel: "x", SnapTools: []string{},
+		SnapMaxTurns: 6,
+	})
+	if err := r.AcquireRunLease(ctx, uid, c.ID, "run-1", time.Minute); err != nil {
+		t.Fatalf("AcquireRunLease first: %v", err)
+	}
+	if err := r.AcquireRunLease(ctx, uid, c.ID, "run-2", time.Minute); err != ErrConflict {
+		t.Fatalf("expected ErrConflict for overlapping run, got %v", err)
+	}
+	if err := r.ReleaseRunLease(ctx, c.ID, "run-1"); err != nil {
+		t.Fatalf("ReleaseRunLease: %v", err)
+	}
+	if err := r.AcquireRunLease(ctx, uid, c.ID, "run-2", time.Minute); err != nil {
+		t.Fatalf("AcquireRunLease after release: %v", err)
 	}
 }
 

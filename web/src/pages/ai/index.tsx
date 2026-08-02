@@ -556,12 +556,17 @@ function normalizeMessages(messages: Message[]): ChatMessage[] {
       msg.tool_calls &&
       msg.tool_calls.length > 0
     ) {
-      toolNotices = msg.tool_calls.map((tc, offset) => {
-        const tool = messages[i + 1 + offset];
-        const matched =
-          tool?.role === "tool" && tool.tool_call_id === tc.id
-            ? tool
-            : undefined;
+      const toolRows = new Map<string, Message>();
+      let j = i + 1;
+      while (messages[j]?.role === "tool") {
+        const tool = messages[j];
+        if (tool.tool_call_id && !toolRows.has(tool.tool_call_id)) {
+          toolRows.set(tool.tool_call_id, tool);
+        }
+        j++;
+      }
+      toolNotices = msg.tool_calls.map((tc) => {
+        const matched = toolRows.get(tc.id);
         return {
           id: tc.id,
           name: tc.name,
@@ -570,7 +575,7 @@ function normalizeMessages(messages: Message[]): ChatMessage[] {
           pending: !matched,
         };
       });
-      i += toolNotices.filter((notice) => !notice.pending).length;
+      i = j - 1;
     }
     out.push({ ...msg, toolNotices });
   }

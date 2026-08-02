@@ -16,9 +16,11 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/headercat/airbrew/internal/ai/conv"
 	"github.com/headercat/airbrew/internal/ai/provider"
+	"github.com/headercat/airbrew/internal/id"
 )
 
 // Event is one streamed frame the handler forwards to the SSE client.
@@ -124,8 +126,12 @@ func (rt *Runtime) AutoTitle(ctx context.Context, userID, conversationID, userMe
 	if title == "" {
 		return "", errors.New("empty title from provider")
 	}
-	if err := rt.conv.SetTitle(ctx, userID, conversationID, title); err != nil {
+	ok, err := rt.conv.SetTitleIfEmpty(ctx, userID, conversationID, title)
+	if err != nil {
 		return "", err
+	}
+	if !ok {
+		return "", errors.New("title already set")
 	}
 	return title, nil
 }
@@ -167,6 +173,13 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 		return ErrRunInProgress
 	}
 	defer unlock()
+	runID := id.New()
+	if err := rt.conv.AcquireRunLease(ctx, in.UserID, in.ConversationID, runID, 30*time.Minute); err != nil {
+		return fmt.Errorf("acquire run lease: %w", err)
+	}
+	defer func() {
+		_ = rt.conv.ReleaseRunLease(context.Background(), in.ConversationID, runID)
+	}()
 	if rt.ResolveProvider == nil {
 		return errors.New("agent: provider resolver not configured")
 	}

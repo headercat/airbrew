@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -200,7 +201,13 @@ func (c *anthropicClient) buildBody(req Request) ([]byte, error) {
 			}
 			for _, tc := range m.ToolCalls {
 				var input map[string]any
-				if err := json.Unmarshal([]byte(tc.Args), &input); err != nil || input == nil {
+				if err := json.Unmarshal([]byte(tc.Args), &input); err != nil {
+					slog.Default().Warn("ai: invalid anthropic tool args replay",
+						"tool_id", tc.ID,
+						"tool_name", tc.Name,
+						"error", err)
+					input = map[string]any{}
+				} else if input == nil {
 					input = map[string]any{}
 				}
 				blocks = append(blocks, anthropicBlock{

@@ -288,6 +288,7 @@ export async function streamChat(opts: {
     const { value, done } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
+    buf = buf.replace(/\r\n/g, "\n");
 
     // SSE frames are separated by a blank line. Process all complete
     // frames, leaving the trailing partial in buf.

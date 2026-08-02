@@ -98,6 +98,21 @@ func (s *Service) SetTitle(ctx context.Context, userID, id, title string) error 
 	return s.repo.SetTitle(ctx, userID, id, strings.TrimSpace(title))
 }
 
+// SetTitleIfEmpty renames a conversation only if it has no title yet.
+func (s *Service) SetTitleIfEmpty(ctx context.Context, userID, id, title string) (bool, error) {
+	return s.repo.SetTitleIfEmpty(ctx, userID, id, strings.TrimSpace(title))
+}
+
+// AcquireRunLease prevents overlapping assistant runs for a conversation.
+func (s *Service) AcquireRunLease(ctx context.Context, userID, conversationID, runID string, ttl time.Duration) error {
+	return s.repo.AcquireRunLease(ctx, userID, conversationID, runID, ttl)
+}
+
+// ReleaseRunLease releases a previously acquired run lease.
+func (s *Service) ReleaseRunLease(ctx context.Context, conversationID, runID string) error {
+	return s.repo.ReleaseRunLease(ctx, conversationID, runID)
+}
+
 // AppendUserMessage records a user turn and returns the inserted row.
 func (s *Service) AppendUserMessage(ctx context.Context, userID, conversationID, content string) (Message, error) {
 	return s.AppendUserMessageIfRevision(ctx, userID, conversationID, content, 0)

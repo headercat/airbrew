@@ -335,15 +335,7 @@ func (r *Repository) UpdateItem(ctx context.Context, userID, itemID string, in I
 		if err := ensureFolderOwned(ctx, tx, userID, in.FolderID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO vault_item_revisions
-			  (id, item_id, type, folder_id, name_cipher, name_nonce, data_cipher, data_nonce,
-			   notes_cipher, notes_nonce, favorite, reprompt, revision, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, id.New(), cur.ID, string(cur.Type), nullable(cur.FolderID),
-			cur.NameCipher, cur.NameNonce, cur.DataCipher, cur.DataNonce,
-			nullable(cur.NotesCipher), nullable(cur.NotesNonce),
-			boolToInt(cur.Favorite), boolToInt(cur.Reprompt), cur.Revision, cur.UpdatedAt); err != nil {
+		if err := archiveItemSnapshot(ctx, tx, cur); err != nil {
 			return fmt.Errorf("vault: archive item revision: %w", err)
 		}
 		rev, err := bumpRev(ctx, tx, userID)
@@ -705,15 +697,7 @@ func (r *Repository) RestoreItemRevision(ctx context.Context, userID, itemID, re
 			}
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO vault_item_revisions
-			  (id, item_id, type, folder_id, name_cipher, name_nonce, data_cipher, data_nonce,
-			   notes_cipher, notes_nonce, favorite, reprompt, revision, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			id.New(), cur.ID, string(cur.Type), nullable(cur.FolderID),
-			cur.NameCipher, cur.NameNonce, cur.DataCipher, cur.DataNonce,
-			nullable(cur.NotesCipher), nullable(cur.NotesNonce),
-			boolToInt(cur.Favorite), boolToInt(cur.Reprompt), cur.Revision, cur.UpdatedAt); err != nil {
+		if err := archiveItemSnapshot(ctx, tx, cur); err != nil {
 			return fmt.Errorf("vault: archive before restore: %w", err)
 		}
 		rev, err := bumpRev(ctx, tx, userID)
@@ -768,6 +752,19 @@ func (r *Repository) restoreFolderID(ctx context.Context, tx *sql.Tx, userID, fo
 		return "", err
 	}
 	return folderID, nil
+}
+
+func archiveItemSnapshot(ctx context.Context, tx *sql.Tx, it Item) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO vault_item_revisions
+		  (id, item_id, type, folder_id, name_cipher, name_nonce, data_cipher, data_nonce,
+		   notes_cipher, notes_nonce, favorite, reprompt, revision, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id.New(), it.ID, string(it.Type), nullable(it.FolderID),
+		it.NameCipher, it.NameNonce, it.DataCipher, it.DataNonce,
+		nullable(it.NotesCipher), nullable(it.NotesNonce),
+		boolToInt(it.Favorite), boolToInt(it.Reprompt), it.Revision, it.UpdatedAt)
+	return err
 }
 
 // --- import -----------------------------------------------------------------

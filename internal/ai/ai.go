@@ -66,7 +66,7 @@ func New(
 		agents:  agentsRepo,
 		runtime: runtime,
 		user:    handler.New(convSvc, agentsRepo, runtime, auditSvc).WithAutoTitle(autoTitle),
-		admin:   handler.NewAdmin(provRepo, agentsRepo, tools, auditSvc),
+		admin:   handler.NewAdmin(provRepo, agentsRepo, convSvc, tools, auditSvc),
 	}
 }
 

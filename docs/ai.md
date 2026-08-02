@@ -84,7 +84,8 @@ type Message struct {
 type LLMClient interface {
     // ChatStream sends the turn and emits deltas on the returned channel.
     // Cancellation via ctx aborts the upstream HTTP request.
-    ChatStream(ctx context.Context, req Request) (<-chan Delta, error)
+    ChatStream(ctx context.Context, req Request) <-chan Delta
+    Model() string
 }
 
 type Request struct {
@@ -116,6 +117,11 @@ The runtime loop:
 Tool dispatch is bounded by `context.WithTimeout` per call. A tool may
 return `(string, error)`; an error is recorded as a tool message so the
 model can recover rather than failing the whole turn.
+
+The runtime enforces the conversation's tool allow-list at dispatch time,
+even if a provider emits a tool call for a schema that was not sent in the
+request. Tool call IDs are normalised before persistence so replayed
+transcripts remain provider-compatible.
 
 ## Built-in tools
 
@@ -155,6 +161,7 @@ planned but not yet wired; the registry is ready to host them.
 | POST   | `/api/admin/ai/agents`                              | Create agent def           |
 | PUT    | `/api/admin/ai/agents/{id}`                         | Update agent def           |
 | DELETE | `/api/admin/ai/agents/{id}`                         | Remove agent def           |
+| GET    | `/api/admin/ai/tools`                               | Registered tool catalog     |
 | GET    | `/api/admin/ai/drivers`                             | Driver introspection        |
 | GET    | `/api/admin/ai/usage?days=30&user=<id>`             | Daily token rollup          |
 
@@ -168,7 +175,7 @@ event: tool
 data: {"id":"...","name":"clock","args":{},"result":"..."}
 
 event: done
-data: {"message_id":"...","usage":{"prompt":120,"completion":8}}
+data: {"message_id":"...","usage":{"prompt_tokens":120,"completion_tokens":8}}
 ```
 
 Errors mid-stream use:
@@ -206,10 +213,13 @@ overrides the auto-generated title.
 ## SSE recovery
 
 The user message is persisted before the upstream call begins, so a
-network drop mid-stream never loses the prompt. If the SPA receives
-no `done` event (connection reset, server restart), it automatically
-re-fetches the conversation so the server-side state — partial
-assistant turn included — replaces the optimistic bubble.
+network drop mid-stream never loses the prompt. Final assistant messages
+are persisted only after the provider emits a terminal marker (`[DONE]`,
+usage chunk, `message_stop`, or provider-specific equivalent). If a
+provider stream ends without that marker, the runtime emits an error and
+does not persist the partial assistant text. If the browser connection
+breaks before `done`, the SPA re-fetches the conversation and reconciles
+to the persisted server state.
 
 ## Security
 
@@ -220,9 +230,14 @@ assistant turn included — replaces the optimistic bubble.
 - Provider egress is restricted by a per-driver HTTP timeout
   (default 120s chat / 300s Ollama) enforced via a dedicated
   `*http.Client` per build — no shared `http.DefaultClient`.
+- Provider stream parsers treat EOF before the provider's terminal marker
+  as an error, preventing truncated assistant output from being saved as a
+  completed turn.
 - All inputs are length-capped (system prompt 8 KiB, message 32 KiB,
   conversation history 50 messages, tools 32) to bound DB row size and
   prompt cost.
+- Agent definitions can only reference tool keys currently registered in
+  the server tool catalog.
 - Errors are sanitised at the HTTP boundary: 500 responses return a
   generic message; the underlying error stays in server logs. Upstream
   provider response bodies are logged via slog and never forwarded to

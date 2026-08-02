@@ -68,11 +68,21 @@ export type AdminAITool = {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
-  schema: {
-    name: string;
-    description: string;
-    parameters: Record<string, unknown>;
-  };
+};
+
+export type AdminAIUsageDay = {
+  user_id?: string;
+  day: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  request_count: number;
+  total_tokens: number;
+};
+
+export type AdminAIUsage = {
+  days: number;
+  usage: AdminAIUsageDay[];
+  totals: AdminAIUsageDay;
 };
 
 export type AIProvider = {
@@ -144,6 +154,17 @@ export async function adminListDrivers(): Promise<Driver[]> {
 export async function adminListTools(): Promise<AdminAITool[]> {
   const res = await api.get<{ tools: AdminAITool[] }>("/api/admin/ai/tools");
   return res.tools;
+}
+
+export async function adminGetUsage(opts?: {
+  days?: number;
+  user?: string;
+}): Promise<AdminAIUsage> {
+  const params = new URLSearchParams();
+  if (opts?.days) params.set("days", String(opts.days));
+  if (opts?.user) params.set("user", opts.user);
+  const qs = params.toString();
+  return api.get<AdminAIUsage>(`/api/admin/ai/usage${qs ? `?${qs}` : ""}`);
 }
 
 export async function adminPutProvider(

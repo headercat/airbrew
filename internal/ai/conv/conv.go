@@ -62,16 +62,26 @@ type Message struct {
 // Snapshot is the API-facing projection of a Conversation (no internal
 // fields). Returned by the handler for the SPA.
 type Snapshot struct {
-	ID        string            `json:"id"`
-	AgentID   string            `json:"agent_id"`
-	Title     string            `json:"title"`
-	Model     string            `json:"model"`
-	Revision  int64             `json:"revision"`
-	CreatedAt string            `json:"created_at"`
-	UpdatedAt string            `json:"updated_at"`
-	DeletedAt *string           `json:"deleted_at,omitempty"`
-	System    string            `json:"system,omitempty"`
-	Tools     []string          `json:"tools,omitempty"`
+	ID        string   `json:"id"`
+	AgentID   string   `json:"agent_id"`
+	Title     string   `json:"title"`
+	Model     string   `json:"model"`
+	Revision  int64    `json:"revision"`
+	CreatedAt string   `json:"created_at"`
+	UpdatedAt string   `json:"updated_at"`
+	DeletedAt *string  `json:"deleted_at,omitempty"`
+	System    string   `json:"system,omitempty"`
+	Tools     []string `json:"tools,omitempty"`
+}
+
+// UsageDay is one UTC-day token usage rollup. UserID is empty when rows
+// are aggregated across all users.
+type UsageDay struct {
+	UserID           string
+	Day              string
+	PromptTokens     int
+	CompletionTokens int
+	RequestCount     int
 }
 
 // Input constraints. They are enforced in the service to bound DB row

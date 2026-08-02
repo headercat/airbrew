@@ -325,6 +325,47 @@ func (r *Repository) IncUsage(ctx context.Context, userID string, day time.Time,
 	return err
 }
 
+// ListUsage returns daily token rollups since the given UTC day. When
+// userID is empty, rows are aggregated across all users.
+func (r *Repository) ListUsage(ctx context.Context, userID string, since time.Time) ([]UsageDay, error) {
+	sinceStr := since.UTC().Format("2006-01-02")
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if userID != "" {
+		rows, err = r.db.QueryContext(ctx, `
+			SELECT user_id, day, prompt_tokens, completion_tokens, request_count
+			FROM ai_usage_daily
+			WHERE user_id = ? AND day >= ?
+			ORDER BY day ASC
+		`, userID, sinceStr)
+	} else {
+		rows, err = r.db.QueryContext(ctx, `
+			SELECT '' AS user_id, day,
+			       SUM(prompt_tokens), SUM(completion_tokens), SUM(request_count)
+			FROM ai_usage_daily
+			WHERE day >= ?
+			GROUP BY day
+			ORDER BY day ASC
+		`, sinceStr)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("conv: list usage: %w", err)
+	}
+	defer rows.Close()
+
+	out := []UsageDay{}
+	for rows.Next() {
+		var u UsageDay
+		if err := rows.Scan(&u.UserID, &u.Day, &u.PromptTokens, &u.CompletionTokens, &u.RequestCount); err != nil {
+			return nil, fmt.Errorf("conv: scan usage: %w", err)
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 // --- scanners --------------------------------------------------------------
 
 type scanner interface {

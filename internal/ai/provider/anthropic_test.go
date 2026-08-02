@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -103,5 +105,36 @@ func TestAnthropicDriverNeedsKey(t *testing.T) {
 	d := AnthropicDriver{}
 	if _, err := d.Build(Config{Driver: "anthropic", Model: "x"}); err == nil {
 		t.Fatal("expected error without api key")
+	}
+}
+
+func TestAnthropicDriverUnexpectedEOF(t *testing.T) {
+	const resp = `event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","model":"claude","usage":{"input_tokens":7,"output_tokens":0}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}
+
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+	cli, _ := AnthropicDriver{}.Build(Config{
+		Driver: "anthropic", BaseURL: srv.URL, Model: "x", APIKey: "sk-x",
+	})
+	ch := cli.ChatStream(context.Background(), Request{Model: "x"})
+	var hit bool
+	for d := range ch {
+		if d.Kind == DeltaError {
+			hit = true
+			if !errors.Is(d.Err, io.ErrUnexpectedEOF) {
+				t.Fatalf("expected unexpected EOF, got %v", d.Err)
+			}
+		}
+	}
+	if !hit {
+		t.Fatal("expected a DeltaError frame")
 	}
 }

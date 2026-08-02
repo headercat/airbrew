@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,11 +41,11 @@ data: [DONE]
 	}
 	ch := cli.ChatStream(context.Background(), Request{Model: "gpt-test"})
 	var (
-		content   strings.Builder
-		toolID    string
-		toolName  string
-		toolArgs  strings.Builder
-		gotUsage  bool
+		content  strings.Builder
+		toolID   string
+		toolName string
+		toolArgs strings.Builder
+		gotUsage bool
 	)
 	for d := range ch {
 		switch d.Kind {
@@ -105,6 +107,33 @@ func TestOpenAIDriverUpstreamError(t *testing.T) {
 			hit = true
 			if !strings.Contains(d.Err.Error(), "401") {
 				t.Fatalf("expected status in error, got %v", d.Err)
+			}
+		}
+	}
+	if !hit {
+		t.Fatal("expected a DeltaError frame")
+	}
+}
+
+func TestOpenAIDriverUnexpectedEOF(t *testing.T) {
+	const resp = `data: {"choices":[{"delta":{"content":"partial"}}]}
+
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+	cli, _ := OpenAIDriver{}.Build(Config{
+		Driver: "openai", BaseURL: srv.URL, Model: "x", APIKey: "sk-x",
+	})
+	ch := cli.ChatStream(context.Background(), Request{Model: "x"})
+	var hit bool
+	for d := range ch {
+		if d.Kind == DeltaError {
+			hit = true
+			if !errors.Is(d.Err, io.ErrUnexpectedEOF) {
+				t.Fatalf("expected unexpected EOF, got %v", d.Err)
 			}
 		}
 	}

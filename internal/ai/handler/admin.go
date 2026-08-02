@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/headercat/airbrew/internal/ai/agent"
+	"github.com/headercat/airbrew/internal/ai/conv"
 	"github.com/headercat/airbrew/internal/ai/provider"
 	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/httpserver/response"
@@ -21,13 +23,14 @@ import (
 type AdminHandler struct {
 	prov   *provider.Repository
 	agents *agent.DefinitionRepo
+	conv   *conv.Service
 	tools  *agent.ToolRegistry
 	audit  *audit.Service
 }
 
 // NewAdmin builds an AdminHandler.
-func NewAdmin(prov *provider.Repository, agents *agent.DefinitionRepo, tools *agent.ToolRegistry, auditSvc *audit.Service) *AdminHandler {
-	return &AdminHandler{prov: prov, agents: agents, tools: tools, audit: auditSvc}
+func NewAdmin(prov *provider.Repository, agents *agent.DefinitionRepo, convSvc *conv.Service, tools *agent.ToolRegistry, auditSvc *audit.Service) *AdminHandler {
+	return &AdminHandler{prov: prov, agents: agents, conv: convSvc, tools: tools, audit: auditSvc}
 }
 
 // RegisterRoutes mounts the admin endpoints. The caller mounts this mux
@@ -44,6 +47,7 @@ func (a *AdminHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/ai/tools", a.listTools)
 
 	mux.HandleFunc("GET /api/admin/ai/drivers", a.listDrivers)
+	mux.HandleFunc("GET /api/admin/ai/usage", a.usage)
 }
 
 // --- providers ------------------------------------------------------------
@@ -280,11 +284,10 @@ func (a *AdminHandler) deleteAgent(w http.ResponseWriter, r *http.Request) {
 // --- tools ----------------------------------------------------------------
 
 type toolInfo struct {
-	Key         string              `json:"key"`
-	Name        string              `json:"name"`
-	Description string              `json:"description"`
-	Parameters  map[string]any      `json:"parameters"`
-	Schema      provider.ToolSchema `json:"schema"`
+	Key         string         `json:"key"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
 }
 
 func (a *AdminHandler) listTools(w http.ResponseWriter, r *http.Request) {
@@ -298,7 +301,7 @@ func (a *AdminHandler) listTools(w http.ResponseWriter, r *http.Request) {
 		schema := t.Schema()
 		out = append(out, toolInfo{
 			Key: key, Name: schema.Name, Description: schema.Description,
-			Parameters: schema.Parameters, Schema: schema,
+			Parameters: schema.Parameters,
 		})
 	}
 	response.JSON(w, http.StatusOK, map[string]any{"tools": out})
@@ -336,6 +339,51 @@ func (a *AdminHandler) listDrivers(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	response.JSON(w, http.StatusOK, map[string]any{"drivers": out})
+}
+
+// --- usage ----------------------------------------------------------------
+
+type usageDayResp struct {
+	UserID           string `json:"user_id,omitempty"`
+	Day              string `json:"day"`
+	PromptTokens     int    `json:"prompt_tokens"`
+	CompletionTokens int    `json:"completion_tokens"`
+	RequestCount     int    `json:"request_count"`
+	TotalTokens      int    `json:"total_tokens"`
+}
+
+func (a *AdminHandler) usage(w http.ResponseWriter, r *http.Request) {
+	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	if days <= 0 {
+		days = 30
+	}
+	if days > 365 {
+		days = 365
+	}
+	since := time.Now().UTC().AddDate(0, 0, -(days - 1))
+	rows, err := a.conv.Usage(r.Context(), r.URL.Query().Get("user"), since)
+	if err != nil {
+		sanitizeInternal(w, err)
+		return
+	}
+	out := make([]usageDayResp, 0, len(rows))
+	totals := usageDayResp{}
+	for _, row := range rows {
+		item := usageDayResp{
+			UserID: row.UserID, Day: row.Day,
+			PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens,
+			RequestCount: row.RequestCount,
+			TotalTokens:  row.PromptTokens + row.CompletionTokens,
+		}
+		out = append(out, item)
+		totals.PromptTokens += item.PromptTokens
+		totals.CompletionTokens += item.CompletionTokens
+		totals.RequestCount += item.RequestCount
+		totals.TotalTokens += item.TotalTokens
+	}
+	response.JSON(w, http.StatusOK, map[string]any{
+		"days": days, "usage": out, "totals": totals,
+	})
 }
 
 // --- error helpers --------------------------------------------------------

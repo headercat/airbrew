@@ -162,3 +162,9 @@ func (s *Service) History(ctx context.Context, userID, conversationID string) ([
 	}
 	return out, nil
 }
+
+// Usage returns daily token rollups since the given UTC day. Empty userID
+// aggregates across all users.
+func (s *Service) Usage(ctx context.Context, userID string, since time.Time) ([]UsageDay, error) {
+	return s.repo.ListUsage(ctx, strings.TrimSpace(userID), since)
+}

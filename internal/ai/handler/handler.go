@@ -40,10 +40,10 @@ type Runtime interface {
 
 // Handler exposes the user-facing AI endpoints.
 type Handler struct {
-	conv     *conv.Service
-	agents   *agent.DefinitionRepo
-	runtime  Runtime
-	audit    *audit.Service
+	conv    *conv.Service
+	agents  *agent.DefinitionRepo
+	runtime Runtime
+	audit   *audit.Service
 	// autoTitle is the optional Module hook that generates a short title
 	// after the first user message. nil leaves chat without auto-titles.
 	autoTitle func(ctx context.Context, userID, conversationID, userMessage string) (string, error)
@@ -78,13 +78,13 @@ func (h *Handler) RegisterUserRoutes(mux *http.ServeMux) {
 // --- agents ----------------------------------------------------------------
 
 type agentResp struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Description  string   `json:"description"`
-	Model        string   `json:"model"`
-	Tools        []string `json:"tools"`
-	IsBuiltin    bool     `json:"is_builtin"`
-	IsActive     bool     `json:"is_active"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Model       string   `json:"model"`
+	Tools       []string `json:"tools"`
+	IsBuiltin   bool     `json:"is_builtin"`
+	IsActive    bool     `json:"is_active"`
 }
 
 func toAgentResp(a agent.Definition) agentResp {
@@ -120,19 +120,19 @@ type createConvReq struct {
 }
 
 type convResp struct {
-	ID        string    `json:"id"`
-	AgentID   string    `json:"agent_id"`
-	Title     string    `json:"title"`
-	Model     string    `json:"model"`
-	Revision  int64     `json:"revision"`
-	CreatedAt string    `json:"created_at"`
-	UpdatedAt string    `json:"updated_at"`
+	ID        string `json:"id"`
+	AgentID   string `json:"agent_id"`
+	Title     string `json:"title"`
+	Model     string `json:"model"`
+	Revision  int64  `json:"revision"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 func toConvResp(c conv.Conversation) convResp {
 	return convResp{
 		ID: c.ID, AgentID: c.AgentID, Title: c.Title, Model: c.SnapModel,
-		Revision: c.Revision,
+		Revision:  c.Revision,
 		CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: c.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -140,24 +140,24 @@ func toConvResp(c conv.Conversation) convResp {
 
 type convDetailResp struct {
 	convResp
-	System      string         `json:"system"`
-	Tools       []string       `json:"tools"`
-	Temperature float32        `json:"temperature"`
-	MaxTurns    int            `json:"max_turns"`
-	Messages    []messageResp  `json:"messages"`
+	System      string        `json:"system"`
+	Tools       []string      `json:"tools"`
+	Temperature float32       `json:"temperature"`
+	MaxTurns    int           `json:"max_turns"`
+	Messages    []messageResp `json:"messages"`
 }
 
 type messageResp struct {
-	ID               string                 `json:"id"`
-	Role             string                 `json:"role"`
-	Content          string                 `json:"content"`
-	ToolCalls        []provider.ToolCall    `json:"tool_calls,omitempty"`
-	ToolCallID       string                 `json:"tool_call_id,omitempty"`
-	ToolName         string                 `json:"tool_name,omitempty"`
-	PromptTokens     int                    `json:"prompt_tokens,omitempty"`
-	CompletionTokens int                    `json:"completion_tokens,omitempty"`
-	Seq              int                    `json:"seq"`
-	CreatedAt        string                 `json:"created_at"`
+	ID               string              `json:"id"`
+	Role             string              `json:"role"`
+	Content          string              `json:"content"`
+	ToolCalls        []provider.ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string              `json:"tool_call_id,omitempty"`
+	ToolName         string              `json:"tool_name,omitempty"`
+	PromptTokens     int                 `json:"prompt_tokens,omitempty"`
+	CompletionTokens int                 `json:"completion_tokens,omitempty"`
+	Seq              int                 `json:"seq"`
+	CreatedAt        string              `json:"created_at"`
 }
 
 func toMessageResp(m conv.Message) messageResp {
@@ -165,7 +165,7 @@ func toMessageResp(m conv.Message) messageResp {
 		ID: m.ID, Role: string(m.Role), Content: m.Content,
 		ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID, ToolName: m.ToolName,
 		PromptTokens: m.PromptTokens, CompletionTokens: m.CompletionTokens,
-		Seq: m.Seq,
+		Seq:       m.Seq,
 		CreatedAt: m.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	if out.ToolCalls == nil {
@@ -379,14 +379,20 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	for ev := range events {
 		switch ev.Kind {
 		case agent.EventMetadata:
-			_ = sse.Event("metadata", map[string]string{"model": ev.Content})
+			if err := sse.Event("metadata", map[string]string{"model": ev.Content}); err != nil {
+				return
+			}
 		case agent.EventDelta:
-			_ = sse.Event("delta", map[string]string{"content": ev.Content})
+			if err := sse.Event("delta", map[string]string{"content": ev.Content}); err != nil {
+				return
+			}
 		case agent.EventTool:
-			_ = sse.Event("tool", map[string]any{
+			if err := sse.Event("tool", map[string]any{
 				"id": ev.ToolCallID, "name": ev.ToolName,
 				"args": ev.ToolArgs, "result": ev.ToolResult,
-			})
+			}); err != nil {
+				return
+			}
 		case agent.EventDone:
 			payload := map[string]any{}
 			if ev.MessageID != "" {
@@ -406,10 +412,14 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 				default:
 				}
 			}
-			_ = sse.Event("done", payload)
+			if err := sse.Event("done", payload); err != nil {
+				return
+			}
 			return
 		case agent.EventError:
-			_ = sse.Event("error", ev.Err)
+			if err := sse.Event("error", ev.Err); err != nil {
+				return
+			}
 			return
 		}
 	}

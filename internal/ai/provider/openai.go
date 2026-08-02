@@ -27,8 +27,8 @@ const openAIDefaultTimeout = 120 * time.Second
 // usable; it is registered at init under "openai".
 type OpenAIDriver struct{}
 
-func (OpenAIDriver) DefaultModel() string  { return openAIDefaultModel }
-func (OpenAIDriver) NeedsAPIKey() bool     { return true }
+func (OpenAIDriver) DefaultModel() string { return openAIDefaultModel }
+func (OpenAIDriver) NeedsAPIKey() bool    { return true }
 func (OpenAIDriver) Build(cfg Config) (LLMClient, error) {
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("%w: openai requires api_key", ErrInvalidConfig)
@@ -87,20 +87,20 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request) <-chan Delta
 }
 
 type openAIReq struct {
-	Model       string         `json:"model"`
-	Messages    []openAIMsg    `json:"messages"`
-	Tools       []openAITool   `json:"tools,omitempty"`
-	Temperature float32        `json:"temperature,omitempty"`
-	MaxTokens   int            `json:"max_tokens,omitempty"`
-	Stream      bool           `json:"stream"`
-	StreamOpts  *openAIStream  `json:"stream_options,omitempty"`
+	Model       string        `json:"model"`
+	Messages    []openAIMsg   `json:"messages"`
+	Tools       []openAITool  `json:"tools,omitempty"`
+	Temperature float32       `json:"temperature,omitempty"`
+	MaxTokens   int           `json:"max_tokens,omitempty"`
+	Stream      bool          `json:"stream"`
+	StreamOpts  *openAIStream `json:"stream_options,omitempty"`
 }
 
 type openAIMsg struct {
-	Role       string            `json:"role"`
-	Content    string            `json:"content,omitempty"`
-	ToolCalls  []openAIToolCall  `json:"tool_calls,omitempty"`
-	ToolCallID string            `json:"tool_call_id,omitempty"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 type openAITool struct {
@@ -145,7 +145,7 @@ func (c *openAIClient) buildBody(req Request) ([]byte, error) {
 		msgs = append(msgs, om)
 	}
 	body := openAIReq{
-		Model: orDefault(req.Model, c.cfg.Model),
+		Model:    orDefault(req.Model, c.cfg.Model),
 		Messages: msgs, Temperature: req.Temperature,
 		MaxTokens: req.MaxTokens, Stream: true,
 		StreamOpts: &openAIStream{IncludeUsage: true},
@@ -177,7 +177,7 @@ func (c *openAIClient) streamSSE(ctx context.Context, body io.Reader, out chan<-
 		line, err := br.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				out <- Delta{Kind: DeltaDone}
+				out <- Delta{Kind: DeltaError, Err: io.ErrUnexpectedEOF}
 				return
 			}
 			out <- Delta{Kind: DeltaError, Err: err}
@@ -198,7 +198,7 @@ func (c *openAIClient) streamSSE(ctx context.Context, body io.Reader, out chan<-
 		}
 		if chunk.Usage != nil {
 			out <- Delta{Kind: DeltaDone, Usage: &Usage{
-				PromptTokens: chunk.Usage.PromptTokens,
+				PromptTokens:     chunk.Usage.PromptTokens,
 				CompletionTokens: chunk.Usage.CompletionTokens,
 			}}
 			return
@@ -261,9 +261,9 @@ type openAIChoice struct {
 }
 
 type openAIDelta struct {
-	Role      string             `json:"role,omitempty"`
-	Content   string             `json:"content,omitempty"`
-	ToolCalls []openAIToolDelta  `json:"tool_calls,omitempty"`
+	Role      string            `json:"role,omitempty"`
+	Content   string            `json:"content,omitempty"`
+	ToolCalls []openAIToolDelta `json:"tool_calls,omitempty"`
 }
 
 type openAIToolDelta struct {

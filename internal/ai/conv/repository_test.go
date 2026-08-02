@@ -154,6 +154,41 @@ func TestIncUsageRollup(t *testing.T) {
 	}
 }
 
+func TestListUsageAggregatesAndFiltersByUser(t *testing.T) {
+	r, uid, _ := testRepo(t)
+	ctx := context.Background()
+	other := uid + "_other"
+	if _, err := r.db.ExecContext(ctx,
+		`INSERT INTO users (id, email, public_subject, status) VALUES (?, ?, ?, 'active')`,
+		other, other+"@example.com", other,
+	); err != nil {
+		t.Fatalf("seed other user: %v", err)
+	}
+	day := time.Date(2025, 2, 3, 12, 0, 0, 0, time.UTC)
+	if err := r.IncUsage(ctx, uid, day, 100, 20); err != nil {
+		t.Fatalf("IncUsage: %v", err)
+	}
+	if err := r.IncUsage(ctx, other, day, 7, 3); err != nil {
+		t.Fatalf("IncUsage other: %v", err)
+	}
+
+	all, err := r.ListUsage(ctx, "", day.AddDate(0, 0, -1))
+	if err != nil {
+		t.Fatalf("ListUsage all: %v", err)
+	}
+	if len(all) != 1 || all[0].PromptTokens != 107 || all[0].CompletionTokens != 23 || all[0].RequestCount != 2 {
+		t.Fatalf("aggregate usage mismatch: %+v", all)
+	}
+
+	one, err := r.ListUsage(ctx, uid, day.AddDate(0, 0, -1))
+	if err != nil {
+		t.Fatalf("ListUsage user: %v", err)
+	}
+	if len(one) != 1 || one[0].UserID != uid || one[0].PromptTokens != 100 || one[0].CompletionTokens != 20 {
+		t.Fatalf("user usage mismatch: %+v", one)
+	}
+}
+
 func TestHistoryReplay(t *testing.T) {
 	svc, uid, agentID := newTestService(t)
 	ctx := context.Background()

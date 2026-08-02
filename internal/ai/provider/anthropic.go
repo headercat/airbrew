@@ -97,8 +97,8 @@ type anthropicReq struct {
 }
 
 type anthropicMessage struct {
-	Role    string              `json:"role"`
-	Content anthropicContent    `json:"-"`
+	Role    string           `json:"role"`
+	Content anthropicContent `json:"-"`
 }
 
 // anthropicContent is either a plain string (marshal) or a slice of typed
@@ -117,14 +117,14 @@ func (c anthropicContent) MarshalJSON() ([]byte, error) {
 }
 
 type anthropicBlock struct {
-	Type      string                 `json:"type"`
-	Text      string                 `json:"text,omitempty"`
-	ID        string                 `json:"id,omitempty"`
-	Name      string                 `json:"name,omitempty"`
-	Input     map[string]any         `json:"input,omitempty"`
-	ToolUseID string                 `json:"tool_use_id,omitempty"`
-	Content   string                 `json:"content,omitempty"`
-	IsError   bool                   `json:"is_error,omitempty"`
+	Type      string         `json:"type"`
+	Text      string         `json:"text,omitempty"`
+	ID        string         `json:"id,omitempty"`
+	Name      string         `json:"name,omitempty"`
+	Input     map[string]any `json:"input,omitempty"`
+	ToolUseID string         `json:"tool_use_id,omitempty"`
+	Content   string         `json:"content,omitempty"`
+	IsError   bool           `json:"is_error,omitempty"`
 }
 
 type anthropicTool struct {
@@ -135,7 +135,7 @@ type anthropicTool struct {
 
 func (c *anthropicClient) buildBody(req Request) ([]byte, error) {
 	out := anthropicReq{
-		Model: orDefault(req.Model, c.cfg.Model),
+		Model:       orDefault(req.Model, c.cfg.Model),
 		Temperature: req.Temperature, Stream: true,
 	}
 	if req.MaxTokens <= 0 {
@@ -189,17 +189,17 @@ func (c *anthropicClient) buildBody(req Request) ([]byte, error) {
 }
 
 type anthropicEvent struct {
-	Type  string          `json:"type"`
-	Delta json.RawMessage `json:"delta,omitempty"`
-	Message anthropicMsgMeta `json:"message,omitempty"`
-	Index  int             `json:"index,omitempty"`
-	ContentBlock anthropicBlock `json:"content_block,omitempty"`
+	Type         string           `json:"type"`
+	Delta        json.RawMessage  `json:"delta,omitempty"`
+	Message      anthropicMsgMeta `json:"message,omitempty"`
+	Index        int              `json:"index,omitempty"`
+	ContentBlock anthropicBlock   `json:"content_block,omitempty"`
 }
 
 type anthropicMsgMeta struct {
-	ID         string         `json:"id"`
-	Model      string         `json:"model"`
-	Usage      anthropicUsage `json:"usage"`
+	ID    string         `json:"id"`
+	Model string         `json:"model"`
+	Usage anthropicUsage `json:"usage"`
 }
 
 type anthropicUsage struct {
@@ -215,14 +215,14 @@ type anthropicContentDelta struct {
 }
 
 // streamSSE parses the Anthropic event stream. State machine:
-//  - message_start: emits nothing yet (usage may be partial).
-//  - content_block_start: opens a tool_use block; we emit a
-//    DeltaToolCallStart so the client can render the tool name plate.
-//  - content_block_delta: text deltas emit DeltaContent; input_json_delta
-//    fragments emit DeltaToolCallArgs.
-//  - message_delta: final usage arrives here as usage.output_tokens; we
-//    wait for this before emitting DeltaDone so the totals are complete.
-//  - message_stop: terminal — we close the stream.
+//   - message_start: emits nothing yet (usage may be partial).
+//   - content_block_start: opens a tool_use block; we emit a
+//     DeltaToolCallStart so the client can render the tool name plate.
+//   - content_block_delta: text deltas emit DeltaContent; input_json_delta
+//     fragments emit DeltaToolCallArgs.
+//   - message_delta: final usage arrives here as usage.output_tokens; we
+//     wait for this before emitting DeltaDone so the totals are complete.
+//   - message_stop: terminal — we close the stream.
 func (c *anthropicClient) streamSSE(ctx context.Context, body io.Reader, out chan<- Delta) {
 	br := bufio.NewReaderSize(body, 16<<10)
 	var (
@@ -241,9 +241,7 @@ func (c *anthropicClient) streamSSE(ctx context.Context, body io.Reader, out cha
 		line, err := br.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				out <- Delta{Kind: DeltaDone, Usage: &Usage{
-					PromptTokens: inputTokens, CompletionTokens: outputTokens,
-				}}
+				out <- Delta{Kind: DeltaError, Err: io.ErrUnexpectedEOF}
 				return
 			}
 			out <- Delta{Kind: DeltaError, Err: err}

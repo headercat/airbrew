@@ -245,39 +245,25 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 
 		// 5. Dispatch each tool call, emit results, and append the tool
 		//    messages so the next turn sees them.
-		persistedToolCalls := make([]provider.ToolCall, 0, len(acc.toolCalls))
-		for i, tc := range acc.toolCalls {
-			if tc == nil {
-				continue
-			}
-			id := normalizedToolCallID(tc.id, turn, i)
-			persistedToolCalls = append(persistedToolCalls, provider.ToolCall{
-				ID: id, Name: tc.name, Args: tc.args.String(),
-			})
-		}
+		persistedToolCalls := acc.completedToolCalls(turn)
 		// Persist the assistant turn that issued the tool calls first,
 		// mirroring how the wire transcript will look to the model next turn.
 		if _, err := rt.conv.AppendAssistantMessage(ctx, in.UserID, in.ConversationID,
-			acc.content.String(), persistedToolCalls,
+			acc.content.String(), providerToolCalls(persistedToolCalls),
 			lastUsage.PromptTokens, lastUsage.CompletionTokens,
 		); err != nil {
 			return fmt.Errorf("append assistant tool turn: %w", err)
 		}
 
-		for i, tc := range acc.toolCalls {
-			if tc == nil {
-				continue
-			}
-			id := normalizedToolCallID(tc.id, turn, i)
-			argsStr := tc.args.String()
-			result, _ := dispatch(ctx, rt.tools, allowedTools, tc.name, argsStr)
+		for _, tc := range persistedToolCalls {
+			result, _ := dispatch(ctx, rt.tools, allowedTools, tc.name, tc.args)
 			result = truncateToolResult(result)
 			out <- Event{
-				Kind: EventTool, ToolCallID: id, ToolName: tc.name,
-				ToolArgs: argsStr, ToolResult: result,
+				Kind: EventTool, ToolCallID: tc.id, ToolName: tc.name,
+				ToolArgs: tc.args, ToolResult: result,
 			}
 			if _, err := rt.conv.AppendToolMessage(ctx, in.UserID, in.ConversationID,
-				id, tc.name, result,
+				tc.id, tc.name, result,
 			); err != nil {
 				return fmt.Errorf("append tool message: %w", err)
 			}
@@ -373,6 +359,12 @@ type assistantToolCall struct {
 	args strings.Builder
 }
 
+type completedToolCall struct {
+	id   string
+	name string
+	args string
+}
+
 func newAssistantAccumulator() *assistantAccumulator {
 	return &assistantAccumulator{}
 }
@@ -400,6 +392,27 @@ func (a *assistantAccumulator) appendToolArgs(index int, args string) {
 		a.toolCalls[index] = &assistantToolCall{}
 	}
 	a.toolCalls[index].args.WriteString(args)
+}
+
+func (a *assistantAccumulator) completedToolCalls(turn int) []completedToolCall {
+	out := make([]completedToolCall, 0, len(a.toolCalls))
+	for i, tc := range a.toolCalls {
+		if tc == nil {
+			continue
+		}
+		out = append(out, completedToolCall{
+			id: normalizedToolCallID(tc.id, turn, i), name: tc.name, args: tc.args.String(),
+		})
+	}
+	return out
+}
+
+func providerToolCalls(calls []completedToolCall) []provider.ToolCall {
+	out := make([]provider.ToolCall, 0, len(calls))
+	for _, tc := range calls {
+		out = append(out, provider.ToolCall{ID: tc.id, Name: tc.name, Args: tc.args})
+	}
+	return out
 }
 
 func toEventError(err error) *ErrorBody {

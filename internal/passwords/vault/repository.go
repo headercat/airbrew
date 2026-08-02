@@ -247,6 +247,13 @@ func (r *Repository) SoftDeleteFolder(ctx context.Context, userID, id string, if
 		if n, _ := res.RowsAffected(); n == 0 {
 			return ErrNotFound
 		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE vault_items
+			SET folder_id = NULL, revision = ?, updated_at = ?
+			WHERE user_id = ? AND folder_id = ? AND deleted_at IS NULL
+		`, rev, now, userID, id); err != nil {
+			return fmt.Errorf("vault: clear deleted folder from items: %w", err)
+		}
 		return nil
 	})
 }

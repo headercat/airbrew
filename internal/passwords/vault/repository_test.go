@@ -192,6 +192,36 @@ func TestSyncReturnsDeltaAndTombstones(t *testing.T) {
 	}
 }
 
+func TestSoftDeleteFolderClearsItemFolderIDs(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	f, err := repo.CreateFolder(ctx, "u1", cipherFixture(24, 90), nonceFixture(91))
+	if err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+	it, err := repo.CreateItem(ctx, "u1", ItemInput{
+		Type: ItemLogin, FolderID: f.ID,
+		NameCipher: cipherFixture(24, 92), NameNonce: nonceFixture(93),
+		DataCipher: cipherFixture(32, 94), DataNonce: nonceFixture(95),
+	})
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+	if err := repo.SoftDeleteFolder(ctx, "u1", f.ID, f.Revision); err != nil {
+		t.Fatalf("delete folder: %v", err)
+	}
+	got, err := repo.GetItem(ctx, "u1", it.ID)
+	if err != nil {
+		t.Fatalf("get item: %v", err)
+	}
+	if got.FolderID != "" {
+		t.Fatalf("folder_id = %q, want cleared", got.FolderID)
+	}
+	if got.Revision <= it.Revision {
+		t.Fatalf("item revision = %d, want > %d", got.Revision, it.Revision)
+	}
+}
+
 func TestSyncPagination(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()

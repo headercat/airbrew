@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Modal } from "@/components/ui/modal";
 import { isApiError } from "@/lib/api";
 import type { ExportBundle } from "@/lib/vault/api";
 import {
@@ -36,6 +37,8 @@ export function VaultActions() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [pendingImport, setPendingImport] = useState<ExportBundle | null>(null);
+  const [backupPassword, setBackupPassword] = useState("");
   const importInput = useRef<HTMLInputElement>(null);
 
   async function onExport() {
@@ -73,11 +76,25 @@ export function VaultActions() {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text) as ExportBundle;
-      const sourcePassword = window.prompt(
-        t("passwords.actions.importPasswordPrompt"),
-      );
-      if (sourcePassword === null) return;
-      const counts = await importBundle(parsed, sourcePassword);
+      setPendingImport(parsed);
+      setBackupPassword("");
+    } catch (err) {
+      setError(fmt(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitImport(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!pendingImport) return;
+    setBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const counts = await importBundle(pendingImport, backupPassword);
+      setPendingImport(null);
+      setBackupPassword("");
       setInfo(
         t("passwords.actions.imported", {
           folders: counts.folders,
@@ -152,6 +169,50 @@ export function VaultActions() {
           <p className="text-sm text-green-600 dark:text-green-500">{info}</p>
         )}
       </CardContent>
+      <Modal
+        open={pendingImport !== null}
+        onClose={() => {
+          if (busy) return;
+          setPendingImport(null);
+          setBackupPassword("");
+        }}
+        title={t("passwords.actions.importPasswordTitle")}
+        description={t("passwords.actions.importPasswordPrompt")}
+      >
+        <form className="space-y-3" onSubmit={submitImport}>
+          <div className="grid gap-1">
+            <Label htmlFor="backup-master-password">
+              {t("passwords.actions.backupPassword")}
+            </Label>
+            <Input
+              id="backup-master-password"
+              type="password"
+              autoComplete="current-password"
+              value={backupPassword}
+              onChange={(e) => setBackupPassword(e.target.value)}
+              disabled={busy}
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                setPendingImport(null);
+                setBackupPassword("");
+              }}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" disabled={busy || !backupPassword}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              {t("passwords.actions.import")}
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </Card>
   );
 }

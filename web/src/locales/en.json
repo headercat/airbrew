@@ -2,6 +2,7 @@
   "common": {
     "back": "Back",
     "save": "Save",
+    "cancel": "Cancel",
     "edit": "Edit",
     "loading": "Loading…",
     "open": "Open",
@@ -559,7 +560,9 @@
       "description": "Back up or restore items, folders, and attachments, or change your master password. Import asks for the backup master password and re-encrypts into this vault.",
       "export": "Export backup",
       "import": "Import backup",
+      "importPasswordTitle": "Unlock backup",
       "importPasswordPrompt": "Enter the master password that unlocks this backup.",
+      "backupPassword": "Backup master password",
       "exported": "Encrypted backup downloaded.",
       "imported": "Verified the backup and re-encrypted {{folders}} folders, {{items}} items, and {{attachments}} attachments with this vault key.",
       "newFolder": "New folder",

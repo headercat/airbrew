@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ChevronLeft,
+  ChevronRight,
   Eye,
   RotateCcw,
   Search,
@@ -44,11 +46,15 @@ const blankCreateForm: CreateUserForm = {
   password: "",
 };
 
+const pageSize = 50;
+
 export default function AdminUsers() {
   const { t } = useTranslation();
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [search, setSearch] = useState("");
   const [includeDeleted, setIncludeDeleted] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -65,16 +71,24 @@ export default function AdminUsers() {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
       if (includeDeleted) params.set("include_deleted", "true");
+      params.set("limit", String(pageSize));
+      params.set("offset", String(offset));
       const q = params.toString() ? `?${params.toString()}` : "";
-      const res = await api.get<{ users: AdminUser[] }>(`/api/admin/users${q}`);
+      const res = await api.get<{
+        users: AdminUser[];
+        total: number;
+        limit: number;
+        offset: number;
+      }>(`/api/admin/users${q}`);
       setUsers(res.users);
+      setTotal(res.total);
       setError(null);
     } catch (err) {
       setError(
         isApiError(err) ? (err.error_description ?? err.error) : "error",
       );
     }
-  }, [includeDeleted, search]);
+  }, [includeDeleted, offset, search]);
 
   useEffect(() => {
     void refresh();
@@ -84,6 +98,10 @@ export default function AdminUsers() {
     () => selected?.display_name || selected?.email || "",
     [selected],
   );
+  const pageStart = total === 0 ? 0 : offset + 1;
+  const pageEnd = Math.min(offset + (users?.length ?? 0), total);
+  const canPageBack = offset > 0;
+  const canPageForward = offset + pageSize < total;
 
   async function createUser() {
     try {
@@ -228,7 +246,10 @@ export default function AdminUsers() {
               <Input
                 placeholder={t("admin.users.searchPlaceholder")}
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setOffset(0);
+                }}
                 className="h-8 pl-8 text-[13px]"
               />
             </div>
@@ -236,7 +257,10 @@ export default function AdminUsers() {
               <input
                 type="checkbox"
                 checked={includeDeleted}
-                onChange={(e) => setIncludeDeleted(e.target.checked)}
+                onChange={(e) => {
+                  setIncludeDeleted(e.target.checked);
+                  setOffset(0);
+                }}
               />
               {t("admin.users.includeDeleted")}
             </label>
@@ -388,6 +412,37 @@ export default function AdminUsers() {
             <p className="py-8 text-center text-sm text-muted-foreground">
               {t("common.loading")}
             </p>
+          )}
+          {users && (
+            <div className="flex flex-col gap-2 border-t border-border px-3 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                {t("admin.users.pageSummary", {
+                  start: pageStart,
+                  end: pageEnd,
+                  total,
+                })}
+              </span>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!canPageBack}
+                  onClick={() => setOffset(Math.max(0, offset - pageSize))}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  {t("admin.users.previousPage")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!canPageForward}
+                  onClick={() => setOffset(offset + pageSize)}
+                >
+                  {t("admin.users.nextPage")}
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>

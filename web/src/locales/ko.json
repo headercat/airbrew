@@ -228,6 +228,9 @@
       "activity": "최근 활동",
       "noActivity": "최근 사용자 활동이 없습니다.",
       "noUsers": "사용자가 없습니다.",
+      "pageSummary": "전체 {{total}}명 중 {{start}}-{{end}}",
+      "previousPage": "이전",
+      "nextPage": "다음",
       "confirmReset": "{{email}}의 비밀번호를 재설정하시겠습니까? 임시 비밀번호가 생성됩니다.",
       "tempPassword": "임시 비밀번호: {{pw}}\n\n지금 복사하세요 — 다시 표시되지 않습니다."
     },

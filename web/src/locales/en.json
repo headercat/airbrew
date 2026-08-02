@@ -228,6 +228,9 @@
       "activity": "Recent activity",
       "noActivity": "No recent user activity.",
       "noUsers": "No users found.",
+      "pageSummary": "{{start}}-{{end}} of {{total}} users",
+      "previousPage": "Previous",
+      "nextPage": "Next",
       "confirmReset": "Reset password for {{email}}? A temporary password will be generated.",
       "tempPassword": "Temporary password: {{pw}}\n\nCopy it now — it won't be shown again."
     },

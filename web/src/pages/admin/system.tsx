@@ -34,6 +34,16 @@ export default function AdminSystem() {
           <SettingRow title="Go" description={t("admin.system.runtime")}>
             <Badge variant="outline">{info?.go_version ?? "—"}</Badge>
           </SettingRow>
+          <SettingRow title={t("admin.system.startedAt")}>
+            <span className="text-[13px] font-medium">
+              {info ? new Date(info.started_at).toLocaleString() : "—"}
+            </span>
+          </SettingRow>
+          <SettingRow title={t("admin.system.uptime")}>
+            <span className="text-[13px] font-medium tabular-nums">
+              {info ? formatUptime(info.uptime_seconds) : "—"}
+            </span>
+          </SettingRow>
           <SettingRow title="CPU" description={t("admin.system.cores")}>
             <span className="text-[13px] font-medium tabular-nums">
               {info?.num_cpu ?? "—"}
@@ -66,6 +76,17 @@ export default function AdminSystem() {
             <Badge variant="outline">{info?.db_path ?? "—"}</Badge>
           </SettingRow>
           <SettingRow
+            title={t("admin.system.dataDir")}
+            description={t("admin.system.dataDirDesc")}
+          >
+            <span className="max-w-[360px] truncate text-[13px] font-medium">
+              {info?.data_dir || "—"}
+            </span>
+          </SettingRow>
+          <SettingRow title={t("admin.system.migrationVersion")}>
+            <Badge variant="outline">{info?.migration_version || "—"}</Badge>
+          </SettingRow>
+          <SettingRow
             title={t("admin.system.dbSize")}
             description={t("admin.system.dbSizeDesc")}
           >
@@ -88,4 +109,13 @@ export default function AdminSystem() {
       </Card>
     </>
   );
+}
+
+function formatUptime(seconds: number) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }

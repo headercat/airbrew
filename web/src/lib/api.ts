@@ -133,13 +133,17 @@ export type Branding = {
 export type SystemInfo = {
   version: string;
   go_version: string;
+  started_at: string;
+  uptime_seconds: number;
   num_cpu: number;
   user_count: number;
   modules_enabled: number;
   modules_total: number;
   active_sessions: number;
   db_path: string;
+  data_dir: string;
   db_size_mb: string;
+  migration_version: string;
 };
 
 export type ProfileUpdate = {

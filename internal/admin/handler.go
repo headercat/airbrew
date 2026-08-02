@@ -45,6 +45,8 @@ type moduleDTO struct {
 	Enabled     bool   `json:"enabled"`
 }
 
+var startedAt = time.Now().UTC().Truncate(time.Second)
+
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"module":"admin","status":"ok"}`))
@@ -1099,15 +1101,19 @@ func (h *Handler) setSetting(ctx context.Context, key, value string) {
 // ---- System ----
 
 type systemDTO struct {
-	Version       string `json:"version"`
-	GoVersion     string `json:"go_version"`
-	NumCPU        int    `json:"num_cpu"`
-	UserCount     int    `json:"user_count"`
-	ModuleEnabled int    `json:"modules_enabled"`
-	ModuleTotal   int    `json:"modules_total"`
-	SessionCount  int    `json:"active_sessions"`
-	DBPath        string `json:"db_path"`
-	DBSizeMB      string `json:"db_size_mb"`
+	Version          string    `json:"version"`
+	GoVersion        string    `json:"go_version"`
+	StartedAt        time.Time `json:"started_at"`
+	UptimeSeconds    int64     `json:"uptime_seconds"`
+	NumCPU           int       `json:"num_cpu"`
+	UserCount        int       `json:"user_count"`
+	ModuleEnabled    int       `json:"modules_enabled"`
+	ModuleTotal      int       `json:"modules_total"`
+	SessionCount     int       `json:"active_sessions"`
+	DBPath           string    `json:"db_path"`
+	DataDir          string    `json:"data_dir"`
+	DBSizeMB         string    `json:"db_size_mb"`
+	MigrationVersion string    `json:"migration_version"`
 }
 
 func (h *Handler) systemInfo(w http.ResponseWriter, r *http.Request) {
@@ -1125,22 +1131,29 @@ func (h *Handler) systemInfo(w http.ResponseWriter, r *http.Request) {
 	// Get DB file size from the database itself.
 	dbSize := "unknown"
 	dbPath, _ := h.databasePath(ctx)
+	dataDir := ""
 	if dbPath != "" {
+		dataDir = filepath.Dir(dbPath)
 		if fi, err := os.Stat(dbPath); err == nil {
 			dbSize = fmt.Sprintf("%.1f", float64(fi.Size())/1024/1024)
 		}
 	}
+	migrationVersion, _ := h.latestMigrationVersion(ctx)
 
 	response.JSON(w, http.StatusOK, systemDTO{
-		Version:       "0.1.0",
-		GoVersion:     runtime.Version(),
-		NumCPU:        runtime.NumCPU(),
-		UserCount:     userCount,
-		ModuleEnabled: enabled,
-		ModuleTotal:   len(modules.Catalog),
-		SessionCount:  activeSessions,
-		DBPath:        filepath.Base(dbPath),
-		DBSizeMB:      dbSize,
+		Version:          "0.1.0",
+		GoVersion:        runtime.Version(),
+		StartedAt:        startedAt,
+		UptimeSeconds:    int64(time.Since(startedAt).Seconds()),
+		NumCPU:           runtime.NumCPU(),
+		UserCount:        userCount,
+		ModuleEnabled:    enabled,
+		ModuleTotal:      len(modules.Catalog),
+		SessionCount:     activeSessions,
+		DBPath:           filepath.Base(dbPath),
+		DataDir:          dataDir,
+		DBSizeMB:         dbSize,
+		MigrationVersion: migrationVersion,
 	})
 }
 
@@ -1194,6 +1207,17 @@ func (h *Handler) databasePath(ctx context.Context) (string, error) {
 		}
 	}
 	return "", rows.Err()
+}
+
+func (h *Handler) latestMigrationVersion(ctx context.Context) (string, error) {
+	var version string
+	err := h.db.QueryRowContext(ctx,
+		"SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1",
+	).Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return version, err
 }
 
 // ---- Security: password policy ----

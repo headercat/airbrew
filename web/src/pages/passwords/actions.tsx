@@ -27,6 +27,7 @@ import {
   writeVaultSecuritySettings,
 } from "@/lib/vault/security";
 import { WrongMasterPassword, useVault } from "@/lib/vault/store";
+import { PasswordStrengthHint } from "./password-strength";
 
 export function VaultActions() {
   const { t } = useTranslation();
@@ -293,7 +294,7 @@ function ChangeMasterPassword({
           value={next}
           onChange={(e) => setNext(e.target.value)}
         />
-        <PasswordStrengthText password={next} />
+        <PasswordStrengthHint password={next} />
       </div>
       <div className="grid gap-1">
         <Label htmlFor="confmp">{t("passwords.setup.confirm")}</Label>
@@ -320,26 +321,6 @@ function ChangeMasterPassword({
         </Button>
       </div>
     </form>
-  );
-}
-
-function PasswordStrengthText({ password }: { password: string }) {
-  const { t } = useTranslation();
-  const strength = evaluateMasterPassword(password);
-  if (!password) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        {t("passwords.strength.hint")}
-      </p>
-    );
-  }
-  return (
-    <p className="text-xs text-muted-foreground">
-      {t(strength.labelKey)}
-      {strength.feedbackKeys.length > 0
-        ? ` · ${strength.feedbackKeys.map((k) => t(k)).join(" · ")}`
-        : ""}
-    </p>
   );
 }
 

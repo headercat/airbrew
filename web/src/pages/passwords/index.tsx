@@ -37,8 +37,9 @@ import {
   useVault,
   type DecryptedItem,
 } from "@/lib/vault/store";
-import { VaultActions } from "./actions";
 import { evaluateMasterPassword } from "@/lib/vault/security";
+import { VaultActions } from "./actions";
+import { PasswordStrengthHint } from "./password-strength";
 
 export default function PasswordsPage() {
   const { status, error } = useVault();
@@ -111,7 +112,7 @@ function SetupView() {
                 onChange={(e) => setPw(e.target.value)}
                 placeholder={t("passwords.setup.masterPasswordPlaceholder")}
               />
-              <PasswordStrengthMeter password={pw} />
+              <PasswordStrengthHint password={pw} meter />
             </div>
             <div className="space-y-2">
               <Label htmlFor="mpc">{t("passwords.setup.confirm")}</Label>
@@ -134,36 +135,6 @@ function SetupView() {
           </form>
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-function PasswordStrengthMeter({ password }: { password: string }) {
-  const { t } = useTranslation();
-  const strength = useMemo(() => evaluateMasterPassword(password), [password]);
-  if (!password) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        {t("passwords.strength.hint")}
-      </p>
-    );
-  }
-  return (
-    <div className="space-y-1">
-      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-        <div
-          className={
-            strength.acceptable ? "h-full bg-green-500" : "h-full bg-amber-500"
-          }
-          style={{ width: `${Math.max(12, strength.score * 20)}%` }}
-        />
-      </div>
-      <p className="text-xs text-muted-foreground">
-        {t(strength.labelKey)}
-        {strength.feedbackKeys.length > 0
-          ? ` · ${strength.feedbackKeys.map((k) => t(k)).join(" · ")}`
-          : ""}
-      </p>
     </div>
   );
 }

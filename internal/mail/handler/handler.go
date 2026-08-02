@@ -7,7 +7,10 @@ package handler
 
 import (
 	"io"
+	"mime"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/headercat/airbrew/internal/blob"
 	"github.com/headercat/airbrew/internal/mail/inbox"
@@ -40,8 +43,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/mail/messages/{id}", h.patchMessage)
 	mux.HandleFunc("DELETE /api/mail/messages/{id}", h.deleteMessage)
 	mux.HandleFunc("GET /api/mail/messages/{id}/raw", h.getRaw)
+	mux.HandleFunc("GET /api/mail/messages/{id}/attachments", h.listMessageAttachments)
 
 	mux.HandleFunc("POST /api/mail/send", h.send)
+	mux.HandleFunc("POST /api/mail/attachments", h.uploadAttachment)
+	mux.HandleFunc("GET /api/mail/attachments/{id}", h.downloadAttachment)
+	mux.HandleFunc("DELETE /api/mail/attachments/{id}", h.deleteAttachment)
 }
 
 // --- mailboxes -------------------------------------------------------------
@@ -122,28 +129,29 @@ func (h *Handler) deleteMailbox(w http.ResponseWriter, r *http.Request) {
 // --- messages --------------------------------------------------------------
 
 type messageResp struct {
-	ID         string           `json:"id"`
-	MailboxID  string           `json:"mailbox_id"`
-	MessageID  string           `json:"message_id"`
-	ThreadID   string           `json:"thread_id"`
-	InReplyTo  string           `json:"in_reply_to"`
-	References []string         `json:"references"`
-	Subject    string           `json:"subject"`
-	From       letter.Address   `json:"from"`
-	To         []letter.Address `json:"to"`
-	Cc         []letter.Address `json:"cc"`
-	Bcc        []letter.Address `json:"bcc"`
-	ReplyTo    []letter.Address `json:"reply_to"`
-	Direction  string           `json:"direction"`
-	BodyText   string           `json:"body_text"`
-	BodyHTML   string           `json:"body_html"`
-	IsRead     bool             `json:"is_read"`
-	IsStarred  bool             `json:"is_starred"`
-	IsDraft    bool             `json:"is_draft"`
-	SizeBytes  int64            `json:"size_bytes"`
-	ReceivedAt string           `json:"received_at,omitempty"`
-	SentAt     string           `json:"sent_at,omitempty"`
-	CreatedAt  string           `json:"created_at"`
+	ID          string           `json:"id"`
+	MailboxID   string           `json:"mailbox_id"`
+	MessageID   string           `json:"message_id"`
+	ThreadID    string           `json:"thread_id"`
+	InReplyTo   string           `json:"in_reply_to"`
+	References  []string         `json:"references"`
+	Subject     string           `json:"subject"`
+	From        letter.Address   `json:"from"`
+	To          []letter.Address `json:"to"`
+	Cc          []letter.Address `json:"cc"`
+	Bcc         []letter.Address `json:"bcc"`
+	ReplyTo     []letter.Address `json:"reply_to"`
+	Direction   string           `json:"direction"`
+	BodyText    string           `json:"body_text"`
+	BodyHTML    string           `json:"body_html"`
+	IsRead      bool             `json:"is_read"`
+	IsStarred   bool             `json:"is_starred"`
+	IsDraft     bool             `json:"is_draft"`
+	SizeBytes   int64            `json:"size_bytes"`
+	ReceivedAt  string           `json:"received_at,omitempty"`
+	SentAt      string           `json:"sent_at,omitempty"`
+	CreatedAt   string           `json:"created_at"`
+	Attachments []attachmentResp `json:"attachments,omitempty"`
 }
 
 func toMessageResp(m *inbox.Message) messageResp {
@@ -151,7 +159,7 @@ func toMessageResp(m *inbox.Message) messageResp {
 		ID: m.ID, MailboxID: m.MailboxID, MessageID: m.MessageID,
 		ThreadID: m.ThreadID, InReplyTo: m.InReplyTo, References: m.References,
 		Subject: m.Subject,
-		From: m.From, To: m.To, Cc: m.Cc, Bcc: m.Bcc, ReplyTo: m.ReplyTo,
+		From:    m.From, To: m.To, Cc: m.Cc, Bcc: m.Bcc, ReplyTo: m.ReplyTo,
 		Direction: string(m.Direction), BodyText: m.BodyText, BodyHTML: m.BodyHTML,
 		IsRead: m.IsRead, IsStarred: m.IsStarred, IsDraft: m.IsDraft,
 		SizeBytes: m.SizeBytes,
@@ -170,6 +178,27 @@ func toMessageResp(m *inbox.Message) messageResp {
 		out.References = []string{}
 	}
 	return out
+}
+
+type attachmentResp struct {
+	ID          string `json:"id"`
+	MessageID   string `json:"message_id,omitempty"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	ContentID   string `json:"content_id,omitempty"`
+	Inline      bool   `json:"inline"`
+	SizeBytes   int64  `json:"size_bytes"`
+	CreatedAt   string `json:"created_at"`
+	DownloadURL string `json:"download_url"`
+}
+
+func toAttachmentResp(a inbox.Attachment) attachmentResp {
+	return attachmentResp{
+		ID: a.ID, MessageID: a.MessageID, Filename: a.Filename,
+		ContentType: a.ContentType, ContentID: a.ContentID, Inline: a.Inline,
+		SizeBytes: a.SizeBytes, CreatedAt: a.CreatedAt.UTC().Format(timeRFC3339),
+		DownloadURL: "/api/mail/attachments/" + a.ID,
+	}
 }
 
 func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
@@ -240,7 +269,16 @@ func (h *Handler) getMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	jsonResp(w, http.StatusOK, toMessageResp(m))
+	resp := toMessageResp(m)
+	atts, err := h.inbox.ListAttachments(r.Context(), sess.UserID, m.ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	for _, a := range atts {
+		resp.Attachments = append(resp.Attachments, toAttachmentResp(a))
+	}
+	jsonResp(w, http.StatusOK, resp)
 }
 
 type patchMessageReq struct {
@@ -307,6 +345,85 @@ func (h *Handler) getRaw(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *Handler) listMessageAttachments(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	atts, err := h.inbox.ListAttachments(r.Context(), sess.UserID, r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	out := make([]attachmentResp, 0, len(atts))
+	for _, a := range atts {
+		out = append(out, toAttachmentResp(a))
+	}
+	jsonResp(w, http.StatusOK, map[string]any{"attachments": out})
+}
+
+func (h *Handler) uploadAttachment(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	if err := r.ParseMultipartForm(25 << 20); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid_request", "expected multipart form with file")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid_request", "file is required")
+		return
+	}
+	defer file.Close()
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	a, err := h.inbox.CreateAttachment(r.Context(), sess.UserID, header.Filename, contentType, file)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	jsonResp(w, http.StatusCreated, toAttachmentResp(a))
+}
+
+func (h *Handler) downloadAttachment(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	a, body, err := h.inbox.GetAttachment(r.Context(), sess.UserID, r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	defer body.Close()
+	ct := strings.TrimSpace(a.ContentType)
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": a.Filename}))
+	if a.SizeBytes > 0 {
+		w.Header().Set("Content-Length", parseContentLength(a.SizeBytes))
+	}
+	_, _ = io.Copy(w, body)
+}
+
+func (h *Handler) deleteAttachment(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	if err := h.inbox.DeleteAttachment(r.Context(), sess.UserID, r.PathValue("id")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 // --- send ------------------------------------------------------------------
 
 type addressInput struct {
@@ -315,16 +432,17 @@ type addressInput struct {
 }
 
 type sendReq struct {
-	MailboxID  string         `json:"mailbox_id"`
-	To         []addressInput `json:"to"`
-	Cc         []addressInput `json:"cc"`
-	Bcc        []addressInput `json:"bcc"`
-	ReplyTo    []addressInput `json:"reply_to"`
-	Subject    string         `json:"subject"`
-	Text       string         `json:"text"`
-	HTML       string         `json:"html"`
-	InReplyTo  string         `json:"in_reply_to"`
-	References []string       `json:"references"`
+	MailboxID     string         `json:"mailbox_id"`
+	To            []addressInput `json:"to"`
+	Cc            []addressInput `json:"cc"`
+	Bcc           []addressInput `json:"bcc"`
+	ReplyTo       []addressInput `json:"reply_to"`
+	Subject       string         `json:"subject"`
+	Text          string         `json:"text"`
+	HTML          string         `json:"html"`
+	InReplyTo     string         `json:"in_reply_to"`
+	References    []string       `json:"references"`
+	AttachmentIDs []string       `json:"attachment_ids"`
 }
 
 func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
@@ -343,16 +461,17 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := inbox.SendInput{
-		MailboxID:  req.MailboxID,
-		To:         toAddresses(req.To),
-		Cc:         toAddresses(req.Cc),
-		Bcc:        toAddresses(req.Bcc),
-		ReplyTo:    toAddresses(req.ReplyTo),
-		Subject:    req.Subject,
-		Text:       req.Text,
-		HTML:       req.HTML,
-		InReplyTo:  req.InReplyTo,
-		References: req.References,
+		MailboxID:     req.MailboxID,
+		To:            toAddresses(req.To),
+		Cc:            toAddresses(req.Cc),
+		Bcc:           toAddresses(req.Bcc),
+		ReplyTo:       toAddresses(req.ReplyTo),
+		Subject:       req.Subject,
+		Text:          req.Text,
+		HTML:          req.HTML,
+		InReplyTo:     req.InReplyTo,
+		References:    req.References,
+		AttachmentIDs: req.AttachmentIDs,
 	}
 	msg, err := h.inbox.Send(r.Context(), sess.UserID, in, sender)
 	if err != nil {
@@ -368,4 +487,8 @@ func toAddresses(in []addressInput) []letter.Address {
 		out = append(out, letter.Address{Name: a.Name, Address: a.Address})
 	}
 	return out
+}
+
+func parseContentLength(n int64) string {
+	return strconv.FormatInt(n, 10)
 }

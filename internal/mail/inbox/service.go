@@ -1,9 +1,11 @@
 package inbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -130,7 +132,35 @@ func (s *Service) Ingest(ctx context.Context, recipientAddress string, raw []byt
 		}
 		return nil, err
 	}
+	s.storeInboundAttachments(ctx, msg.ID, mb.UserID, parsed.Attachments)
 	return msg, nil
+}
+
+// storeInboundAttachments saves each parsed MIME attachment to the blob store
+// and records its metadata. Failures are logged best-effort: a missing
+// attachment should not fail the whole ingest.
+func (s *Service) storeInboundAttachments(ctx context.Context, messageID, userID string, atts []letter.ParsedAttachment) {
+	for _, pa := range atts {
+		if s.blobs == nil || len(pa.Data) == 0 {
+			continue
+		}
+		ct := pa.ContentType
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		path, err := s.blobs.Save(ctx, "mail-attachments", ct, bytes.NewReader(pa.Data))
+		if err != nil {
+			continue
+		}
+		a := &Attachment{
+			ID: nextID(), MessageID: messageID, UserID: userID, BlobPath: path,
+			Filename: pa.Filename, ContentType: ct, ContentID: pa.ContentID,
+			Inline: pa.Disposition == "inline", SizeBytes: int64(len(pa.Data)),
+		}
+		if err := s.repo.CreateAttachment(ctx, a); err != nil {
+			_ = s.blobs.Delete(ctx, path)
+		}
+	}
 }
 
 // resolveMailbox finds the destination mailbox, preferring the envelope
@@ -179,6 +209,24 @@ func (s *Service) Send(ctx context.Context, userID string, in SendInput, sender 
 	if out.Text == "" && out.HTML == "" {
 		return nil, fmt.Errorf("%w: message body required", ErrInvalidInput)
 	}
+	// Resolve any pending attachments into the outgoing MIME tree.
+	if len(in.AttachmentIDs) > 0 {
+		atts, err := s.repo.ListByIDs(ctx, userID, in.AttachmentIDs)
+		if err != nil {
+			return nil, err
+		}
+		out.Attachments = make([]letter.Attachment, 0, len(atts))
+		for _, a := range atts {
+			data, err := s.readAttachmentData(ctx, a)
+			if err != nil || len(data) == 0 {
+				continue
+			}
+			out.Attachments = append(out.Attachments, letter.Attachment{
+				Filename: a.Filename, ContentType: a.ContentType,
+				ContentID: a.ContentID, Inline: a.Inline, Data: data,
+			})
+		}
+	}
 	raw, err := letter.BuildRFC822(out)
 	if err != nil {
 		return nil, err
@@ -200,8 +248,8 @@ func (s *Service) Send(ctx context.Context, userID string, in SendInput, sender 
 		ID: nextID(), MailboxID: mb.ID, UserID: userID,
 		MessageID: out.MessageID, InReplyTo: in.InReplyTo, References: in.References,
 		Subject: in.Subject,
-		From: letter.Address{Name: mb.DisplayName, Address: mb.Address},
-		To:   in.To, Cc: in.Cc, Bcc: in.Bcc, ReplyTo: in.ReplyTo,
+		From:    letter.Address{Name: mb.DisplayName, Address: mb.Address},
+		To:      in.To, Cc: in.Cc, Bcc: in.Bcc, ReplyTo: in.ReplyTo,
 		Direction: DirectionOutbound,
 		RawPath:   rawPath, BodyText: in.Text, BodyHTML: in.HTML,
 		SizeBytes: int64(len(raw)),
@@ -213,7 +261,103 @@ func (s *Service) Send(ctx context.Context, userID string, in SendInput, sender 
 		}
 		return nil, err
 	}
+	if err := s.repo.LinkAttachments(ctx, userID, msg.ID, in.AttachmentIDs); err != nil {
+		return nil, err
+	}
 	return msg, nil
+}
+
+// CreateAttachment stores a pending outbound attachment owned by userID.
+func (s *Service) CreateAttachment(ctx context.Context, userID, filename, contentType string, r io.Reader) (Attachment, error) {
+	if s.blobs == nil {
+		return Attachment{}, fmt.Errorf("%w: blob store unavailable", ErrInvalidInput)
+	}
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		return Attachment{}, fmt.Errorf("%w: filename required", ErrInvalidInput)
+	}
+	if contentType = strings.TrimSpace(contentType); contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	var buf bytes.Buffer
+	n, err := io.Copy(&buf, io.LimitReader(r, 25<<20+1))
+	if err != nil {
+		return Attachment{}, fmt.Errorf("inbox: read attachment: %w", err)
+	}
+	if n == 0 {
+		return Attachment{}, fmt.Errorf("%w: empty attachment", ErrInvalidInput)
+	}
+	if n > 25<<20 {
+		return Attachment{}, fmt.Errorf("%w: attachment too large", ErrInvalidInput)
+	}
+	path, err := s.blobs.Save(ctx, "mail-attachments", contentType, bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		return Attachment{}, fmt.Errorf("inbox: save attachment: %w", err)
+	}
+	a := Attachment{
+		ID: nextID(), UserID: userID, BlobPath: path,
+		Filename: filename, ContentType: contentType, SizeBytes: n,
+	}
+	if err := s.repo.CreateAttachment(ctx, &a); err != nil {
+		_ = s.blobs.Delete(ctx, path)
+		return Attachment{}, err
+	}
+	return a, nil
+}
+
+// ListAttachments returns metadata for one stored message.
+func (s *Service) ListAttachments(ctx context.Context, userID, messageID string) ([]Attachment, error) {
+	if _, err := s.repo.GetMessage(ctx, userID, messageID); err != nil {
+		return nil, err
+	}
+	return s.repo.ListAttachmentsByMessage(ctx, userID, messageID)
+}
+
+// GetAttachment returns metadata and a readable payload for one attachment.
+func (s *Service) GetAttachment(ctx context.Context, userID, id string) (Attachment, io.ReadCloser, error) {
+	if s.blobs == nil {
+		return Attachment{}, nil, ErrMessageNotFound
+	}
+	a, err := s.repo.GetAttachment(ctx, userID, id)
+	if err != nil {
+		return Attachment{}, nil, err
+	}
+	body, _, err := s.blobs.Open(ctx, a.BlobPath)
+	if err != nil {
+		return Attachment{}, nil, ErrMessageNotFound
+	}
+	return a, body, nil
+}
+
+// DeleteAttachment removes a pending attachment and its blob. Message-bound
+// attachments remain part of the immutable message record.
+func (s *Service) DeleteAttachment(ctx context.Context, userID, id string) error {
+	a, err := s.repo.GetAttachment(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	if a.MessageID != "" {
+		return fmt.Errorf("%w: sent or received attachments cannot be removed", ErrInvalidInput)
+	}
+	if err := s.repo.DeleteAttachment(ctx, userID, id); err != nil {
+		return err
+	}
+	if s.blobs != nil {
+		_ = s.blobs.Delete(ctx, a.BlobPath)
+	}
+	return nil
+}
+
+func (s *Service) readAttachmentData(ctx context.Context, a Attachment) ([]byte, error) {
+	if s.blobs == nil || a.BlobPath == "" {
+		return nil, ErrMessageNotFound
+	}
+	body, _, err := s.blobs.Open(ctx, a.BlobPath)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	return io.ReadAll(io.LimitReader(body, 25<<20+1))
 }
 
 // ListThreads returns conversation summaries for the user.

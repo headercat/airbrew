@@ -1,17 +1,25 @@
 package inbox_test
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/headercat/airbrew/internal/blob"
 	"github.com/headercat/airbrew/internal/db"
 	"github.com/headercat/airbrew/internal/mail/inbox"
 	"github.com/headercat/airbrew/internal/mail/letter"
 )
 
 func newService(t *testing.T) (*inbox.Service, context.Context) {
+	t.Helper()
+	return newServiceWithBlob(t, nil)
+}
+
+func newServiceWithBlob(t *testing.T, blobs blob.Store) (*inbox.Service, context.Context) {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "mail.db"))
 	if err != nil {
@@ -29,7 +37,7 @@ func newService(t *testing.T) (*inbox.Service, context.Context) {
 		}
 	}
 	repo := inbox.NewRepository(d.DB)
-	return inbox.NewService(repo, nil), context.Background()
+	return inbox.NewService(repo, blobs), context.Background()
 }
 
 func mustCreateMailbox(t *testing.T, s *inbox.Service, ctx context.Context, userID, addr string) *inbox.Mailbox {
@@ -151,7 +159,59 @@ func TestSendThreading(t *testing.T) {
 	}
 }
 
+// TestSendLinksPendingAttachments verifies composer uploads become MIME parts
+// and are linked to the sent message record.
+func TestSendLinksPendingAttachments(t *testing.T) {
+	blobs, err := blob.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("blob store: %v", err)
+	}
+	s, ctx := newServiceWithBlob(t, blobs)
+	const uid = "u1"
+	mb := mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	att, err := s.CreateAttachment(ctx, uid, "notes.txt", "text/plain", strings.NewReader("ship it"))
+	if err != nil {
+		t.Fatalf("create attachment: %v", err)
+	}
+	sender := &captureSender{}
+	msg, err := s.Send(ctx, uid, inbox.SendInput{
+		MailboxID:     mb.ID,
+		To:            []letter.Address{{Address: "bob@ext.com"}},
+		Subject:       "with attachment",
+		Text:          "see attached",
+		AttachmentIDs: []string{att.ID},
+	}, sender)
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if !bytes.Contains(sender.raw, []byte("Content-Disposition: attachment; filename=\"notes.txt\"")) {
+		t.Fatalf("sent MIME did not contain attachment: %s", string(sender.raw))
+	}
+	atts, err := s.ListAttachments(ctx, uid, msg.ID)
+	if err != nil {
+		t.Fatalf("list attachments: %v", err)
+	}
+	if len(atts) != 1 || atts[0].ID != att.ID || atts[0].MessageID != msg.ID {
+		t.Fatalf("attachments = %+v, want linked %s", atts, msg.ID)
+	}
+}
+
 type stubSender struct{}
 
-func (stubSender) Name() string { return "stub" }
+func (stubSender) Name() string                                      { return "stub" }
 func (stubSender) Send(ctx context.Context, o letter.Outgoing) error { return nil }
+
+type captureSender struct {
+	raw []byte
+}
+
+func (s *captureSender) Name() string { return "capture" }
+func (s *captureSender) Send(ctx context.Context, o letter.Outgoing) error {
+	raw, err := letter.BuildRFC822(o)
+	if err != nil {
+		return err
+	}
+	s.raw = raw
+	return nil
+}

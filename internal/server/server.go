@@ -141,6 +141,7 @@ func Build(d Deps) *http.ServeMux {
 	mux.Handle("/api/workflow/", authMod.SessionMiddleware(middleware.Chain(workflowSub,
 		modules.RequireEnabled(stubState, "workflow"),
 	)))
+	workflowMod.Start(d.Ctx)
 
 	// AI agent module. Status is public; user endpoints require a session,
 	// module-enable gating, and a per-IP rate limit. Admin provider/agent

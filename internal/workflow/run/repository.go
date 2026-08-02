@@ -158,6 +158,9 @@ func (r *Repository) UpdateWorkflow(ctx context.Context, userID, id string, patc
 		if err := patch.Definition.Validate(); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrDefinitionInvalid, err)
 		}
+		if err := ValidateScheduleConfig(*patch.Definition); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrDefinitionInvalid, err)
+		}
 		// Only bump the version if the serialised form actually changed so
 		// cosmetic save round-trips don't pollute history.
 		newDef, mErr := patch.Definition.Marshal()
@@ -214,6 +217,9 @@ func (r *Repository) SetActive(ctx context.Context, userID, id string, active bo
 	}
 	if active {
 		if err := w.Definition.Validate(); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrDefinitionInvalid, err)
+		}
+		if err := ValidateScheduleConfig(w.Definition); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrDefinitionInvalid, err)
 		}
 		// (Re)mint webhook token on activation so revoking truly revokes.

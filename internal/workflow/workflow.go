@@ -2,8 +2,10 @@
 package workflow
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/headercat/airbrew/internal/audit"
@@ -11,20 +13,26 @@ import (
 	wfexec "github.com/headercat/airbrew/internal/workflow/exec"
 	"github.com/headercat/airbrew/internal/workflow/handler"
 	"github.com/headercat/airbrew/internal/workflow/run"
+	"github.com/headercat/airbrew/internal/workflow/trigger"
 )
 
 type Module struct {
-	state  *modules.State
-	svc    *run.Service
-	engine *wfexec.Engine
-	h      *handler.Handler
+	state     *modules.State
+	svc       *run.Service
+	engine    *wfexec.Engine
+	h         *handler.Handler
+	scheduler *trigger.Scheduler
 }
 
 func New(db *sql.DB, state *modules.State, auditSvc *audit.Service) *Module {
 	repo := run.NewRepository(db)
 	svc := run.NewService(repo, auditSvc)
 	engine := wfexec.New(svc, nil)
-	return &Module{state: state, svc: svc, engine: engine, h: handler.New(svc, engine)}
+	return &Module{
+		state: state, svc: svc, engine: engine,
+		h:         handler.New(svc, engine),
+		scheduler: trigger.NewScheduler(repo, engine, slog.Default()),
+	}
 }
 
 func (m *Module) RegisterRoutes(mux *http.ServeMux) {
@@ -34,6 +42,16 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 func (m *Module) RegisterPublicRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/workflow/status", m.status)
 	m.h.RegisterPublicRoutes(mux)
+}
+
+// Start launches background trigger dispatchers.
+func (m *Module) Start(ctx context.Context) {
+	if ctx == nil {
+		slog.WarnContext(context.Background(),
+			"workflow: lifecycle context is nil; scheduler will not run")
+		return
+	}
+	go m.scheduler.Start(ctx)
 }
 
 func (m *Module) status(w http.ResponseWriter, r *http.Request) {

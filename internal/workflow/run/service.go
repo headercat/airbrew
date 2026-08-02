@@ -33,6 +33,9 @@ func (s *Service) Create(ctx context.Context, in NewWorkflowInput) (*Workflow, e
 	if err := in.Definition.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrDefinitionInvalid, err)
 	}
+	if err := ValidateScheduleConfig(in.Definition); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrDefinitionInvalid, err)
+	}
 	w := &Workflow{
 		UserID:      in.UserID,
 		Name:        in.Name,
@@ -214,7 +217,19 @@ func ValidateScheduleConfig(d defn.Definition) error {
 	if expr == "" {
 		return fmt.Errorf("%w: schedule trigger requires config.cron", scheduleParseErr)
 	}
+	if _, err := parseCron(expr); err != nil {
+		return fmt.Errorf("%w: %v", scheduleParseErr, err)
+	}
 	return nil
+}
+
+// CronMatches reports whether a 5-field cron expression matches t.
+func CronMatches(expr string, t time.Time) (bool, error) {
+	c, err := parseCron(expr)
+	if err != nil {
+		return false, err
+	}
+	return c.matches(t), nil
 }
 
 // scheduleCronConfig extracts the cron expression from a schedule trigger.

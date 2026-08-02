@@ -48,6 +48,9 @@ import { AttachmentsCard } from "./attachments";
 const TYPES: VaultItemType[] = ["login", "secure_note", "card", "identity"];
 const KINDS: FieldKind[] = ["text", "password", "totp", "url", "multiline"];
 
+const selectClass =
+  "h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
+
 function clonePreset(type: VaultItemType): Field[] {
   return PRESETS[type].map((f) => newField(f.kind, f.name));
 }
@@ -57,7 +60,7 @@ export default function PasswordEditor() {
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
   const navigate = useNavigate();
-  const { status, items, createItem, updateItem, deleteItem, refresh } =
+  const { status, items, folders, createItem, updateItem, deleteItem, refresh } =
     useVault();
 
   const existing = items.find((it) => it.id === id);
@@ -66,6 +69,7 @@ export default function PasswordEditor() {
   const [name, setName] = useState("");
   const [fields, setFields] = useState<Field[]>(() => clonePreset("login"));
   const [notes, setNotes] = useState("");
+  const [folderId, setFolderId] = useState("");
   const [favorite, setFavorite] = useState(false);
   const [reprompt, setReprompt] = useState(false);
 
@@ -82,6 +86,7 @@ export default function PasswordEditor() {
       existing.fields.length ? existing.fields.map((f) => ({ ...f })) : [],
     );
     setNotes(existing.notes);
+    setFolderId(existing.folderId);
     setFavorite(existing.favorite);
     setReprompt(existing.reprompt);
   }, [existing]);
@@ -135,7 +140,7 @@ export default function PasswordEditor() {
     const cleanFields = fields.filter((f) => f.name.trim() || f.value.trim());
     return {
       type,
-      folderId: "",
+      folderId,
       name,
       notes,
       fields: cleanFields,
@@ -248,6 +253,25 @@ export default function PasswordEditor() {
                 required
                 autoFocus
               />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="folder">{t("passwords.editor.folder")}</Label>
+              <select
+                id="folder"
+                value={folderId}
+                onChange={(e) => setFolderId(e.target.value)}
+                className={selectClass}
+              >
+                <option value="">
+                  {t("passwords.editor.noFolder")}
+                </option>
+                {folders.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="grid gap-2">
@@ -389,9 +413,6 @@ function FieldEditor({
 }) {
   const { t } = useTranslation();
   const [reveal, setReveal] = useState(false);
-
-  const selectClass =
-    "h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
 
   return (
     <div className="grid gap-2 rounded-md border bg-muted/20 p-3">

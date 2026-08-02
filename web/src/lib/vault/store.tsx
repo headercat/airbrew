@@ -304,6 +304,11 @@ type VaultContextValue = {
     currentPassword: string,
     newPassword: string,
   ) => Promise<void>;
+  // Item history: list decrypted revision snapshots and restore one.
+  listItemRevisions: (
+    itemId: string,
+  ) => Promise<{ id: string; name: string; revision: number; createdAt: string }[]>;
+  restoreItemRevision: (itemId: string, revId: string) => Promise<void>;
 };
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -832,6 +837,55 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     [verifyMasterPassword],
   );
 
+  // --- item history ---------------------------------------------------------
+
+  const listItemRevisions = useCallback(
+    async (itemId: string) => {
+      const key = keyRef.current;
+      if (!key) throw new Error("vault locked");
+      const revs = await VApi.listRevisions(itemId);
+      const out: {
+        id: string;
+        name: string;
+        revision: number;
+        createdAt: string;
+      }[] = [];
+      for (const r of revs) {
+        let name = "—";
+        try {
+          name = await decryptString(key, r.name_cipher, r.name_nonce);
+        } catch {
+          name = "—";
+        }
+        out.push({
+          id: r.id,
+          name,
+          revision: r.revision,
+          createdAt: r.created_at,
+        });
+      }
+      return out;
+    },
+    [],
+  );
+
+  const restoreItemRevision = useCallback(
+    async (itemId: string, revId: string) => {
+      const key = keyRef.current;
+      if (!key) throw new Error("vault locked");
+      const existing = itemsRef.current.find((it) => it.id === itemId);
+      if (!existing) throw new Error("item not found");
+      const raw = await VApi.restoreRevision(itemId, revId, existing.revision);
+      const dec = await decryptItem(key, raw);
+      const next = itemsRef.current
+        .map((it) => (it.id === itemId ? dec : it))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      commitItems(next);
+      commitCursor(raw.revision);
+    },
+    [commitItems, commitCursor],
+  );
+
   // Auto-bootstrap on first mount so the page knows which gate to show.
   useEffect(() => {
     void bootstrap();
@@ -898,6 +952,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       verifyMasterPassword,
       exportBundle,
       importBundle,
+      createFolder,
+      renameFolder,
+      deleteFolder,
+      changeMasterPassword,
+      listItemRevisions,
+      restoreItemRevision,
     }),
     [
       status,
@@ -921,6 +981,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       verifyMasterPassword,
       exportBundle,
       importBundle,
+      createFolder,
+      renameFolder,
+      deleteFolder,
+      changeMasterPassword,
+      listItemRevisions,
+      restoreItemRevision,
     ],
   );
 

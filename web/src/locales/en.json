@@ -176,7 +176,15 @@
       "noFields": "This item has no fields.",
       "totpInvalid": "Invalid TOTP secret",
       "totpEmpty": "No TOTP secret set",
-      "notFound": "Item not found. It may have been deleted on another device."
+      "notFound": "Item not found. It may have been deleted on another device.",
+      "repromptRequired": "This item requires the master password to reveal sensitive fields.",
+      "reveal": "Reveal",
+      "history": "History",
+      "show": "Show",
+      "hide": "Hide",
+      "noHistory": "No previous versions.",
+      "restore": "Restore",
+      "confirmRestore": "Restore this version? The current version is saved to history first."
     },
     "attachments": {
       "title": "Attachments",
@@ -221,7 +229,26 @@
       "removeField": "Remove field",
       "typeHint": "Type only sets the icon and the starting field preset.",
       "confirmReplacePreset": "Replace current fields with this type's preset?",
-      "totpHint": "Store the base32 shared secret (or an otpauth:// URI)."
+      "totpHint": "Store the base32 shared secret (or an otpauth:// URI).",
+      "folder": "Folder",
+      "noFolder": "No folder",
+      "resync": "Re-sync and retry"
+    },
+    "actions": {
+      "title": "Vault actions",
+      "description": "Back up, restore, or change your master password.",
+      "export": "Export backup",
+      "import": "Import backup",
+      "exported": "Encrypted backup downloaded.",
+      "imported": "Imported {{folders}} folders and {{items}} items.",
+      "newFolder": "New folder",
+      "newFolderPlaceholder": "Folder name",
+      "add": "Add",
+      "changePassword": "Change master password",
+      "currentPassword": "Current master password",
+      "newPassword": "New master password",
+      "save": "Save",
+      "passwordChanged": "Master password changed."
     }
   },
   "profile": {

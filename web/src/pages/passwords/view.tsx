@@ -13,6 +13,7 @@ import {
   Eye,
   EyeOff,
   Globe,
+  History,
   Pencil,
   StickyNote,
   Star,
@@ -228,6 +229,8 @@ export default function PasswordView() {
       )}
 
       <AttachmentsCard itemId={item.id} editable={false} />
+
+      <HistoryCard itemId={item.id} />
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
@@ -458,5 +461,113 @@ function TotpField({ label, secret }: { label: string; secret: string }) {
         <CopyButton value={code?.code ?? ""} disabled={!code} />
       </div>
     </div>
+  );
+}
+
+// ---- history ----
+
+type RevSummary = {
+  id: string;
+  name: string;
+  revision: number;
+  createdAt: string;
+};
+
+function HistoryCard({ itemId }: { itemId: string }) {
+  const { t } = useTranslation();
+  const { listItemRevisions, restoreItemRevision } = useVault();
+  const [revs, setRevs] = useState<RevSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    setBusy(true);
+    setError(null);
+    try {
+      setRevs(await listItemRevisions(itemId));
+    } catch (err) {
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : String(err),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Lazy-load on first expand.
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (open && revs === null) void load();
+  }, [open, revs, load]);
+
+  async function onRestore(revId: string) {
+    if (!confirm(t("passwords.view.confirmRestore"))) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await restoreItemRevision(itemId, revId);
+      setRevs(null); // force reload next expand
+      setOpen(false);
+    } catch (err) {
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : String(err),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <History className="h-4 w-4" />
+          {t("passwords.view.history")}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setOpen((o) => !o)}
+          >
+            {open ? t("passwords.view.hide") : t("passwords.view.show")}
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      {open && (
+        <CardContent className="space-y-1">
+          {busy && revs === null && (
+            <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
+          )}
+          {revs?.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              {t("passwords.view.noHistory")}
+            </p>
+          )}
+          {revs?.map((r) => (
+            <div
+              key={r.id}
+              className="flex items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm">{r.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {new Date(r.createdAt).toLocaleString()} · rev {r.revision}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => onRestore(r.id)}
+              >
+                {t("passwords.view.restore")}
+              </Button>
+            </div>
+          ))}
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </CardContent>
+      )}
+    </Card>
   );
 }

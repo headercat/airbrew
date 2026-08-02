@@ -37,6 +37,7 @@ import {
   useVault,
   type DecryptedItem,
 } from "@/lib/vault/store";
+import { VaultActions } from "./actions";
 
 export default function PasswordsPage() {
   const { status, error } = useVault();
@@ -289,6 +290,8 @@ function VaultListView() {
           ))}
         </div>
       )}
+
+      <VaultActions />
 
       {filtered.length === 0 ? (
         <Card>

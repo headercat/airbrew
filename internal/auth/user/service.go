@@ -24,6 +24,10 @@ type PasswordPolicyChecker interface {
 	ValidatePassword(ctx context.Context, plain string) error
 }
 
+type passwordHistoryPolicy interface {
+	PasswordHistoryCount(ctx context.Context) (int, error)
+}
+
 // NewService returns a Service backed by repo.
 func NewService(repo *Repository) *Service { return &Service{repo: repo} }
 
@@ -182,11 +186,21 @@ func (s *Service) ChangePassword(ctx context.Context, userID, currentPassword, n
 	if err := password.Verify(currentPassword, hash); err != nil {
 		return ErrInvalidCredentials
 	}
+	historyCount, err := s.passwordHistoryCount(ctx)
+	if err != nil {
+		return err
+	}
+	if err := s.rejectPasswordReuse(ctx, userID, newPassword, historyCount); err != nil {
+		return err
+	}
 	newHash, err := password.Hash(newPassword)
 	if err != nil {
 		return err
 	}
-	return s.repo.UpdatePassword(ctx, userID, newHash)
+	if err := s.repo.UpdatePassword(ctx, userID, newHash); err != nil {
+		return err
+	}
+	return s.prunePasswordHistory(ctx, userID, historyCount)
 }
 
 // AdminSetPassword replaces a user's password without requiring the current
@@ -195,11 +209,21 @@ func (s *Service) AdminSetPassword(ctx context.Context, userID, newPassword stri
 	if err := s.checkPasswordPolicy(ctx, newPassword); err != nil {
 		return err
 	}
+	historyCount, err := s.passwordHistoryCount(ctx)
+	if err != nil {
+		return err
+	}
+	if err := s.rejectPasswordReuse(ctx, userID, newPassword, historyCount); err != nil {
+		return err
+	}
 	hash, err := password.Hash(newPassword)
 	if err != nil {
 		return err
 	}
-	return s.repo.UpdatePassword(ctx, userID, hash)
+	if err := s.repo.UpdatePassword(ctx, userID, hash); err != nil {
+		return err
+	}
+	return s.prunePasswordHistory(ctx, userID, historyCount)
 }
 
 // checkPasswordPolicy applies the configured policy when present, otherwise
@@ -210,6 +234,39 @@ func (s *Service) checkPasswordPolicy(ctx context.Context, plain string) error {
 	}
 	if len(plain) < 8 {
 		return errors.New("password must be at least 8 characters")
+	}
+	return nil
+}
+
+func (s *Service) passwordHistoryCount(ctx context.Context) (int, error) {
+	if p, ok := s.policy.(passwordHistoryPolicy); ok {
+		return p.PasswordHistoryCount(ctx)
+	}
+	return 0, nil
+}
+
+func (s *Service) rejectPasswordReuse(ctx context.Context, userID, plain string, historyCount int) error {
+	if historyCount <= 0 {
+		return nil
+	}
+	hashes, err := s.repo.RecentPasswordHashes(ctx, userID, historyCount)
+	if err != nil {
+		if IsPasswordHistoryUnavailable(err) {
+			return nil
+		}
+		return err
+	}
+	for _, hash := range hashes {
+		if err := password.Verify(plain, hash); err == nil {
+			return errors.New("password was used recently")
+		}
+	}
+	return nil
+}
+
+func (s *Service) prunePasswordHistory(ctx context.Context, userID string, keep int) error {
+	if err := s.repo.PrunePasswordHistory(ctx, userID, keep); err != nil && !IsPasswordHistoryUnavailable(err) {
+		return err
 	}
 	return nil
 }

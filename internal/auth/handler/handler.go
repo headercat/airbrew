@@ -145,6 +145,17 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
 		return
 	}
+	expired, err := h.passwordExpired(r, u.ID)
+	if err != nil {
+		h.recordLoginAttempt(r, email, u.ID, false, "password_policy_check_failed")
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	if expired {
+		h.recordLoginAttempt(r, email, u.ID, false, "password_expired")
+		response.Error(w, http.StatusForbidden, "password_expired", "password has expired")
+		return
+	}
 	token, _, err := h.sessions.Issue(r.Context(), u.ID, clientIP(r), r.UserAgent())
 	if err != nil {
 		h.recordLoginAttempt(r, email, u.ID, false, "session_issue_failed")
@@ -161,6 +172,27 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		UserAgent: r.UserAgent(),
 	})
 	response.JSON(w, http.StatusOK, toResp(u))
+}
+
+func (h *Handler) passwordExpired(r *http.Request, userID string) (bool, error) {
+	if h.security == nil {
+		return false, nil
+	}
+	p, err := h.security.PasswordPolicy(r.Context())
+	if err != nil {
+		return false, err
+	}
+	if p.MaxAgeDays <= 0 {
+		return false, nil
+	}
+	changed, err := h.users.PasswordChangedAt(r.Context(), userID)
+	if err != nil {
+		return false, err
+	}
+	if changed.IsZero() {
+		return false, nil
+	}
+	return time.Since(changed) > time.Duration(p.MaxAgeDays)*24*time.Hour, nil
 }
 
 func (h *Handler) recordLoginAttempt(r *http.Request, email, userID string, success bool, failure string) {

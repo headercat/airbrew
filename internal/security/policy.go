@@ -177,6 +177,15 @@ func (s *Service) ValidatePassword(ctx context.Context, plain string) error {
 	return p.Validate(plain)
 }
 
+// PasswordHistoryCount returns the configured password reuse prevention depth.
+func (s *Service) PasswordHistoryCount(ctx context.Context) (int, error) {
+	p, err := s.PasswordPolicy(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return p.HistoryCount, nil
+}
+
 // NormalizePasswordPolicy clamps the policy to safe bounds. Exported so the
 // admin handler can echo a normalized value back to the UI.
 func NormalizePasswordPolicy(p PasswordPolicy) PasswordPolicy { return normalizePolicy(p) }

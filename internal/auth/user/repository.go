@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"github.com/headercat/airbrew/internal/id"
 )
 
 // Repository persists users and their password credentials.
@@ -22,6 +25,14 @@ var ErrNotFound = errors.New("user not found")
 
 // ErrEmailTaken is returned by Create when the email is already registered.
 var ErrEmailTaken = errors.New("email already taken")
+
+var errPasswordHistoryUnavailable = errors.New("password history unavailable")
+
+// IsPasswordHistoryUnavailable reports whether err means the password_history
+// table is absent in a test or legacy database.
+func IsPasswordHistoryUnavailable(err error) bool {
+	return errors.Is(err, errPasswordHistoryUnavailable)
+}
 
 const (
 	columnsRead = `id, public_subject, email, email_verified, status, role,
@@ -189,9 +200,13 @@ func (r *Repository) SetRole(ctx context.Context, userID string, role Role) erro
 // SetStatus updates only the status column.
 func (r *Repository) SetStatus(ctx context.Context, userID string, status Status) error {
 	now := time.Now().UTC().Truncate(time.Second)
+	var deletedAt any
+	if status == StatusDeleted {
+		deletedAt = now
+	}
 	res, err := r.db.ExecContext(ctx,
-		"UPDATE users SET status = ?, updated_at = ? WHERE id = ?",
-		string(status), now, userID,
+		"UPDATE users SET status = ?, deleted_at = ?, updated_at = ? WHERE id = ?",
+		string(status), deletedAt, now, userID,
 	)
 	if err != nil {
 		return fmt.Errorf("user: set status: %w", err)
@@ -231,6 +246,9 @@ func (r *Repository) GetPasswordHash(ctx context.Context, userID string) (string
 // change timestamp in password_changed_at (added by migration 0004) so the
 // password policy max-age check can be evaluated.
 func (r *Repository) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
+	if err := r.rememberCurrentPassword(ctx, userID); err != nil && !errors.Is(err, errPasswordHistoryUnavailable) {
+		return err
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE password_credentials
@@ -244,6 +262,76 @@ func (r *Repository) UpdatePassword(ctx context.Context, userID, passwordHash st
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *Repository) rememberCurrentPassword(ctx context.Context, userID string) error {
+	current, err := r.GetPasswordHash(ctx, userID)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO password_history (id, user_id, password_hash, created_at)
+		VALUES (?, ?, ?, ?)
+	`, id.New(), userID, current, time.Now().UTC().Truncate(time.Second))
+	if isNoSuchTable(err) {
+		return errPasswordHistoryUnavailable
+	}
+	return err
+}
+
+// RecentPasswordHashes returns the most recent previous hashes for userID.
+func (r *Repository) RecentPasswordHashes(ctx context.Context, userID string, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT password_hash
+		FROM password_history
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+		LIMIT ?
+	`, userID, limit)
+	if isNoSuchTable(err) {
+		return nil, errPasswordHistoryUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, err
+		}
+		out = append(out, hash)
+	}
+	return out, rows.Err()
+}
+
+// PrunePasswordHistory keeps only the newest keep rows for userID.
+func (r *Repository) PrunePasswordHistory(ctx context.Context, userID string, keep int) error {
+	if keep < 0 {
+		keep = 0
+	}
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM password_history
+		WHERE user_id = ?
+		  AND id NOT IN (
+			SELECT id FROM password_history
+			WHERE user_id = ?
+			ORDER BY created_at DESC
+			LIMIT ?
+		  )
+	`, userID, userID, keep)
+	if isNoSuchTable(err) {
+		return errPasswordHistoryUnavailable
+	}
+	return err
+}
+
+func isNoSuchTable(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no such table")
 }
 
 // PasswordChangedAt returns the timestamp of the last password change, or the

@@ -61,26 +61,41 @@ export default function AdminModules() {
         <CardContent className="divide-y divide-border p-0">
           {mods.map((m) => (
             <SettingRow key={m.key} title={m.name} description={m.description}>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <Badge
-                  variant={m.health === "ok" ? "default" : "outline"}
-                  className="text-[10px]"
-                >
-                  {t(`admin.modules.health.${m.health}`)}
-                </Badge>
-                {m.system && (
-                  <Badge variant="secondary" className="text-[10px]">
-                    {t("admin.modules.system")}
+              <div className="flex min-w-0 flex-col items-end gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Badge
+                    variant={m.health === "ok" ? "default" : "outline"}
+                    className="text-[10px]"
+                  >
+                    {t(`admin.modules.health.${m.health}`)}
                   </Badge>
+                  {m.system && (
+                    <Badge variant="secondary" className="text-[10px]">
+                      {t("admin.modules.system")}
+                    </Badge>
+                  )}
+                  <ButtonLink to={m.settings_path}>
+                    {t("admin.modules.settings")}
+                  </ButtonLink>
+                  <Switch
+                    checked={m.enabled}
+                    disabled={m.system}
+                    onCheckedChange={(v) => toggle(m, v)}
+                  />
+                </div>
+                {m.health_checks.length > 0 && (
+                  <div className="max-w-[420px] space-y-1 text-right text-[11px] text-muted-foreground">
+                    {m.health_checks.map((check) => (
+                      <div key={check.key}>
+                        <span className="font-medium text-foreground">
+                          {check.key}
+                        </span>
+                        {": "}
+                        {check.message}
+                      </div>
+                    ))}
+                  </div>
                 )}
-                <ButtonLink to={m.settings_path}>
-                  {t("admin.modules.settings")}
-                </ButtonLink>
-                <Switch
-                  checked={m.enabled}
-                  disabled={m.system}
-                  onCheckedChange={(v) => toggle(m, v)}
-                />
               </div>
             </SettingRow>
           ))}

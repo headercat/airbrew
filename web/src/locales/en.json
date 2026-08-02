@@ -201,6 +201,8 @@
       "settings": "Settings",
       "health": {
         "ok": "healthy",
+        "warning": "warning",
+        "error": "error",
         "disabled": "disabled"
       },
       "toggleEnabled": "Toggle enabled"

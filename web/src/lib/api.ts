@@ -39,6 +39,11 @@ export type AdminModule = {
   status_message: string;
   settings_path: string;
   dependencies: string[];
+  health_checks: Array<{
+    key: string;
+    status: string;
+    message: string;
+  }>;
   disable_impact: string;
 };
 

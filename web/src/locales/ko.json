@@ -201,6 +201,8 @@
       "settings": "설정",
       "health": {
         "ok": "정상",
+        "warning": "주의",
+        "error": "오류",
         "disabled": "비활성"
       },
       "toggleEnabled": "활성화 토글"

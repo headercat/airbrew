@@ -43,17 +43,24 @@ type Handler struct {
 }
 
 type moduleDTO struct {
-	Key           string   `json:"key"`
-	Name          string   `json:"name"`
-	Description   string   `json:"description"`
-	AdminOnly     bool     `json:"admin_only"`
-	System        bool     `json:"system"`
-	Enabled       bool     `json:"enabled"`
-	Health        string   `json:"health"`
-	StatusMessage string   `json:"status_message"`
-	SettingsPath  string   `json:"settings_path"`
-	Dependencies  []string `json:"dependencies"`
-	DisableImpact string   `json:"disable_impact"`
+	Key           string                 `json:"key"`
+	Name          string                 `json:"name"`
+	Description   string                 `json:"description"`
+	AdminOnly     bool                   `json:"admin_only"`
+	System        bool                   `json:"system"`
+	Enabled       bool                   `json:"enabled"`
+	Health        string                 `json:"health"`
+	StatusMessage string                 `json:"status_message"`
+	SettingsPath  string                 `json:"settings_path"`
+	Dependencies  []string               `json:"dependencies"`
+	HealthChecks  []moduleHealthCheckDTO `json:"health_checks"`
+	DisableImpact string                 `json:"disable_impact"`
+}
+
+type moduleHealthCheckDTO struct {
+	Key     string `json:"key"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
 }
 
 var startedAt = time.Now().UTC().Truncate(time.Second)
@@ -110,41 +117,99 @@ func (h *Handler) countActiveSessions(ctx context.Context) (int, error) {
 // ---- Modules ----
 
 func (h *Handler) listModules(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	states, err := h.state.AllEnabled(r.Context())
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
+	dbErr := h.db.PingContext(ctx)
+	dbPath, _ := h.databasePath(ctx)
+	dataDir := ""
+	if dbPath != "" {
+		dataDir = filepath.Dir(dbPath)
+	}
 	out := make([]moduleDTO, 0, len(modules.Catalog))
 	for _, m := range modules.Catalog {
+		health, message, checks := h.moduleHealthReport(ctx, m, states[m.Key], dbErr, dataDir)
 		out = append(out, moduleDTO{
 			Key: m.Key, Name: m.Name, Description: m.Description,
 			AdminOnly: m.AdminOnly, System: m.System, Enabled: states[m.Key],
-			Health:        moduleHealth(m, states[m.Key]),
-			StatusMessage: moduleStatusMessage(m, states[m.Key]),
+			Health:        health,
+			StatusMessage: message,
 			SettingsPath:  "/admin/modules/" + m.Key,
 			Dependencies:  moduleDependencies(m),
+			HealthChecks:  checks,
 			DisableImpact: moduleDisableImpact(m),
 		})
 	}
 	response.JSON(w, http.StatusOK, map[string]any{"modules": out})
 }
 
-func moduleHealth(m modules.Meta, enabled bool) string {
-	if m.System || enabled {
-		return "ok"
+func (h *Handler) moduleHealthReport(ctx context.Context, m modules.Meta, enabled bool, dbErr error, dataDir string) (string, string, []moduleHealthCheckDTO) {
+	if !m.System && !enabled {
+		return "disabled", "Module routes are blocked until an admin enables it.", nil
 	}
-	return "disabled"
+	checks := []moduleHealthCheckDTO{}
+	if dbErr != nil {
+		checks = append(checks, moduleHealthCheckDTO{Key: "database", Status: "error", Message: "Database ping failed: " + dbErr.Error()})
+	} else {
+		checks = append(checks, moduleHealthCheckDTO{Key: "database", Status: "ok", Message: "Database is reachable."})
+	}
+	if moduleUsesBlobStore(m) {
+		total, free, err := diskUsage(dataDir)
+		switch {
+		case err != nil:
+			checks = append(checks, moduleHealthCheckDTO{Key: "storage_volume", Status: "warning", Message: "Data volume could not be checked: " + err.Error()})
+		case total > 0 && free < 512*1024*1024:
+			checks = append(checks, moduleHealthCheckDTO{Key: "storage_volume", Status: "warning", Message: "Data volume has less than 512 MB free."})
+		default:
+			checks = append(checks, moduleHealthCheckDTO{Key: "storage_volume", Status: "ok", Message: "Data volume has available capacity."})
+		}
+	}
+	if m.Key == "ai" {
+		if h.activeAIProviderConfigured(ctx) {
+			checks = append(checks, moduleHealthCheckDTO{Key: "provider_config", Status: "ok", Message: "An active chat provider is configured."})
+		} else {
+			checks = append(checks, moduleHealthCheckDTO{Key: "provider_config", Status: "warning", Message: "No active chat provider is configured."})
+		}
+	}
+	health := aggregateModuleHealth(checks)
+	if m.System && health == "ok" {
+		return health, "System module is always available.", checks
+	}
+	if health == "ok" {
+		return health, "Module routes are available to eligible users.", checks
+	}
+	return health, "Module is enabled, but one or more dependency checks need attention.", checks
 }
 
-func moduleStatusMessage(m modules.Meta, enabled bool) string {
-	if m.System {
-		return "System module is always available."
+func aggregateModuleHealth(checks []moduleHealthCheckDTO) string {
+	health := "ok"
+	for _, c := range checks {
+		switch c.Status {
+		case "error":
+			return "error"
+		case "warning":
+			health = "warning"
+		}
 	}
-	if enabled {
-		return "Module routes are available to eligible users."
+	return health
+}
+
+func moduleUsesBlobStore(m modules.Meta) bool {
+	switch m.Key {
+	case "drive", "contacts", "mail", "passwords":
+		return true
+	default:
+		return false
 	}
-	return "Module routes are blocked until an admin enables it."
+}
+
+func (h *Handler) activeAIProviderConfigured(ctx context.Context) bool {
+	var n int
+	err := h.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_provider_configs WHERE direction = 'chat' AND is_active = 1`).Scan(&n)
+	return err == nil && n > 0
 }
 
 func moduleDependencies(m modules.Meta) []string {
@@ -153,7 +218,7 @@ func moduleDependencies(m modules.Meta) []string {
 		return []string{"auth", "audit"}
 	case "ai":
 		return []string{"auth", "provider_config"}
-	case "drive", "contacts", "mail":
+	case "drive", "contacts", "mail", "passwords":
 		return []string{"auth", "blob_store"}
 	default:
 		return []string{"auth"}

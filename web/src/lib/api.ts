@@ -148,6 +148,8 @@ export type SystemInfo = {
   db_path: string;
   data_dir: string;
   db_size_mb: string;
+  disk_free_bytes: number;
+  disk_total_bytes: number;
   migration_version: string;
 };
 

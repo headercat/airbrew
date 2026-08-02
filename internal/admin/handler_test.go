@@ -71,3 +71,30 @@ func TestVerifySQLiteFileAcceptsAirbrewCoreSchema(t *testing.T) {
 		t.Fatalf("schema check = %q, want ok", result.SchemaCheck)
 	}
 }
+
+func TestNormalizeLogoURL(t *testing.T) {
+	ok := []string{
+		"https://example.com/logo.png",
+		"http://example.test/logo.svg",
+		"/assets/logo.png",
+		"  /assets/logo.png  ",
+		"",
+	}
+	for _, raw := range ok {
+		if _, err := normalizeLogoURL(raw); err != nil {
+			t.Fatalf("normalizeLogoURL(%q) unexpected error: %v", raw, err)
+		}
+	}
+
+	bad := []string{
+		"javascript:alert(1)",
+		"data:image/svg+xml;base64,abc",
+		"//example.com/logo.png",
+		"assets/logo.png",
+	}
+	for _, raw := range bad {
+		if got, err := normalizeLogoURL(raw); err == nil {
+			t.Fatalf("normalizeLogoURL(%q) = %q, want error", raw, got)
+		}
+	}
+}

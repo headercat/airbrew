@@ -132,6 +132,16 @@ export default function AdminSystem() {
             </span>
           </SettingRow>
           <SettingRow
+            title={t("admin.system.diskFree")}
+            description={t("admin.system.diskFreeDesc")}
+          >
+            <span className="text-[13px] font-medium tabular-nums">
+              {info
+                ? `${formatBytes(info.disk_free_bytes)} / ${formatBytes(info.disk_total_bytes)}`
+                : "—"}
+            </span>
+          </SettingRow>
+          <SettingRow
             title={t("admin.system.backup")}
             description={t("admin.system.backupDesc")}
           >

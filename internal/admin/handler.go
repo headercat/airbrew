@@ -14,11 +14,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/headercat/airbrew/internal/audit"
@@ -1166,7 +1168,12 @@ func (h *Handler) putBranding(w http.ResponseWriter, r *http.Request) {
 		h.setSetting(r.Context(), "branding.workspace_name", v)
 	}
 	if req.LogoURL != nil {
-		h.setSetting(r.Context(), "branding.logo_url", strings.TrimSpace(*req.LogoURL))
+		v, err := normalizeLogoURL(*req.LogoURL)
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		h.setSetting(r.Context(), "branding.logo_url", v)
 	}
 	if req.PrimaryColor != nil {
 		v := strings.TrimSpace(*req.PrimaryColor)
@@ -1207,6 +1214,24 @@ func (h *Handler) loadBranding(ctx context.Context) brandingDTO {
 	return b
 }
 
+func normalizeLogoURL(raw string) (string, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return "", nil
+	}
+	if strings.HasPrefix(v, "/") && !strings.HasPrefix(v, "//") {
+		return v, nil
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.Host == "" {
+		return "", errors.New("logo URL must be https, http, or root-relative")
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return "", errors.New("logo URL must be https, http, or root-relative")
+	}
+	return v, nil
+}
+
 func (h *Handler) setSetting(ctx context.Context, key, value string) {
 	now := time.Now().UTC().Truncate(time.Second)
 	_, _ = h.db.ExecContext(ctx, `
@@ -1230,6 +1255,8 @@ type systemDTO struct {
 	DBPath           string    `json:"db_path"`
 	DataDir          string    `json:"data_dir"`
 	DBSizeMB         string    `json:"db_size_mb"`
+	DiskFreeBytes    int64     `json:"disk_free_bytes"`
+	DiskTotalBytes   int64     `json:"disk_total_bytes"`
 	MigrationVersion string    `json:"migration_version"`
 }
 
@@ -1256,6 +1283,7 @@ func (h *Handler) systemInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	migrationVersion, _ := h.latestMigrationVersion(ctx)
+	diskTotal, diskFree, _ := diskUsage(dataDir)
 
 	response.JSON(w, http.StatusOK, systemDTO{
 		Version:          "0.1.0",
@@ -1270,8 +1298,22 @@ func (h *Handler) systemInfo(w http.ResponseWriter, r *http.Request) {
 		DBPath:           filepath.Base(dbPath),
 		DataDir:          dataDir,
 		DBSizeMB:         dbSize,
+		DiskFreeBytes:    diskFree,
+		DiskTotalBytes:   diskTotal,
 		MigrationVersion: migrationVersion,
 	})
+}
+
+func diskUsage(path string) (int64, int64, error) {
+	if path == "" {
+		return 0, 0, errors.New("path is empty")
+	}
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, 0, err
+	}
+	blockSize := uint64(st.Bsize)
+	return int64(st.Blocks * blockSize), int64(st.Bavail * blockSize), nil
 }
 
 func (h *Handler) backupDatabase(w http.ResponseWriter, r *http.Request) {

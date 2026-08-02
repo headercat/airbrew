@@ -440,6 +440,8 @@
       "migrationVersion": "마이그레이션 버전",
       "dbSize": "데이터베이스 크기",
       "dbSizeDesc": "SQLite 파일의 현재 디스크 크기.",
+      "diskFree": "디스크 여유 공간",
+      "diskFreeDesc": "데이터 디렉터리 볼륨의 사용 가능한 용량.",
       "backup": "데이터베이스 백업",
       "backupDesc": "SQLite 데이터베이스 스냅샷을 다운로드합니다.",
       "verifyBackup": "백업 검증",

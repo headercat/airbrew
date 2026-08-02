@@ -440,6 +440,8 @@
       "migrationVersion": "Migration version",
       "dbSize": "Database size",
       "dbSizeDesc": "Current on-disk size of the SQLite file.",
+      "diskFree": "Disk free",
+      "diskFreeDesc": "Available capacity on the data directory volume.",
       "backup": "Database backup",
       "backupDesc": "Download a snapshot of the SQLite database.",
       "verifyBackup": "Verify backup",

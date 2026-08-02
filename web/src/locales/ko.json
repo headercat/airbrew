@@ -171,6 +171,10 @@
       "quotaDesc": "이 모듈의 사용자당 최대 저장 용량입니다.",
       "access": "접근 제어",
       "accessDesc": "이 모듈을 사용할 수 있는 사용자 또는 그룹을 제한합니다.",
+      "dependencies": "의존성",
+      "dependenciesDesc": "이 모듈이 사용할 것으로 예상하는 플랫폼 서비스.",
+      "disableImpact": "비활성화 영향",
+      "disableImpactDesc": "모듈 사용 가능 여부를 바꾸기 전 운영 영향.",
       "notConfigured": "모듈별 설정은 준비 중입니다",
       "notConfiguredDesc": "이 모듈은 예약되어 있지만 아직 구성 가능한 설정이 없습니다."
     },
@@ -194,6 +198,11 @@
       "description": "워크스페이스 모듈을 활성화/비활성화합니다. 시스템 모듈은 항상 켜져 있습니다.",
       "system": "시스템",
       "adminOnly": "관리자 전용",
+      "settings": "설정",
+      "health": {
+        "ok": "정상",
+        "disabled": "비활성"
+      },
       "toggleEnabled": "활성화 토글"
     },
     "users": {

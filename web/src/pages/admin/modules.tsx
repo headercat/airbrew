@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Boxes, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -60,12 +61,21 @@ export default function AdminModules() {
         <CardContent className="divide-y divide-border p-0">
           {mods.map((m) => (
             <SettingRow key={m.key} title={m.name} description={m.description}>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Badge
+                  variant={m.health === "ok" ? "default" : "outline"}
+                  className="text-[10px]"
+                >
+                  {t(`admin.modules.health.${m.health}`)}
+                </Badge>
                 {m.system && (
                   <Badge variant="secondary" className="text-[10px]">
                     {t("admin.modules.system")}
                   </Badge>
                 )}
+                <ButtonLink to={m.settings_path}>
+                  {t("admin.modules.settings")}
+                </ButtonLink>
                 <Switch
                   checked={m.enabled}
                   disabled={m.system}
@@ -77,5 +87,22 @@ export default function AdminModules() {
         </CardContent>
       </Card>
     </>
+  );
+}
+
+function ButtonLink({
+  to,
+  children,
+}: {
+  to: string;
+  children: ReactNode;
+}) {
+  return (
+    <Link
+      to={to}
+      className="inline-flex h-8 items-center rounded-md border border-input px-3 text-xs font-medium hover:bg-accent"
+    >
+      {children}
+    </Link>
   );
 }

@@ -35,6 +35,11 @@ export type AdminModule = {
   admin_only: boolean;
   system: boolean;
   enabled: boolean;
+  health: string;
+  status_message: string;
+  settings_path: string;
+  dependencies: string[];
+  disable_impact: string;
 };
 
 export type AdminUser = {

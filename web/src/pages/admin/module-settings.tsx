@@ -86,12 +86,17 @@ export default function AdminModuleSettings() {
             title={t("admin.moduleSettings.status")}
             description={t("admin.moduleSettings.statusDesc")}
           >
-            <Badge
-              variant={mod?.enabled ? "default" : "outline"}
-              className="text-[10px]"
-            >
-              {mod?.enabled ? t("dashboard.online") : t("dashboard.disabled")}
-            </Badge>
+            <div className="text-right">
+              <Badge
+                variant={mod?.health === "ok" ? "default" : "outline"}
+                className="text-[10px]"
+              >
+                {mod ? t(`admin.modules.health.${mod.health}`) : "—"}
+              </Badge>
+              <p className="mt-1 max-w-[320px] text-xs text-muted-foreground">
+                {mod?.status_message ?? "—"}
+              </p>
+            </div>
           </SettingRow>
           <SettingRow
             title={t("admin.moduleSettings.adminOnly")}
@@ -103,6 +108,26 @@ export default function AdminModuleSettings() {
             >
               {mod?.admin_only ? "Admin" : "All users"}
             </Badge>
+          </SettingRow>
+          <SettingRow
+            title={t("admin.moduleSettings.dependencies")}
+            description={t("admin.moduleSettings.dependenciesDesc")}
+          >
+            <div className="flex max-w-[320px] flex-wrap justify-end gap-1">
+              {(mod?.dependencies ?? []).map((dep) => (
+                <Badge key={dep} variant="outline" className="text-[10px]">
+                  {dep}
+                </Badge>
+              ))}
+            </div>
+          </SettingRow>
+          <SettingRow
+            title={t("admin.moduleSettings.disableImpact")}
+            description={t("admin.moduleSettings.disableImpactDesc")}
+          >
+            <p className="max-w-[340px] text-right text-xs text-muted-foreground">
+              {mod?.disable_impact ?? "—"}
+            </p>
           </SettingRow>
         </CardContent>
       </Card>

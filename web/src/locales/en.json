@@ -171,6 +171,10 @@
       "quotaDesc": "Maximum storage per user for this module.",
       "access": "Access control",
       "accessDesc": "Restrict which users or groups can use this module.",
+      "dependencies": "Dependencies",
+      "dependenciesDesc": "Platform services this module expects to be available.",
+      "disableImpact": "Disable impact",
+      "disableImpactDesc": "Operational effect before changing module availability.",
       "notConfigured": "Module-specific settings coming soon",
       "notConfiguredDesc": "This module is reserved but does not have configurable settings yet."
     },
@@ -194,6 +198,11 @@
       "description": "Enable or disable workspace modules. System modules are always on.",
       "system": "system",
       "adminOnly": "admin only",
+      "settings": "Settings",
+      "health": {
+        "ok": "healthy",
+        "disabled": "disabled"
+      },
       "toggleEnabled": "Toggle enabled"
     },
     "users": {

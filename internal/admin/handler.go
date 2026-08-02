@@ -40,12 +40,17 @@ type Handler struct {
 }
 
 type moduleDTO struct {
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	AdminOnly   bool   `json:"admin_only"`
-	System      bool   `json:"system"`
-	Enabled     bool   `json:"enabled"`
+	Key           string   `json:"key"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description"`
+	AdminOnly     bool     `json:"admin_only"`
+	System        bool     `json:"system"`
+	Enabled       bool     `json:"enabled"`
+	Health        string   `json:"health"`
+	StatusMessage string   `json:"status_message"`
+	SettingsPath  string   `json:"settings_path"`
+	Dependencies  []string `json:"dependencies"`
+	DisableImpact string   `json:"disable_impact"`
 }
 
 var startedAt = time.Now().UTC().Truncate(time.Second)
@@ -112,9 +117,51 @@ func (h *Handler) listModules(w http.ResponseWriter, r *http.Request) {
 		out = append(out, moduleDTO{
 			Key: m.Key, Name: m.Name, Description: m.Description,
 			AdminOnly: m.AdminOnly, System: m.System, Enabled: states[m.Key],
+			Health:        moduleHealth(m, states[m.Key]),
+			StatusMessage: moduleStatusMessage(m, states[m.Key]),
+			SettingsPath:  "/admin/modules/" + m.Key,
+			Dependencies:  moduleDependencies(m),
+			DisableImpact: moduleDisableImpact(m),
 		})
 	}
 	response.JSON(w, http.StatusOK, map[string]any{"modules": out})
+}
+
+func moduleHealth(m modules.Meta, enabled bool) string {
+	if m.System || enabled {
+		return "ok"
+	}
+	return "disabled"
+}
+
+func moduleStatusMessage(m modules.Meta, enabled bool) string {
+	if m.System {
+		return "System module is always available."
+	}
+	if enabled {
+		return "Module routes are available to eligible users."
+	}
+	return "Module routes are blocked until an admin enables it."
+}
+
+func moduleDependencies(m modules.Meta) []string {
+	switch m.Key {
+	case "admin":
+		return []string{"auth", "audit"}
+	case "ai":
+		return []string{"auth", "provider_config"}
+	case "drive", "contacts", "mail":
+		return []string{"auth", "blob_store"}
+	default:
+		return []string{"auth"}
+	}
+}
+
+func moduleDisableImpact(m modules.Meta) string {
+	if m.System {
+		return "System modules cannot be disabled."
+	}
+	return "Disabling this module hides it from navigation and blocks its API routes for non-admin users."
 }
 
 type patchModuleReq struct {

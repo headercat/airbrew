@@ -227,6 +227,54 @@ func (r *Repository) CountNodes(ctx context.Context, userID, parentID string) (i
 	return n, nil
 }
 
+// ListChildren returns the live direct children of a folder in stable
+// folder-first/name order. It is used by recursive folder copy.
+func (r *Repository) ListChildren(ctx context.Context, userID, parentID string) ([]*Node, error) {
+	q := "SELECT " + nodeColumns + " FROM drive_nodes WHERE user_id = ? AND deleted_at IS NULL"
+	args := []any{userID}
+	if parentID == "" {
+		q += " AND parent_id IS NULL"
+	} else {
+		q += " AND parent_id = ?"
+		args = append(args, parentID)
+	}
+	q += " ORDER BY CASE kind WHEN 'folder' THEN 0 ELSE 1 END, lower(name) ASC, name ASC, created_at DESC"
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Node
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// SubtreeSize returns the live file byte total under rootID, inclusive.
+func (r *Repository) SubtreeSize(ctx context.Context, userID, rootID string) (int64, error) {
+	var total sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+		WITH RECURSIVE subtree(id) AS (
+		  SELECT id FROM drive_nodes WHERE id = ? AND user_id = ? AND deleted_at IS NULL
+		  UNION ALL
+		  SELECT c.id FROM drive_nodes c JOIN subtree ON c.parent_id = subtree.id
+		    WHERE c.user_id = ? AND c.deleted_at IS NULL
+		)
+		SELECT COALESCE(SUM(size_bytes),0)
+		FROM drive_nodes
+		WHERE id IN (SELECT id FROM subtree) AND kind = 'file'`,
+		rootID, userID, userID).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total.Int64, nil
+}
+
 // UpdateNodeFields applies a partial update to name/parent/content metadata.
 type UpdateNodeFields struct {
 	Name        *string
@@ -534,7 +582,9 @@ func (r *Repository) TotalSize(ctx context.Context, userID string) (int64, error
 // AllBlobPaths returns every blob_path for a user (live + trashed), for the
 // janitor's orphan sweep.
 func (r *Repository) AllBlobPaths(ctx context.Context, userID string) ([]string, error) {
-	return r.allBlobPathsWhere(ctx, "SELECT COALESCE(blob_path,'') FROM drive_nodes WHERE blob_path IS NOT NULL")
+	return r.allBlobPathsWhere(ctx,
+		"SELECT COALESCE(blob_path,'') FROM drive_nodes WHERE user_id = ? AND blob_path IS NOT NULL",
+		userID)
 }
 
 // AllBlobPathsAll returns every blob_path across all users.
@@ -542,8 +592,8 @@ func (r *Repository) AllBlobPathsAll(ctx context.Context) ([]string, error) {
 	return r.allBlobPathsWhere(ctx, "SELECT COALESCE(blob_path,'') FROM drive_nodes WHERE blob_path IS NOT NULL")
 }
 
-func (r *Repository) allBlobPathsWhere(ctx context.Context, q string) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, q)
+func (r *Repository) allBlobPathsWhere(ctx context.Context, q string, args ...any) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -655,6 +655,8 @@
     "shareExpiry": "만료 기한",
     "createLink": "링크 만들기",
     "copy": "복사",
+    "copyName": "사본 이름",
+    "copyDestination": "복사 위치",
     "copied": "복사됨!",
     "copyLink": "링크 복사",
     "expires": "만료",

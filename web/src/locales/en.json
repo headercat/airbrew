@@ -634,6 +634,8 @@
     "shareExpiry": "Expires after",
     "createLink": "Create link",
     "copy": "Copy",
+    "copyName": "Copy name",
+    "copyDestination": "Copy destination",
     "copied": "Copied!",
     "copyLink": "Copy link",
     "expires": "expires",

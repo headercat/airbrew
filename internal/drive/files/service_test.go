@@ -164,6 +164,73 @@ func TestMoveCircularGuard(t *testing.T) {
 	}
 }
 
+func TestCopyFileAndFolderTree(t *testing.T) {
+	svc, uid := testService(t)
+	ctx := context.Background()
+
+	root, err := svc.CreateFolder(ctx, CreateFolderInput{UserID: uid, Name: "Project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, err := svc.CreateFolder(ctx, CreateFolderInput{UserID: uid, ParentID: root.ID, Name: "Assets"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := svc.Upload(ctx, UploadInput{
+		UserID: uid, ParentID: sub.ID, Name: "brief.txt", Content: strings.NewReader("hello"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fileCopy, err := svc.Copy(ctx, uid, file.ID, sub.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fileCopy.Name != "Copy of brief.txt" || fileCopy.ParentID != sub.ID || fileCopy.BlobPath == file.BlobPath {
+		t.Fatalf("unexpected file copy %+v", fileCopy)
+	}
+	body, _, err := svc.Download(ctx, uid, fileCopy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(body)
+	body.Close()
+	if string(got) != "hello" {
+		t.Fatalf("copied file content mismatch: %q", got)
+	}
+
+	treeCopy, err := svc.Copy(ctx, uid, root.ID, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if treeCopy.Name != "Copy of Project" || treeCopy.Kind != KindFolder {
+		t.Fatalf("unexpected tree copy %+v", treeCopy)
+	}
+	children, err := svc.repo.ListChildren(ctx, uid, treeCopy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 1 || children[0].Name != "Assets" {
+		t.Fatalf("expected copied Assets folder, got %+v", children)
+	}
+	grandchildren, err := svc.repo.ListChildren(ctx, uid, children[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, child := range grandchildren {
+		names[child.Name] = true
+	}
+	if len(grandchildren) != 2 || !names["brief.txt"] || !names["Copy of brief.txt"] {
+		t.Fatalf("expected copied files, got %+v", grandchildren)
+	}
+
+	if _, err := svc.Copy(ctx, uid, root.ID, sub.ID, "Bad copy"); !errors.Is(err, ErrCircularMove) {
+		t.Fatalf("expected ErrCircularMove, got %v", err)
+	}
+}
+
 func TestTrashRestoreDelete(t *testing.T) {
 	svc, uid := testService(t)
 	ctx := context.Background()
@@ -269,6 +336,35 @@ func TestJanitorSweepsOrphans(t *testing.T) {
 	}
 	if _, ok := store.files[file.BlobPath]; !ok {
 		t.Fatal("expected live file blob preserved")
+	}
+}
+
+func TestAllBlobPathsIsUserScoped(t *testing.T) {
+	svc, uid := testService(t)
+	ctx := context.Background()
+	own, err := svc.Upload(ctx, UploadInput{UserID: uid, Name: "own.txt", Content: strings.NewReader("own")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherUID := "user_" + nextID()
+	if _, err := svc.repo.db.ExecContext(ctx,
+		`INSERT INTO users (id, email, public_subject, status) VALUES (?, ?, ?, 'active')`,
+		otherUID, otherUID+"@example.com", otherUID); err != nil {
+		t.Fatal(err)
+	}
+	other, err := svc.Upload(ctx, UploadInput{UserID: otherUID, Name: "other.txt", Content: strings.NewReader("other")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := svc.repo.AllBlobPaths(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(paths, own.BlobPath) {
+		t.Fatal("expected own blob path")
+	}
+	if contains(paths, other.BlobPath) {
+		t.Fatal("did not expect another user's blob path")
 	}
 }
 

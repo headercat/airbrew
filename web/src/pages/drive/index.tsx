@@ -11,6 +11,7 @@ import {
   Image as ImageIcon,
   Link2,
   Loader2,
+  Copy as CopyIcon,
   Pencil,
   Search,
   Share2,
@@ -64,6 +65,7 @@ export default function DrivePage() {
   const [renameNode, setRenameNode] = useState<DriveNode | null>(null);
   const [shareNode, setShareNode] = useState<DriveNode | null>(null);
   const [moveNode, setMoveNode] = useState<DriveNode | null>(null);
+  const [copyNode, setCopyNode] = useState<DriveNode | null>(null);
 
   const fileInput = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -455,6 +457,7 @@ export default function DrivePage() {
             onDownload={download}
             onStar={toggleStar}
             onRename={setRenameNode}
+            onCopy={setCopyNode}
             onShare={setShareNode}
             onMove={setMoveNode}
             onTrash={(n) => remove(n, false)}
@@ -524,6 +527,16 @@ export default function DrivePage() {
         }}
         t={t}
       />
+      <CopyModal
+        node={copyNode}
+        currentParent={parent}
+        onClose={() => setCopyNode(null)}
+        onDone={async () => {
+          setCopyNode(null);
+          await Promise.all([refresh(), refreshUsage()]);
+        }}
+        t={t}
+      />
       <ShareModal node={shareNode} onClose={() => setShareNode(null)} t={t} />
 
       {busy && (
@@ -546,6 +559,7 @@ function NodeTable(props: {
   onDownload: (n: DriveNode) => void;
   onStar: (n: DriveNode) => void;
   onRename: (n: DriveNode) => void;
+  onCopy: (n: DriveNode) => void;
   onShare: (n: DriveNode) => void;
   onMove: (n: DriveNode) => void;
   onTrash: (n: DriveNode) => void;
@@ -563,6 +577,7 @@ function NodeTable(props: {
     onDownload,
     onStar,
     onRename,
+    onCopy,
     onShare,
     onMove,
     onTrash,
@@ -658,6 +673,9 @@ function NodeTable(props: {
                     onClick={() => onRename(n)}
                   >
                     <Pencil className="h-4 w-4" />
+                  </IconBtn>
+                  <IconBtn label={t("drive.copy")} onClick={() => onCopy(n)}>
+                    <CopyIcon className="h-4 w-4" />
                   </IconBtn>
                   <IconBtn label={t("drive.move")} onClick={() => onMove(n)}>
                     <FolderIcon className="h-4 w-4" />
@@ -1016,7 +1034,10 @@ function MoveModal({
     }
   };
   const opts = folders.filter(
-    (f) => f.id !== node.id && f.id !== node.parent_id,
+    (f) =>
+      f.id !== node.id &&
+      f.id !== node.parent_id &&
+      !isDescendantFolder(f.id, node, folders),
   );
   return (
     <Modal open={!!node} onClose={onClose} title={t("drive.move")}>
@@ -1046,6 +1067,97 @@ function MoveModal({
             {t("drive.noFolders")}
           </p>
         )}
+      </div>
+    </Modal>
+  );
+}
+
+function CopyModal({
+  node,
+  currentParent,
+  onClose,
+  onDone,
+  t,
+}: {
+  node: DriveNode | null;
+  currentParent: string;
+  onClose: () => void;
+  onDone: () => void;
+  t: (k: string) => string;
+}) {
+  const [folders, setFolders] = useState<DriveNode[]>([]);
+  const [target, setTarget] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (node) {
+      setTarget(currentParent);
+      setName(`Copy of ${node.name}`);
+      setErr(null);
+      drive
+        .list({ kind: "folder", parent: "*" })
+        .then((r) => setFolders(r.nodes ?? []))
+        .catch(() => setFolders([]));
+    }
+  }, [node, currentParent]);
+  if (!node) return null;
+  const submit = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await drive.copy(node.id, target, name.trim());
+      onDone();
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const opts = folders.filter(
+    (f) => f.id !== node.id && !isDescendantFolder(f.id, node, folders),
+  );
+  return (
+    <Modal open={!!node} onClose={onClose} title={t("drive.copy")}>
+      <div className="space-y-3">
+        <div>
+          <label className="mb-1 block text-xs text-muted-foreground">
+            {t("drive.copyName")}
+          </label>
+          <Input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-muted-foreground">
+            {t("drive.copyDestination")}
+          </label>
+          <select
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+          >
+            <option value="">{t("drive.myFiles")}</option>
+            {opts.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {err && <p className="mt-2 text-sm text-destructive">{err}</p>}
+      <div className="mt-4 flex justify-end gap-2">
+        <Button variant="outline" onClick={onClose}>
+          {t("common.back")}
+        </Button>
+        <Button onClick={submit} disabled={busy || !name.trim()}>
+          {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+          {t("drive.copy")}
+        </Button>
       </div>
     </Modal>
   );
@@ -1195,6 +1307,19 @@ function formatBytes(n: number): string {
     Math.floor(Math.log(n) / Math.log(1024)),
   );
   return `${(n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function isDescendantFolder(
+  folderID: string,
+  node: DriveNode,
+  folders: DriveNode[],
+): boolean {
+  if (node.kind !== "folder") return false;
+  const byID = new Map(folders.map((f) => [f.id, f]));
+  for (let cur = byID.get(folderID); cur; cur = byID.get(cur.parent_id)) {
+    if (cur.parent_id === node.id) return true;
+  }
+  return false;
 }
 
 function errMsg(e: unknown): string {

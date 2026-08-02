@@ -277,15 +277,12 @@ func (s *Service) Move(ctx context.Context, userID, id, newParentID string) (*No
 	return s.repo.GetNode(ctx, userID, id)
 }
 
-// Copy duplicates a file node under newParentID, giving it a new blob-backed
-// row. Folders are not copied (kept simple for v1).
+// Copy duplicates a file or folder node under newParentID. Folder copies are
+// recursive and preserve the source tree's names, metadata and file bytes.
 func (s *Service) Copy(ctx context.Context, userID, id, newParentID, newName string) (*Node, error) {
 	src, err := s.repo.GetNode(ctx, userID, id)
 	if err != nil {
 		return nil, err
-	}
-	if src.IsFolder() {
-		return nil, fmt.Errorf("%w: copying folders is not supported", ErrInvalidInput)
 	}
 	if newParentID != "" {
 		p, err := s.repo.GetNode(ctx, userID, newParentID)
@@ -296,10 +293,76 @@ func (s *Service) Copy(ctx context.Context, userID, id, newParentID, newName str
 			return nil, fmt.Errorf("%w: target is not a folder", ErrInvalidInput)
 		}
 	}
+	if src.IsFolder() {
+		if desc, err := s.repo.IsDescendant(ctx, userID, id, newParentID); err != nil {
+			return nil, err
+		} else if desc {
+			return nil, ErrCircularMove
+		}
+	}
+	if err := s.ensureCopyQuota(ctx, userID, src); err != nil {
+		return nil, err
+	}
 	name := cleanName(newName)
 	if name == "" {
-		name = src.Name
+		name = defaultCopyName(src, newParentID)
 	}
+	copied, err := s.copyTree(ctx, src, newParentID, name)
+	if err != nil {
+		return nil, err
+	}
+	return copied, nil
+}
+
+func (s *Service) ensureCopyQuota(ctx context.Context, userID string, src *Node) error {
+	cfg := s.Config()
+	if cfg.QuotaBytes <= 0 {
+		return nil
+	}
+	used, err := s.repo.TotalSize(ctx, userID)
+	if err != nil {
+		return err
+	}
+	extra := src.SizeBytes
+	if src.IsFolder() {
+		extra, err = s.repo.SubtreeSize(ctx, userID, src.ID)
+		if err != nil {
+			return err
+		}
+	}
+	if used+extra > cfg.QuotaBytes {
+		return fmt.Errorf("%w: quota %d exceeded", ErrQuotaExceeded, cfg.QuotaBytes)
+	}
+	return nil
+}
+
+func (s *Service) copyTree(ctx context.Context, src *Node, parentID, name string) (*Node, error) {
+	if src.IsFolder() {
+		dup := &Node{
+			ID:        nextID(),
+			UserID:    src.UserID,
+			ParentID:  parentID,
+			Kind:      KindFolder,
+			Name:      name,
+			IsStarred: src.IsStarred,
+		}
+		if err := s.repo.CreateNode(ctx, dup); err != nil {
+			return nil, err
+		}
+		children, err := s.repo.ListChildren(ctx, src.UserID, src.ID)
+		if err != nil {
+			_ = s.DeletePermanent(ctx, src.UserID, dup.ID)
+			return nil, err
+		}
+		for _, child := range children {
+			if _, err := s.copyTree(ctx, child, dup.ID, child.Name); err != nil {
+				_ = s.DeletePermanent(ctx, src.UserID, dup.ID)
+				return nil, err
+			}
+		}
+		return dup, nil
+	}
+
 	var blobPath string
 	if src.BlobPath != "" && s.blobs != nil {
 		body, ct, err := s.blobs.Open(ctx, src.BlobPath)
@@ -315,20 +378,28 @@ func (s *Service) Copy(ctx context.Context, userID, id, newParentID, newName str
 	}
 	dup := &Node{
 		ID:          nextID(),
-		UserID:      userID,
-		ParentID:    newParentID,
+		UserID:      src.UserID,
+		ParentID:    parentID,
 		Kind:        KindFile,
 		Name:        name,
 		BlobPath:    blobPath,
 		ContentType: src.ContentType,
 		SizeBytes:   src.SizeBytes,
 		SHA256:      src.SHA256,
+		IsStarred:   src.IsStarred,
 	}
 	if err := s.repo.CreateNodeWithQuota(ctx, dup, s.Config().QuotaBytes); err != nil {
 		s.deleteBlob(ctx, blobPath)
 		return nil, err
 	}
 	return dup, nil
+}
+
+func defaultCopyName(src *Node, parentID string) string {
+	if src.ParentID == parentID {
+		return cleanName("Copy of " + src.Name)
+	}
+	return src.Name
 }
 
 // SetStarred toggles the starred flag.

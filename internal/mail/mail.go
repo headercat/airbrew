@@ -57,7 +57,7 @@ func New(database *db.DB, state *modules.State, auditSvc *audit.Service, blobs b
 		inbox:   in,
 		prov:    provRepo,
 		user:    handler.New(in, provRepo, blobs),
-		admin:   handler.NewAdmin(provRepo),
+		admin:   handler.NewAdmin(provRepo, auditSvc),
 		webhook: handler.NewWebhook(provRepo, in),
 		coord:   coord,
 	}

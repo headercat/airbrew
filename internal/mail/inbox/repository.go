@@ -441,13 +441,13 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// isUniqueViolation reports whether err is a SQLite UNIQUE/PK constraint
-// failure (modernc.org/sqlite prefixes constraint errors with "constraint").
+// isUniqueViolation reports whether err is a SQLite UNIQUE constraint failure.
+// It checks specifically for "UNIQUE" so a FOREIGN KEY or CHECK constraint
+// failure is not mistaken for a duplicate. modernc.org/sqlite formats these as
+// "constraint failed: UNIQUE constraint failed: <table>.<col> ...".
 func isUniqueViolation(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "constraint failed") ||
-		strings.Contains(msg, "UNIQUE constraint failed")
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }

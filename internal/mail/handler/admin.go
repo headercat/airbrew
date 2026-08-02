@@ -3,7 +3,9 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
+	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/mail/inbound"
 	"github.com/headercat/airbrew/internal/mail/outbound"
 	"github.com/headercat/airbrew/internal/mail/provider"
@@ -12,11 +14,15 @@ import (
 // AdminHandler exposes the admin-only provider config endpoints. The caller is
 // expected to mount it under a mux already wrapped with RequireAdmin.
 type AdminHandler struct {
-	repo *provider.Repository
+	repo  *provider.Repository
+	audit *audit.Service
 }
 
-// NewAdmin builds an AdminHandler.
-func NewAdmin(repo *provider.Repository) *AdminHandler { return &AdminHandler{repo: repo} }
+// NewAdmin builds an AdminHandler. auditSvc may be nil; when present, provider
+// changes are recorded in the audit log.
+func NewAdmin(repo *provider.Repository, auditSvc *audit.Service) *AdminHandler {
+	return &AdminHandler{repo: repo, audit: auditSvc}
+}
 
 // RegisterRoutes mounts the admin endpoints on mux.
 func (a *AdminHandler) RegisterRoutes(mux *http.ServeMux) {
@@ -84,13 +90,31 @@ func (a *AdminHandler) upsert(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if a.audit != nil {
+		a.audit.Log(r.Context(), audit.Entry{
+			EventType:  "mail.provider_upserted",
+			TargetType: "mail_provider", TargetID: p.ID,
+			IPAddress:  clientIP(r),
+			UserAgent:  r.UserAgent(),
+			Metadata:   map[string]any{"direction": p.Direction, "driver": p.Driver},
+		})
+	}
 	jsonResp(w, http.StatusCreated, toProviderResp(p))
 }
 
 func (a *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {
-	if err := a.repo.Delete(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := a.repo.Delete(r.Context(), id); err != nil {
 		writeErr(w, err)
 		return
+	}
+	if a.audit != nil {
+		a.audit.Log(r.Context(), audit.Entry{
+			EventType:  "mail.provider_deleted",
+			TargetType: "mail_provider", TargetID: id,
+			IPAddress: clientIP(r),
+			UserAgent: r.UserAgent(),
+		})
 	}
 	jsonResp(w, http.StatusOK, map[string]bool{"ok": true})
 }

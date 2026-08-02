@@ -1,0 +1,157 @@
+package inbox_test
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/headercat/airbrew/internal/db"
+	"github.com/headercat/airbrew/internal/mail/inbox"
+	"github.com/headercat/airbrew/internal/mail/letter"
+)
+
+func newService(t *testing.T) (*inbox.Service, context.Context) {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "mail.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if err := d.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	for _, uid := range []string{"u1", "u2"} {
+		if _, err := d.DB.Exec(
+			`INSERT INTO users (id, public_subject, email) VALUES (?, ?, ?)`,
+			uid, uid, uid+"@airbrew.local"); err != nil {
+			t.Fatalf("seed user %s: %v", uid, err)
+		}
+	}
+	repo := inbox.NewRepository(d.DB)
+	return inbox.NewService(repo, nil), context.Background()
+}
+
+func mustCreateMailbox(t *testing.T, s *inbox.Service, ctx context.Context, userID, addr string) *inbox.Mailbox {
+	t.Helper()
+	mb, err := s.CreateMailbox(ctx, inbox.NewMailboxInput{UserID: userID, Address: addr})
+	if err != nil {
+		t.Fatalf("create mailbox: %v", err)
+	}
+	return mb
+}
+
+func rawMsg(messageID, refs, to string) []byte {
+	headers := "From: bob@ext.com\r\n"
+	if to != "" {
+		headers += "To: " + to + "\r\n"
+	}
+	headers += "Subject: test\r\n"
+	if messageID != "" {
+		headers += "Message-ID: <" + messageID + ">\r\n"
+	}
+	if refs != "" {
+		headers += "References: <" + refs + ">\r\n"
+	}
+	headers += "Content-Type: text/plain; charset=utf-8\r\n\r\nbody"
+	return []byte(headers)
+}
+
+// TestIngestDedup ensures a repeated Message-ID within a mailbox is rejected
+// with ErrDuplicate so webhook retries / IMAP re-fetches cannot double-store.
+func TestIngestDedup(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	if _, err := s.Ingest(ctx, "alice@airbrew.local", rawMsg("m1", "", "alice@airbrew.local"), time.Now()); err != nil {
+		t.Fatalf("first ingest: %v", err)
+	}
+	_, err := s.Ingest(ctx, "alice@airbrew.local", rawMsg("m1", "", "alice@airbrew.local"), time.Now())
+	if err != inbox.ErrDuplicate {
+		t.Fatalf("second ingest err = %v, want ErrDuplicate", err)
+	}
+}
+
+// TestIngestThreadGrouping verifies a reply chains onto its parent thread.
+func TestIngestThreadGrouping(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	if _, err := s.Ingest(ctx, "alice@airbrew.local", rawMsg("orig1", "", "alice@airbrew.local"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Ingest(ctx, "alice@airbrew.local", rawMsg("rep1", "orig1", "alice@airbrew.local"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	threads, err := s.ListThreads(ctx, uid, "", 10, 0)
+	if err != nil {
+		t.Fatalf("list threads: %v", err)
+	}
+	if len(threads) != 1 {
+		t.Fatalf("got %d threads, want 1", len(threads))
+	}
+	if threads[0].ThreadID != "orig1" || threads[0].Count != 2 {
+		t.Fatalf("thread = %+v, want thread_id=orig1 count=2", threads[0])
+	}
+
+	// The thread filter must return both messages.
+	msgs, err := s.ListMessages(ctx, inbox.ListFilter{UserID: uid, ThreadID: "orig1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("thread messages = %d, want 2", len(msgs))
+	}
+}
+
+// TestIngestRoutingByToCc checks fallback routing when the envelope recipient
+// is empty — the To header should still resolve a known mailbox.
+func TestIngestRoutingByToCc(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	// Empty envelope recipient; rely on To header routing.
+	if _, err := s.Ingest(ctx, "", rawMsg("m2", "", "alice@airbrew.local"), time.Now()); err != nil {
+		t.Fatalf("ingest without envelope: %v", err)
+	}
+	// Unknown recipient and unknown To header -> ErrMailboxNotFound.
+	if _, err := s.Ingest(ctx, "nobody@nowhere.test", rawMsg("m3", "", "stranger@nowhere.test"), time.Now()); err != inbox.ErrMailboxNotFound {
+		t.Fatalf("err = %v, want ErrMailboxNotFound", err)
+	}
+}
+
+// TestSendThreading ensures an outbound reply shares the inbound thread.
+func TestSendThreading(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mb := mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	// Receive then reply.
+	if _, err := s.Ingest(ctx, "alice@airbrew.local", rawMsg("orig2", "", "alice@airbrew.local"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	sent, err := s.Send(ctx, uid, inbox.SendInput{
+		MailboxID: mb.ID,
+		To:        []letter.Address{{Address: "bob@ext.com"}},
+		Subject:   "Re: test", Text: "reply body",
+		InReplyTo: "orig2", References: []string{"orig2"},
+	}, stubSender{})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if sent.ThreadID != "orig2" {
+		t.Fatalf("sent thread_id = %q, want orig2", sent.ThreadID)
+	}
+	threads, _ := s.ListThreads(ctx, uid, "", 10, 0)
+	if len(threads) != 1 {
+		t.Fatalf("expected single thread, got %d", len(threads))
+	}
+}
+
+type stubSender struct{}
+
+func (stubSender) Name() string { return "stub" }
+func (stubSender) Send(ctx context.Context, o letter.Outgoing) error { return nil }

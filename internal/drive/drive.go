@@ -47,6 +47,9 @@ func New(ctx context.Context, db *sql.DB, state *modules.State, auditSvc *audit.
 	if ctx != nil {
 		jan := files.NewJanitor(repo, blobs, slog.Default())
 		go jan.Start(ctx)
+	} else {
+		slog.WarnContext(context.Background(),
+			"drive: lifecycle context is nil; background janitor will not run")
 	}
 	return &Module{
 		state: state,

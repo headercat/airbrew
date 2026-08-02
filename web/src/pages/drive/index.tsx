@@ -447,6 +447,20 @@ export default function DrivePage() {
             onTrash={(n) => remove(n, false)}
             onDelete={(n) => remove(n, true)}
             onRestore={restore}
+            sort={sort}
+            order={order}
+            onSort={(col) => {
+              const next = new URLSearchParams(params);
+              // Clicking the active column toggles direction; a new column
+              // defaults to ascending.
+              if (sort === col) {
+                next.set("order", order === "asc" ? "desc" : "asc");
+              } else {
+                next.set("sort", col);
+                next.set("order", "asc");
+              }
+              setParams(next, { replace: false });
+            }}
           />
         )}
       </Card>
@@ -516,6 +530,9 @@ function NodeTable(props: {
   onTrash: (n: DriveNode) => void;
   onDelete: (n: DriveNode) => void;
   onRestore: (n: DriveNode) => void;
+  sort: string;
+  order: string;
+  onSort: (col: string) => void;
 }) {
   const {
     nodes,
@@ -530,10 +547,41 @@ function NodeTable(props: {
     onTrash,
     onDelete,
     onRestore,
+    sort,
+    order,
+    onSort,
   } = props;
   const isTrash = view === "trash";
+  const cols = [
+    { key: "name", label: t("drive.colName"), className: "flex-1" },
+    {
+      key: "size",
+      label: t("drive.colSize"),
+      className: "hidden w-24 sm:block",
+    },
+    {
+      key: "updated",
+      label: t("drive.colModified"),
+      className: "hidden w-32 md:block",
+    },
+  ];
   return (
     <div className="divide-y divide-border">
+      <div className="flex items-center gap-3 border-b bg-muted/30 px-4 py-1.5 text-xs font-medium text-muted-foreground">
+        {cols.map((c) => (
+          <button
+            key={c.key}
+            className={cn(c.className, "text-left hover:text-foreground")}
+            onClick={() => onSort(c.key)}
+          >
+            {c.label}
+            {sort === c.key && (
+              <span className="ml-1">{order === "desc" ? "▼" : "▲"}</span>
+            )}
+          </button>
+        ))}
+        <span className="w-40" />
+      </div>
       {nodes.map((n) => {
         const Icon = iconFor(n);
         return (

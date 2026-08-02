@@ -43,8 +43,7 @@ export type DriveShareMeta = {
   name: string;
   content_type: string;
   size_bytes: number;
-  has_password: boolean;
-  expired: boolean;
+  expires_at?: string;
 };
 
 export type ListParams = {

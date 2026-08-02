@@ -589,7 +589,10 @@
       "trash": "Trash"
     },
     "untitled": "Untitled",
-    "inTrash": "In trash"
+    "inTrash": "In trash",
+    "colName": "Name",
+    "colSize": "Size",
+    "colModified": "Modified"
   },
   "share": {
     "expired": "This share link has expired.",
@@ -599,6 +602,7 @@
     "continue": "Continue",
     "download": "Download",
     "downloadFailed": "Download failed.",
-    "file": "file"
+    "file": "file",
+    "expiresOn": "Expires {{date}}"
   }
 }

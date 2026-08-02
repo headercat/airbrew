@@ -20,8 +20,7 @@ type publicShareResp struct {
 	Name        string `json:"name"`
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
-	HasPassword bool   `json:"has_password"`
-	Expired     bool   `json:"expired"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
 }
 
 // getShare returns public metadata for a share so a landing page can render
@@ -30,16 +29,18 @@ type publicShareResp struct {
 func (h *Handler) getShare(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	pw := sharePassword(r)
-	n, err := h.svc.OpenShare(r.Context(), token, pw)
+	n, sh, err := h.svc.OpenShare(r.Context(), token, pw)
 	if err != nil {
 		writeShareErr(w, err)
 		return
 	}
-	jsonResp(w, http.StatusOK, publicShareResp{
-		Name:        n.Name,
-		ContentType: n.ContentType,
-		SizeBytes:   n.SizeBytes,
-	})
+	out := publicShareResp{
+		Name: n.Name, ContentType: n.ContentType, SizeBytes: n.SizeBytes,
+	}
+	if sh.ExpiresAt != nil {
+		out.ExpiresAt = sh.ExpiresAt.UTC().Format(timeRFC3339)
+	}
+	jsonResp(w, http.StatusOK, out)
 }
 
 // downloadShare streams the shared file. For password-protected shares the
@@ -48,7 +49,7 @@ func (h *Handler) getShare(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) downloadShare(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	pw := sharePassword(r)
-	n, err := h.svc.OpenShare(r.Context(), token, pw)
+	n, _, err := h.svc.OpenShare(r.Context(), token, pw)
 	if err != nil {
 		writeShareErr(w, err)
 		return

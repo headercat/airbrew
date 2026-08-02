@@ -7,6 +7,7 @@ package handler
 import (
 	"bytes"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -308,37 +309,33 @@ func (h *Handler) patchFile(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	ctx := r.Context()
-	var n *files.Node
-	var err error
-	var event string
-	switch {
-	case req.Name != nil:
-		n, err = h.svc.Rename(ctx, sess.UserID, id, *req.Name)
-		event = "drive.file_renamed"
-	case req.ParentID != nil:
-		n, err = h.svc.Move(ctx, sess.UserID, id, *req.ParentID)
-		event = "drive.file_moved"
-	case req.Starred != nil:
-		err = h.svc.SetStarred(ctx, sess.UserID, id, *req.Starred)
-		if err == nil {
-			n, _ = h.svc.Get(ctx, sess.UserID, id)
-			event = "drive.file_starred"
-		}
-	default:
-		n, err = h.svc.Get(ctx, sess.UserID, id)
-	}
+	// Apply all present fields in one request (rename + move + star together).
+	n, err := h.svc.Patch(ctx, sess.UserID, id, req.Name, req.ParentID, req.Starred)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	if event != "" {
-		h.audit.Log(ctx, audit.Entry{
-			EventType: event, ActorUserID: sess.UserID,
-			TargetType: "drive_node", TargetID: id,
-			IPAddress: clientIP(r), UserAgent: r.UserAgent(),
-		})
-	}
+	h.audit.Log(ctx, audit.Entry{
+		EventType: patchEvent(req), ActorUserID: sess.UserID,
+		TargetType: "drive_node", TargetID: id,
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
 	jsonResp(w, http.StatusOK, toNodeResp(n))
+}
+
+// patchEvent picks an audit event type for a patch, preferring the most
+// significant change.
+func patchEvent(req patchFileReq) string {
+	switch {
+	case req.Name != nil:
+		return "drive.file_renamed"
+	case req.ParentID != nil:
+		return "drive.file_moved"
+	case req.Starred != nil:
+		return "drive.file_starred"
+	default:
+		return "drive.file_viewed"
+	}
 }
 
 func (h *Handler) deleteFile(w http.ResponseWriter, r *http.Request) {
@@ -376,7 +373,8 @@ func (h *Handler) restoreFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.Restore(r.Context(), sess.UserID, r.PathValue("id")); err != nil {
+	n, err := h.svc.Restore(r.Context(), sess.UserID, r.PathValue("id"))
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -385,7 +383,7 @@ func (h *Handler) restoreFile(w http.ResponseWriter, r *http.Request) {
 		TargetType: "drive_node", TargetID: r.PathValue("id"),
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
 	})
-	jsonResp(w, http.StatusOK, map[string]bool{"ok": true})
+	jsonResp(w, http.StatusOK, toNodeResp(n))
 }
 
 type copyFileReq struct {
@@ -412,7 +410,7 @@ func (h *Handler) copyFile(w http.ResponseWriter, r *http.Request) {
 		EventType: "drive.file_copied", ActorUserID: sess.UserID,
 		TargetType: "drive_node", TargetID: r.PathValue("id"),
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
-		Metadata:  map[string]any{"copy_id": n.ID},
+		Metadata: map[string]any{"copy_id": n.ID},
 	})
 	jsonResp(w, http.StatusCreated, toNodeResp(n))
 }
@@ -439,7 +437,10 @@ func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 	if n.SizeBytes > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(n.SizeBytes, 10))
 	}
-	_, _ = io.Copy(w, body)
+	if _, err := io.Copy(w, body); err != nil {
+		slog.WarnContext(r.Context(), "drive: download copy failed",
+			"id", n.ID, "error", err)
+	}
 }
 
 // disposition builds a Content-Disposition header, URL-safe quoting the name.

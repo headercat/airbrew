@@ -186,7 +186,7 @@ func TestTrashRestoreDelete(t *testing.T) {
 		t.Fatalf("expected empty root, got %+v", live)
 	}
 	// Restore the subtree.
-	if err := svc.Restore(ctx, uid, root.ID); err != nil {
+	if _, err := svc.Restore(ctx, uid, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	live, _ = svc.List(ctx, ListFilter{UserID: uid})
@@ -214,7 +214,7 @@ func TestSharePasswordAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.OpenShare(ctx, sh.Token, ""); err != nil {
+	if _, _, err := svc.OpenShare(ctx, sh.Token, ""); err != nil {
 		t.Fatalf("open no-pw share: %v", err)
 	}
 
@@ -223,13 +223,13 @@ func TestSharePasswordAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.OpenShare(ctx, pw.Token, ""); !errors.Is(err, ErrPasswordRequired) {
+	if _, _, err := svc.OpenShare(ctx, pw.Token, ""); !errors.Is(err, ErrPasswordRequired) {
 		t.Fatalf("expected ErrPasswordRequired, got %v", err)
 	}
-	if _, err := svc.OpenShare(ctx, pw.Token, "wrong"); !errors.Is(err, ErrPasswordRequired) {
+	if _, _, err := svc.OpenShare(ctx, pw.Token, "wrong"); !errors.Is(err, ErrPasswordRequired) {
 		t.Fatalf("expected ErrPasswordRequired on wrong pw, got %v", err)
 	}
-	if _, err := svc.OpenShare(ctx, pw.Token, "hunter2"); err != nil {
+	if _, _, err := svc.OpenShare(ctx, pw.Token, "hunter2"); err != nil {
 		t.Fatalf("correct pw should open: %v", err)
 	}
 
@@ -239,7 +239,7 @@ func TestSharePasswordAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.OpenShare(ctx, exp.Token, ""); !errors.Is(err, ErrExpired) {
+	if _, _, err := svc.OpenShare(ctx, exp.Token, ""); !errors.Is(err, ErrExpired) {
 		t.Fatalf("expected ErrExpired, got %v", err)
 	}
 

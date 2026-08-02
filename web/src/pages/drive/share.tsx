@@ -120,6 +120,13 @@ export default function DriveSharePage() {
             {meta.content_type || t("share.file")} ·{" "}
             {formatBytes(meta.size_bytes)}
           </p>
+          {meta.expires_at && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("share.expiresOn", {
+                date: new Date(meta.expires_at).toLocaleString(),
+              })}
+            </p>
+          )}
         </div>
         <Button className="w-full" onClick={doDownload} disabled={downloading}>
           {downloading ? (

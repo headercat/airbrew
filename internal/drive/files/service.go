@@ -330,9 +330,34 @@ func (s *Service) Trash(ctx context.Context, userID, id string) error {
 	return s.repo.Trash(ctx, userID, id)
 }
 
-// Restore clears the soft-delete flag (and, for folders, its subtree).
-func (s *Service) Restore(ctx context.Context, userID, id string) error {
-	return s.repo.Restore(ctx, userID, id)
+// Restore clears the soft-delete flag (and, for folders, the descendants
+// trashed with it). Returns the restored node.
+func (s *Service) Restore(ctx context.Context, userID, id string) (*Node, error) {
+	if err := s.repo.Restore(ctx, userID, id); err != nil {
+		return nil, err
+	}
+	return s.repo.GetNodeAny(ctx, userID, id)
+}
+
+// Patch applies one or more of rename/move/star in a single call. Fields left
+// nil are ignored. It delegates to Rename/Move/SetStarred in sequence.
+func (s *Service) Patch(ctx context.Context, userID, id string, name *string, parentID *string, starred *bool) (*Node, error) {
+	if name != nil {
+		if _, err := s.Rename(ctx, userID, id, *name); err != nil {
+			return nil, err
+		}
+	}
+	if parentID != nil {
+		if _, err := s.Move(ctx, userID, id, *parentID); err != nil {
+			return nil, err
+		}
+	}
+	if starred != nil {
+		if err := s.SetStarred(ctx, userID, id, *starred); err != nil {
+			return nil, err
+		}
+	}
+	return s.repo.GetNode(ctx, userID, id)
 }
 
 // DeletePermanent removes a node and its subtree for good, purging its blobs.
@@ -419,31 +444,36 @@ func (s *Service) DeleteShare(ctx context.Context, userID, id string) error {
 }
 
 // OpenShare resolves a public share by token. It enforces active/expiry and
-// (if set) the password, returning the node to serve.
-func (s *Service) OpenShare(ctx context.Context, token, passwordAttempt string) (*Node, error) {
+// (if set) the password, returning the node to serve and the share (so callers
+// can surface expiry/has-password to a landing page).
+func (s *Service) OpenShare(ctx context.Context, token, passwordAttempt string) (*Node, *Share, error) {
 	sh, err := s.repo.GetShareByToken(ctx, token)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !sh.IsActive {
-		return nil, ErrShareNotFound
+		return nil, nil, ErrShareNotFound
 	}
 	if sh.ExpiresAt != nil && sh.ExpiresAt.Before(time.Now().UTC()) {
-		return nil, ErrExpired
+		return nil, nil, ErrExpired
 	}
 	if sh.HasPassword {
 		if passwordAttempt == "" {
-			return nil, ErrPasswordRequired
+			return nil, nil, ErrPasswordRequired
 		}
 		hashed, err := s.repo.SharePasswordHash(ctx, sh.ID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if err := password.Verify(passwordAttempt, hashed); err != nil {
-			return nil, ErrPasswordRequired
+			return nil, nil, ErrPasswordRequired
 		}
 	}
-	return s.repo.GetShareNode(ctx, sh)
+	n, err := s.repo.GetShareNode(ctx, sh)
+	if err != nil {
+		return nil, nil, err
+	}
+	return n, sh, nil
 }
 
 // IncDownload bumps a share's download counter.

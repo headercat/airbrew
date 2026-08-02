@@ -589,7 +589,10 @@
       "trash": "휴지통"
     },
     "untitled": "제목 없음",
-    "inTrash": "휴지통에 있음"
+    "inTrash": "휴지통에 있음",
+    "colName": "이름",
+    "colSize": "크기",
+    "colModified": "수정됨"
   },
   "share": {
     "expired": "이 공유 링크가 만료되었습니다.",
@@ -599,6 +602,7 @@
     "continue": "계속",
     "download": "다운로드",
     "downloadFailed": "다운로드에 실패했습니다.",
-    "file": "파일"
+    "file": "파일",
+    "expiresOn": "만료: {{date}}"
   }
 }

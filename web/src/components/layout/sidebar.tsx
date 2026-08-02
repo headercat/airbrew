@@ -1,8 +1,4 @@
-import {
-  NavLink,
-  useLocation,
-  useNavigate,
-} from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Coffee,
   Globe,
@@ -68,8 +64,12 @@ export function Sidebar() {
       <div className="sidebar-bg flex w-14 flex-col border-r border-sidebar-border">
         <RailInner />
       </div>
-      {expanded && expanded.children && expanded.to === "/admin" && <AdminSubPanel />}
-      {expanded && expanded.children && expanded.to !== "/admin" && <SubPanel node={expanded} />}
+      {expanded && expanded.children && expanded.to === "/admin" && (
+        <AdminSubPanel />
+      )}
+      {expanded && expanded.children && expanded.to !== "/admin" && (
+        <SubPanel node={expanded} />
+      )}
     </div>
   );
 }
@@ -116,7 +116,9 @@ function RailItem({ node }: { node: NavNode }) {
   const isActive = (() => {
     const base = node.to.split("?")[0];
     if (base === "/") return location.pathname === "/";
-    return location.pathname === base || location.pathname.startsWith(base + "/");
+    return (
+      location.pathname === base || location.pathname.startsWith(base + "/")
+    );
   })();
 
   return (
@@ -129,7 +131,7 @@ function RailItem({ node }: { node: NavNode }) {
             "flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
             isActive
               ? "bg-accent text-accent-foreground shadow-sm"
-              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
           )}
         >
           <Icon className="h-4 w-4" />
@@ -173,9 +175,11 @@ function AdminSubPanel() {
             </p>
             <div className="space-y-0.5">
               {group.items.map((item) => {
-                const isExact = item.to === "/admin"
-                  ? location.pathname === "/admin"
-                  : location.pathname === item.to || location.pathname.startsWith(item.to + "/");
+                const isExact =
+                  item.to === "/admin"
+                    ? location.pathname === "/admin"
+                    : location.pathname === item.to ||
+                      location.pathname.startsWith(item.to + "/");
                 return (
                   <NavLink
                     key={item.to}
@@ -185,7 +189,7 @@ function AdminSubPanel() {
                       "flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[12.5px] transition-colors",
                       isExact
                         ? "bg-accent/70 font-medium text-foreground"
-                        : "text-muted-foreground/80 hover:bg-accent/40 hover:text-foreground"
+                        : "text-muted-foreground/80 hover:bg-accent/40 hover:text-foreground",
                     )}
                   >
                     <item.icon className="h-3.5 w-3.5 shrink-0" />
@@ -248,7 +252,7 @@ function SubPanel({ node }: { node: NavNode }) {
                     "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors",
                     isExact || navActive
                       ? "bg-accent/70 font-medium text-foreground"
-                      : "text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+                      : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
                   )
                 }
               >
@@ -315,7 +319,12 @@ function RailUser() {
             </DropdownMenuSubTrigger>
             <DropdownMenuPortal>
               <DropdownMenuSubContent>
-                <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as "light" | "dark" | "system")}>
+                <DropdownMenuRadioGroup
+                  value={theme}
+                  onValueChange={(v) =>
+                    setTheme(v as "light" | "dark" | "system")
+                  }
+                >
                   <DropdownMenuRadioItem value="light">
                     {t("theme.light")}
                   </DropdownMenuRadioItem>

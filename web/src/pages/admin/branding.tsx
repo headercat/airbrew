@@ -16,7 +16,10 @@ export default function AdminBranding() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.get<Branding>("/api/admin/branding").then(setData).catch(() => {});
+    api
+      .get<Branding>("/api/admin/branding")
+      .then(setData)
+      .catch(() => {});
   }, []);
 
   async function save(patch: Partial<Branding>) {
@@ -29,41 +32,69 @@ export default function AdminBranding() {
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
-      setError(isApiError(err) ? err.error_description ?? err.error : "error");
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : "error",
+      );
     } finally {
       setSaving(false);
     }
   }
 
-  if (!data) return (
-    <>
-      <SectionHeader icon={Palette} titleKey="admin.branding.title" descKey="admin.branding.description" />
-      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-    </>
-  );
+  if (!data)
+    return (
+      <>
+        <SectionHeader
+          icon={Palette}
+          titleKey="admin.branding.title"
+          descKey="admin.branding.description"
+        />
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+      </>
+    );
 
   return (
     <>
-      <SectionHeader icon={Palette} titleKey="admin.branding.title" descKey="admin.branding.description" />
+      <SectionHeader
+        icon={Palette}
+        titleKey="admin.branding.title"
+        descKey="admin.branding.description"
+      />
       {error && <p className="text-sm text-destructive">{error}</p>}
-      {saved && <p className="text-sm text-emerald-600 dark:text-emerald-400">{t("admin.branding.saved")}</p>}
+      {saved && (
+        <p className="text-sm text-emerald-600 dark:text-emerald-400">
+          {t("admin.branding.saved")}
+        </p>
+      )}
 
       <Card>
         <CardContent className="divide-y divide-border p-0">
-          <SettingRow title={t("admin.branding.workspaceName")} description={t("admin.branding.workspaceNameDesc")}>
+          <SettingRow
+            title={t("admin.branding.workspaceName")}
+            description={t("admin.branding.workspaceNameDesc")}
+          >
             <div className="flex items-center gap-2">
               <Input
                 defaultValue={data.workspace_name}
                 className="h-8 w-48 text-[13px]"
-                onChange={(e) => setData({ ...data, workspace_name: e.target.value })}
+                onChange={(e) =>
+                  setData({ ...data, workspace_name: e.target.value })
+                }
               />
-              <Button size="sm" variant="outline" disabled={saving} onClick={() => save({ workspace_name: data.workspace_name })}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={saving}
+                onClick={() => save({ workspace_name: data.workspace_name })}
+              >
                 <Save className="h-3 w-3" />
               </Button>
             </div>
           </SettingRow>
 
-          <SettingRow title={t("admin.branding.primaryColor")} description={t("admin.branding.primaryColorDesc")}>
+          <SettingRow
+            title={t("admin.branding.primaryColor")}
+            description={t("admin.branding.primaryColorDesc")}
+          >
             <div className="flex items-center gap-2">
               <input
                 type="color"
@@ -74,17 +105,31 @@ export default function AdminBranding() {
                   setData({ ...data, primary_color: hsl });
                 }}
               />
-              <Button size="sm" variant="outline" disabled={saving} onClick={() => save({ primary_color: data.primary_color })}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={saving}
+                onClick={() => save({ primary_color: data.primary_color })}
+              >
                 <Save className="h-3 w-3" />
               </Button>
             </div>
           </SettingRow>
 
-          <SettingRow title={t("admin.branding.logo")} description={t("admin.branding.logoDesc")}>
+          <SettingRow
+            title={t("admin.branding.logo")}
+            description={t("admin.branding.logoDesc")}
+          >
             {data.logo_url ? (
-              <img src={data.logo_url} alt="logo" className="h-8 w-8 rounded border border-border object-cover" />
+              <img
+                src={data.logo_url}
+                alt="logo"
+                className="h-8 w-8 rounded border border-border object-cover"
+              />
             ) : (
-              <Button variant="outline" size="sm" disabled>{t("admin.branding.upload")}</Button>
+              <Button variant="outline" size="sm" disabled>
+                {t("admin.branding.upload")}
+              </Button>
             )}
           </SettingRow>
         </CardContent>
@@ -104,7 +149,9 @@ function hslToHex(hsl: string): string {
   const f = (n: number) => {
     const k = (n + h / 30) % 12;
     const c = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
-    return Math.round(255 * c).toString(16).padStart(2, "0");
+    return Math.round(255 * c)
+      .toString(16)
+      .padStart(2, "0");
   };
   return `#${f(0)}${f(8)}${f(4)}`;
 }
@@ -114,16 +161,24 @@ function hexToHsl(hex: string): string {
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
   const b = parseInt(hex.slice(5, 7), 16) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b);
   const l = (max + min) / 2;
-  let h = 0, s = 0;
+  let h = 0,
+    s = 0;
   if (max !== min) {
     const d = max - min;
     s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
     switch (max) {
-      case r: h = ((g - b) / d + (g < b ? 6 : 0)); break;
-      case g: h = ((b - r) / d + 2); break;
-      case b: h = ((r - g) / d + 4); break;
+      case r:
+        h = (g - b) / d + (g < b ? 6 : 0);
+        break;
+      case g:
+        h = (b - r) / d + 2;
+        break;
+      case b:
+        h = (r - g) / d + 4;
+        break;
     }
     h *= 60;
   }

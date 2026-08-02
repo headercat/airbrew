@@ -5,35 +5,35 @@
 @layer base {
   :root {
     /* Warm neutral palette — Notion-inspired light mode */
-    --background: 33 33% 98%;          /* #faf9f6 warm off-white */
-    --foreground: 28 9% 13%;           /* #211f1b warm near-black */
+    --background: 33 33% 98%; /* #faf9f6 warm off-white */
+    --foreground: 28 9% 13%; /* #211f1b warm near-black */
 
-    --card: 0 0% 100%;                 /* #ffffff */
+    --card: 0 0% 100%; /* #ffffff */
     --card-foreground: 28 9% 13%;
 
     --popover: 0 0% 100%;
     --popover-foreground: 28 9% 13%;
 
-    --primary: 215 55% 48%;            /* #3777c4 calm blue */
+    --primary: 215 55% 48%; /* #3777c4 calm blue */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 33 20% 96%;           /* #f4f1ec warm light */
+    --secondary: 33 20% 96%; /* #f4f1ec warm light */
     --secondary-foreground: 28 9% 20%;
 
-    --muted: 33 15% 94%;               /* #f0ede7 */
-    --muted-foreground: 25 5% 42%;     /* #6b6862 warm gray */
+    --muted: 33 15% 94%; /* #f0ede7 */
+    --muted-foreground: 25 5% 42%; /* #6b6862 warm gray */
 
-    --accent: 33 20% 94%;              /* #efebe4 */
+    --accent: 33 20% 94%; /* #efebe4 */
     --accent-foreground: 28 9% 15%;
 
-    --destructive: 0 72% 50%;          /* #d63b2e */
+    --destructive: 0 72% 50%; /* #d63b2e */
     --destructive-foreground: 0 0% 100%;
 
-    --border: 33 12% 89%;              /* #e4dfd6 warm border */
+    --border: 33 12% 89%; /* #e4dfd6 warm border */
     --input: 33 12% 89%;
     --ring: 215 55% 48%;
 
-    --sidebar: 33 25% 97%;             /* #f7f4ef slightly warmer than bg */
+    --sidebar: 33 25% 97%; /* #f7f4ef slightly warmer than bg */
     --sidebar-foreground: 28 9% 13%;
     --sidebar-border: 33 12% 90%;
 
@@ -42,35 +42,35 @@
 
   .dark {
     /* Warm neutral palette — dark mode */
-    --background: 25 8% 7%;            /* #121110 warm near-black */
-    --foreground: 35 12% 87%;          /* #dcd8cf warm light */
+    --background: 25 8% 7%; /* #121110 warm near-black */
+    --foreground: 35 12% 87%; /* #dcd8cf warm light */
 
-    --card: 25 7% 10%;                 /* #1a1816 */
+    --card: 25 7% 10%; /* #1a1816 */
     --card-foreground: 35 12% 87%;
 
     --popover: 25 7% 10%;
     --popover-foreground: 35 12% 87%;
 
-    --primary: 205 70% 58%;            /* #4ca9e5 brighter blue for dark */
+    --primary: 205 70% 58%; /* #4ca9e5 brighter blue for dark */
     --primary-foreground: 25 8% 7%;
 
-    --secondary: 25 6% 15%;            /* #242220 */
+    --secondary: 25 6% 15%; /* #242220 */
     --secondary-foreground: 35 12% 87%;
 
-    --muted: 25 6% 13%;                /* #1f1d1b */
-    --muted-foreground: 30 5% 52%;     /* #8a857d */
+    --muted: 25 6% 13%; /* #1f1d1b */
+    --muted-foreground: 30 5% 52%; /* #8a857d */
 
-    --accent: 25 6% 15%;               /* #242220 */
+    --accent: 25 6% 15%; /* #242220 */
     --accent-foreground: 35 12% 87%;
 
-    --destructive: 0 60% 38%;          /* #9c2e22 */
+    --destructive: 0 60% 38%; /* #9c2e22 */
     --destructive-foreground: 0 0% 98%;
 
-    --border: 25 6% 17%;               /* #2a2724 */
+    --border: 25 6% 17%; /* #2a2724 */
     --input: 25 6% 17%;
     --ring: 205 70% 58%;
 
-    --sidebar: 25 8% 6%;               /* slightly darker than bg */
+    --sidebar: 25 8% 6%; /* slightly darker than bg */
     --sidebar-foreground: 35 12% 87%;
     --sidebar-border: 25 6% 14%;
   }
@@ -87,7 +87,13 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "rlig" 1, "calt" 1;
+    font-feature-settings:
+      "cv02",
+      "cv03",
+      "cv04",
+      "cv11",
+      "rlig" 1,
+      "calt" 1;
   }
   /* Sidebar uses its own warm tint */
   .sidebar-bg {

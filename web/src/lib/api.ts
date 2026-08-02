@@ -82,7 +82,8 @@ export type OAuthClient = {
   client_id: string;
   name: string;
   client_type: "public" | "confidential";
-  token_endpoint_auth_method: "none" | "client_secret_basic" | "client_secret_post";
+  token_endpoint_auth_method:
+    "none" | "client_secret_basic" | "client_secret_post";
   allowed_scopes: string[];
   redirect_uris: string[];
   post_logout_redirect_uris: string[];
@@ -158,12 +159,19 @@ export const api = {
       method: "PUT",
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
-  del: <T>(path: string) =>
-    request<T>(path, { method: "DELETE" }),
-  upload: async <T>(path: string, file: File, fieldName = "file"): Promise<T> => {
+  del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  upload: async <T>(
+    path: string,
+    file: File,
+    fieldName = "file",
+  ): Promise<T> => {
     const fd = new FormData();
     fd.append(fieldName, file);
-    const res = await fetch(path, { method: "POST", body: fd, credentials: "same-origin" });
+    const res = await fetch(path, {
+      method: "POST",
+      body: fd,
+      credentials: "same-origin",
+    });
     const text = await res.text();
     const body = text ? JSON.parse(text) : null;
     if (!res.ok) {

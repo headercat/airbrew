@@ -5,7 +5,16 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Eye, EyeOff, Loader2, Plus, RefreshCw, Star, Trash2, X } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Star,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -77,7 +86,9 @@ export default function PasswordEditor() {
     if (!existing) return;
     setType(existing.type);
     setName(existing.name);
-    setFields(existing.fields.length ? existing.fields.map((f) => ({ ...f })) : []);
+    setFields(
+      existing.fields.length ? existing.fields.map((f) => ({ ...f })) : [],
+    );
     setNotes(existing.notes);
     setFavorite(existing.favorite);
     setReprompt(existing.reprompt);
@@ -101,7 +112,9 @@ export default function PasswordEditor() {
   }
 
   function patchField(idx: number, patch: Partial<Field>) {
-    setFields((prev) => prev.map((f, i) => (i === idx ? { ...f, ...patch } : f)));
+    setFields((prev) =>
+      prev.map((f, i) => (i === idx ? { ...f, ...patch } : f)),
+    );
   }
   function removeField(idx: number) {
     setFields((prev) => prev.filter((_, i) => i !== idx));
@@ -125,7 +138,15 @@ export default function PasswordEditor() {
 
   function buildDraft(): DraftItem {
     const cleanFields = fields.filter((f) => f.name.trim() || f.value.trim());
-    return { type, folderId: "", name, notes, fields: cleanFields, favorite, reprompt };
+    return {
+      type,
+      folderId: "",
+      name,
+      notes,
+      fields: cleanFields,
+      favorite,
+      reprompt,
+    };
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -157,7 +178,9 @@ export default function PasswordEditor() {
       await deleteItem(existing.id, existing.revision);
       navigate("/passwords");
     } catch (err) {
-      setError(isApiError(err) ? err.error_description ?? err.error : String(err));
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : String(err),
+      );
     } finally {
       setBusy(false);
     }
@@ -166,20 +189,34 @@ export default function PasswordEditor() {
   return (
     <PageWrapper>
       <PageHeader
-        title={isEdit ? t("passwords.editor.editTitle") : t("passwords.editor.newTitle")}
+        title={
+          isEdit
+            ? t("passwords.editor.editTitle")
+            : t("passwords.editor.newTitle")
+        }
         description={t("passwords.editor.subtitle")}
       />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t("passwords.editor.formTitle")}</CardTitle>
-          <CardDescription>{t("passwords.editor.formDescription")}</CardDescription>
+          <CardTitle className="text-base">
+            {t("passwords.editor.formTitle")}
+          </CardTitle>
+          <CardDescription>
+            {t("passwords.editor.formDescription")}
+          </CardDescription>
         </CardHeader>
         <form onSubmit={onSubmit}>
           <CardContent className="space-y-4">
             <div className="grid gap-2">
               <Label htmlFor="name">{t("passwords.editor.name")}</Label>
-              <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
+              <Input
+                id="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                autoFocus
+              />
             </div>
 
             <div className="grid gap-2">
@@ -206,7 +243,12 @@ export default function PasswordEditor() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <Label>{t("passwords.editor.fields")}</Label>
-                <Button type="button" variant="outline" size="sm" onClick={addField}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addField}
+                >
                   <Plus className="h-4 w-4" />
                   {t("passwords.editor.addField")}
                 </Button>
@@ -231,17 +273,36 @@ export default function PasswordEditor() {
 
             <div className="grid gap-2">
               <Label htmlFor="notes">{t("passwords.editor.notes")}</Label>
-              <Textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} />
+              <Textarea
+                id="notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+              />
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <label htmlFor="favorite" className="flex items-center gap-2 text-sm">
-                <Switch id="favorite" checked={favorite} onCheckedChange={setFavorite} />
+              <label
+                htmlFor="favorite"
+                className="flex items-center gap-2 text-sm"
+              >
+                <Switch
+                  id="favorite"
+                  checked={favorite}
+                  onCheckedChange={setFavorite}
+                />
                 <Star className="h-4 w-4" />
                 {t("passwords.editor.favorite")}
               </label>
-              <label htmlFor="reprompt" className="flex items-center gap-2 text-sm">
-                <Switch id="reprompt" checked={reprompt} onCheckedChange={setReprompt} />
+              <label
+                htmlFor="reprompt"
+                className="flex items-center gap-2 text-sm"
+              >
+                <Switch
+                  id="reprompt"
+                  checked={reprompt}
+                  onCheckedChange={setReprompt}
+                />
                 {t("passwords.editor.reprompt")}
               </label>
             </div>
@@ -249,7 +310,12 @@ export default function PasswordEditor() {
           <CardFooter className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-sm">
               {isEdit && (
-                <Button type="button" variant="destructive" onClick={onDelete} disabled={busy}>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={onDelete}
+                  disabled={busy}
+                >
                   <Trash2 className="h-4 w-4" />
                   {t("passwords.editor.delete")}
                 </Button>
@@ -257,7 +323,12 @@ export default function PasswordEditor() {
               {error && <span className="text-destructive">{error}</span>}
             </div>
             <div className="flex items-center gap-2">
-              <Button type="button" variant="ghost" onClick={() => navigate("/passwords")} disabled={busy}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => navigate("/passwords")}
+                disabled={busy}
+              >
                 {t("passwords.editor.cancel")}
               </Button>
               <Button type="submit" disabled={busy}>
@@ -312,7 +383,13 @@ function FieldEditor({
             </option>
           ))}
         </select>
-        <Button type="button" variant="ghost" size="icon" onClick={onRemove} aria-label={t("passwords.editor.removeField")}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onRemove}
+          aria-label={t("passwords.editor.removeField")}
+        >
           <X className="h-4 w-4" />
         </Button>
       </div>
@@ -331,7 +408,11 @@ function FieldEditor({
             value={field.value}
             placeholder={t("passwords.editor.fieldValue")}
             onChange={(e) => onChange({ value: e.target.value })}
-            className={field.kind === "totp" || field.kind === "password" ? "font-mono" : ""}
+            className={
+              field.kind === "totp" || field.kind === "password"
+                ? "font-mono"
+                : ""
+            }
           />
           {field.kind === "password" && (
             <Button
@@ -341,7 +422,11 @@ function FieldEditor({
               onClick={() => setReveal((r) => !r)}
               title={t("passwords.editor.toggleVisibility")}
             >
-              {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {reveal ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
             </Button>
           )}
           {field.kind === "password" && (
@@ -359,7 +444,9 @@ function FieldEditor({
       )}
 
       {field.kind === "totp" && (
-        <p className="text-xs text-muted-foreground">{t("passwords.editor.totpHint")}</p>
+        <p className="text-xs text-muted-foreground">
+          {t("passwords.editor.totpHint")}
+        </p>
       )}
     </div>
   );

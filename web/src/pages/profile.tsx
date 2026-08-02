@@ -28,7 +28,10 @@ export default function ProfilePage() {
 
   return (
     <PageWrapper>
-      <PageHeader title={t("profile.title")} description={t("profile.subtitle")} />
+      <PageHeader
+        title={t("profile.title")}
+        description={t("profile.subtitle")}
+      />
 
       <AvatarSection onSaved={refresh} />
       <ProfileSection onSaved={refresh} />
@@ -55,8 +58,8 @@ function AvatarSection({ onSaved }: { onSaved: () => Promise<unknown> }) {
     } catch (err) {
       setError(
         isApiError(err)
-          ? err.error_description ?? err.error
-          : t("profile.avatar.uploadFailed")
+          ? (err.error_description ?? err.error)
+          : t("profile.avatar.uploadFailed"),
       );
     } finally {
       setBusy(false);
@@ -83,11 +86,7 @@ function AvatarSection({ onSaved }: { onSaved: () => Promise<unknown> }) {
           <label htmlFor="avatar-upload">
             <Button variant="outline" disabled={busy} asChild>
               <span>
-                {busy ? (
-                  <Loader2 className="animate-spin" />
-                ) : (
-                  <Upload />
-                )}
+                {busy ? <Loader2 className="animate-spin" /> : <Upload />}
                 {t("profile.avatar.upload")}
               </span>
             </Button>
@@ -114,7 +113,7 @@ function ProfileSection({ onSaved }: { onSaved: () => Promise<unknown> }) {
   const [birthday, setBirthday] = useState(user?.birthday ?? "");
   const [phoneNumber, setPhoneNumber] = useState(user?.phone_number ?? "");
   const [fields, setFields] = useState<[string, string][]>(
-    Object.entries(user?.custom_fields ?? {}).map(([k, v]) => [k, v])
+    Object.entries(user?.custom_fields ?? {}).map(([k, v]) => [k, v]),
   );
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -141,7 +140,7 @@ function ProfileSection({ onSaved }: { onSaved: () => Promise<unknown> }) {
       birthday,
       phone_number: phoneNumber,
       custom_fields: Object.fromEntries(
-        fields.filter(([k]) => k.trim() !== "")
+        fields.filter(([k]) => k.trim() !== ""),
       ),
     };
     try {
@@ -150,7 +149,7 @@ function ProfileSection({ onSaved }: { onSaved: () => Promise<unknown> }) {
       setMessage(t("profile.form.saved"));
     } catch (err) {
       setError(
-        isApiError(err) ? err.error_description ?? err.error : "Save failed"
+        isApiError(err) ? (err.error_description ?? err.error) : "Save failed",
       );
     } finally {
       setBusy(false);
@@ -173,7 +172,9 @@ function ProfileSection({ onSaved }: { onSaved: () => Promise<unknown> }) {
             </p>
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="display_name">{t("profile.form.displayName")}</Label>
+            <Label htmlFor="display_name">
+              {t("profile.form.displayName")}
+            </Label>
             <Input
               id="display_name"
               value={displayName}
@@ -182,7 +183,9 @@ function ProfileSection({ onSaved }: { onSaved: () => Promise<unknown> }) {
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="description">{t("profile.form.descriptionLabel")}</Label>
+            <Label htmlFor="description">
+              {t("profile.form.descriptionLabel")}
+            </Label>
             <Textarea
               id="description"
               value={description}
@@ -227,7 +230,12 @@ function ProfileSection({ onSaved }: { onSaved: () => Promise<unknown> }) {
                   {t("profile.form.customFieldsHint")}
                 </p>
               </div>
-              <Button type="button" variant="outline" size="sm" onClick={addField}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addField}
+              >
                 {t("profile.form.addField")}
               </Button>
             </div>
@@ -268,10 +276,10 @@ function ProfileSection({ onSaved }: { onSaved: () => Promise<unknown> }) {
         </CardContent>
         <CardFooter className="flex items-center justify-between gap-2">
           <div className="space-x-2 text-sm">
-            {user?.role === "admin" && (
-              <Badge variant="secondary">admin</Badge>
+            {user?.role === "admin" && <Badge variant="secondary">admin</Badge>}
+            {message && (
+              <span className="text-muted-foreground">{message}</span>
             )}
-            {message && <span className="text-muted-foreground">{message}</span>}
             {error && <span className="text-destructive">{error}</span>}
           </div>
           <Button type="submit" disabled={busy}>
@@ -313,7 +321,9 @@ function PasswordSection() {
       setConfirm("");
     } catch (err) {
       setError(
-        isApiError(err) ? err.error_description ?? err.error : "Change failed"
+        isApiError(err)
+          ? (err.error_description ?? err.error)
+          : "Change failed",
       );
     } finally {
       setBusy(false);
@@ -323,7 +333,9 @@ function PasswordSection() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">{t("profile.password.title")}</CardTitle>
+        <CardTitle className="text-base">
+          {t("profile.password.title")}
+        </CardTitle>
         <CardDescription>{t("profile.password.description")}</CardDescription>
       </CardHeader>
       <form onSubmit={submit}>
@@ -368,7 +380,9 @@ function PasswordSection() {
         </CardContent>
         <CardFooter className="flex items-center justify-between">
           <p className="text-sm">
-            {message && <span className="text-muted-foreground">{message}</span>}
+            {message && (
+              <span className="text-muted-foreground">{message}</span>
+            )}
             {error && <span className="text-destructive">{error}</span>}
           </p>
           <Button type="submit" disabled={busy}>

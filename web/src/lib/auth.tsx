@@ -42,24 +42,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  const signIn = useCallback(
-    async (email: string, password: string) => {
-      const me = await api.post<User>("/api/auth/login", { email, password });
-      setUser(me);
-      return me;
-    },
-    []
-  );
+  const signIn = useCallback(async (email: string, password: string) => {
+    const me = await api.post<User>("/api/auth/login", { email, password });
+    setUser(me);
+    return me;
+  }, []);
 
-  const register = useCallback(
-    async (email: string, password: string) => {
-      await api.post<User>("/api/auth/register", { email, password });
-      const me = await api.post<User>("/api/auth/login", { email, password });
-      setUser(me);
-      return me;
-    },
-    []
-  );
+  const register = useCallback(async (email: string, password: string) => {
+    await api.post<User>("/api/auth/register", { email, password });
+    const me = await api.post<User>("/api/auth/login", { email, password });
+    setUser(me);
+    return me;
+  }, []);
 
   const signOut = useCallback(async () => {
     try {
@@ -71,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AuthContextValue>(
     () => ({ user, loading, refresh, signIn, register, signOut }),
-    [user, loading, refresh, signIn, register, signOut]
+    [user, loading, refresh, signIn, register, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

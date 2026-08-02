@@ -85,7 +85,9 @@ export type Conflict = {
 };
 
 export function isConflict(e: unknown): e is Conflict {
-  return isApiError(e) && (e as ApiError & Partial<Conflict>).error === "conflict";
+  return (
+    isApiError(e) && (e as ApiError & Partial<Conflict>).error === "conflict"
+  );
 }
 
 // getKeys fetches the envelope for unlock. Rejects with status 404 when the
@@ -114,7 +116,10 @@ export function updateItem(id: string, input: ItemInput): Promise<VaultItem> {
   return api.putRaw<VaultItem>(`/api/vault/items/${id}`, input);
 }
 
-export function deleteItem(id: string, ifRevision: number): Promise<{ ok: true }> {
+export function deleteItem(
+  id: string,
+  ifRevision: number,
+): Promise<{ ok: true }> {
   return api.del(`/api/vault/items/${id}?if_revision=${ifRevision}`);
 }
 
@@ -122,7 +127,10 @@ export function createFolder(
   nameCipher: string,
   nameNonce: string,
 ): Promise<VaultFolder> {
-  return api.post<VaultFolder>("/api/vault/folders", { name_cipher: nameCipher, name_nonce: nameNonce });
+  return api.post<VaultFolder>("/api/vault/folders", {
+    name_cipher: nameCipher,
+    name_nonce: nameNonce,
+  });
 }
 
 // ---- attachments ----
@@ -139,19 +147,32 @@ export type AttachmentMeta = {
 
 export function listAttachments(itemId: string): Promise<AttachmentMeta[]> {
   return api
-    .get<{ attachments: AttachmentMeta[] }>(`/api/vault/items/${itemId}/attachments`)
+    .get<{ attachments: AttachmentMeta[] }>(
+      `/api/vault/items/${itemId}/attachments`,
+    )
     .then((r) => r.attachments ?? []);
 }
 
 export function deleteAttachment(itemId: string, aid: string): Promise<void> {
-  return api.del(`/api/vault/items/${itemId}/attachments/${aid}`).then(() => undefined);
+  return api
+    .del(`/api/vault/items/${itemId}/attachments/${aid}`)
+    .then(() => undefined);
 }
 
 // fetchAttachmentBlob returns the raw encrypted attachment payload.
-export async function fetchAttachmentBlob(itemId: string, aid: string): Promise<Uint8Array> {
-  const res = await fetch(`/api/vault/items/${itemId}/attachments/${aid}`, { credentials: "same-origin" });
+export async function fetchAttachmentBlob(
+  itemId: string,
+  aid: string,
+): Promise<Uint8Array> {
+  const res = await fetch(`/api/vault/items/${itemId}/attachments/${aid}`, {
+    credentials: "same-origin",
+  });
   if (!res.ok) {
-    throw { error: "http_error", error_description: res.statusText, status: res.status } as ApiError;
+    throw {
+      error: "http_error",
+      error_description: res.statusText,
+      status: res.status,
+    } as ApiError;
   }
   return new Uint8Array(await res.arrayBuffer());
 }
@@ -161,7 +182,13 @@ export async function fetchAttachmentBlob(itemId: string, aid: string): Promise<
 export async function uploadAttachment(
   itemId: string,
   sealed: Uint8Array,
-  meta: { fileKeyCipher: string; fileKeyNonce: string; nameCipher: string; nameNonce: string; sizeBytes: number },
+  meta: {
+    fileKeyCipher: string;
+    fileKeyNonce: string;
+    nameCipher: string;
+    nameNonce: string;
+    sizeBytes: number;
+  },
 ): Promise<AttachmentMeta> {
   const fd = new FormData();
   fd.append("file", new Blob([sealed as unknown as BlobPart]));

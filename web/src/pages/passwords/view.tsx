@@ -22,7 +22,13 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { PageWrapper } from "@/components/page";
 import { isApiError } from "@/lib/api";
 import { useVault, type DecryptedItem, type Field } from "@/lib/vault/store";
@@ -78,7 +84,9 @@ export default function PasswordView() {
       await deleteItem(item.id, item.revision);
       navigate("/passwords");
     } catch (err) {
-      setError(isApiError(err) ? err.error_description ?? err.error : String(err));
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : String(err),
+      );
     } finally {
       setBusy(false);
     }
@@ -91,7 +99,12 @@ export default function PasswordView() {
       {/* header */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/passwords")} className="-ml-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate("/passwords")}
+            className="-ml-2"
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted">
@@ -100,14 +113,19 @@ export default function PasswordView() {
           <div className="space-y-1">
             <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
               {item.name}
-              {item.favorite && <Star className="h-4 w-4 fill-amber-500 text-amber-500" />}
+              {item.favorite && (
+                <Star className="h-4 w-4 fill-amber-500 text-amber-500" />
+              )}
             </h1>
             <p className="text-sm text-muted-foreground">
               {t(`passwords.types.${item.type}`)}
             </p>
           </div>
         </div>
-        <Button variant="outline" onClick={() => navigate(`/passwords/${item.id}/edit`)}>
+        <Button
+          variant="outline"
+          onClick={() => navigate(`/passwords/${item.id}/edit`)}
+        >
           <Pencil className="h-4 w-4" />
           {t("passwords.view.edit")}
         </Button>
@@ -116,8 +134,12 @@ export default function PasswordView() {
       {/* fields */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t("passwords.view.fields")}</CardTitle>
-          <CardDescription>{t("passwords.view.fieldsDescription")}</CardDescription>
+          <CardTitle className="text-base">
+            {t("passwords.view.fields")}
+          </CardTitle>
+          <CardDescription>
+            {t("passwords.view.fieldsDescription")}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {item.fields.length === 0 ? (
@@ -134,7 +156,9 @@ export default function PasswordView() {
       {item.notes && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">{t("passwords.editor.notes")}</CardTitle>
+            <CardTitle className="text-base">
+              {t("passwords.editor.notes")}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="whitespace-pre-wrap text-sm">{item.notes}</p>
@@ -158,7 +182,13 @@ export default function PasswordView() {
 
 // ---- field rendering ----
 
-function CopyButton({ value, disabled }: { value: string; disabled?: boolean }) {
+function CopyButton({
+  value,
+  disabled,
+}: {
+  value: string;
+  disabled?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     if (!value) return;
@@ -167,8 +197,19 @@ function CopyButton({ value, disabled }: { value: string; disabled?: boolean }) 
     setTimeout(() => setCopied(false), 1500);
   }
   return (
-    <Button type="button" variant="ghost" size="icon" onClick={copy} disabled={disabled} className="h-8 w-8">
-      {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      onClick={copy}
+      disabled={disabled}
+      className="h-8 w-8"
+    >
+      {copied ? (
+        <Check className="h-4 w-4 text-green-500" />
+      ) : (
+        <Copy className="h-4 w-4" />
+      )}
     </Button>
   );
 }
@@ -184,7 +225,9 @@ function FieldRow({ field }: { field: Field }) {
   if (field.kind === "multiline") {
     return (
       <div className="grid gap-1">
-        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {label}
+        </span>
         <div className="flex items-start justify-between gap-2">
           <p className="whitespace-pre-wrap break-all rounded-md bg-muted/40 px-3 py-2 text-sm">
             {field.value || <span className="text-muted-foreground">—</span>}
@@ -196,12 +239,21 @@ function FieldRow({ field }: { field: Field }) {
   }
 
   if (field.kind === "url") {
-    const href = field.value.startsWith("http") ? field.value : `https://${field.value}`;
+    const href = field.value.startsWith("http")
+      ? field.value
+      : `https://${field.value}`;
     return (
       <div className="grid gap-1">
-        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {label}
+        </span>
         <div className="flex items-center justify-between gap-2">
-          <a href={href} target="_blank" rel="noreferrer" className="truncate text-sm text-primary hover:underline">
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="truncate text-sm text-primary hover:underline"
+          >
             {field.value || <span className="text-muted-foreground">—</span>}
           </a>
           <CopyButton value={field.value} />
@@ -217,7 +269,9 @@ function FieldRow({ field }: { field: Field }) {
   // text
   return (
     <div className="grid gap-1">
-      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
       <div className="flex items-center justify-between gap-2">
         <span className="break-all text-sm">
           {field.value || <span className="text-muted-foreground">—</span>}
@@ -232,11 +286,17 @@ function SecretField({ label, value }: { label: string; value: string }) {
   const [revealed, setRevealed] = useState(false);
   return (
     <div className="grid gap-1">
-      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
       <div className="flex items-center justify-between gap-2">
         <span className="break-all font-mono text-sm">
           {value ? (
-            revealed ? value : "•".repeat(Math.min(value.length, 16))
+            revealed ? (
+              value
+            ) : (
+              "•".repeat(Math.min(value.length, 16))
+            )
           ) : (
             <span className="text-muted-foreground">—</span>
           )}
@@ -251,7 +311,11 @@ function SecretField({ label, value }: { label: string; value: string }) {
             disabled={!value}
             title={label}
           >
-            {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            {revealed ? (
+              <EyeOff className="h-4 w-4" />
+            ) : (
+              <Eye className="h-4 w-4" />
+            )}
           </Button>
           <CopyButton value={value} />
         </div>
@@ -295,12 +359,18 @@ function TotpField({ label, secret }: { label: string; secret: string }) {
       <div className="flex items-center justify-between gap-2">
         {code ? (
           <div className="flex items-center gap-3">
-            <span className="font-mono text-2xl font-semibold tracking-[0.2em]">{code.code}</span>
-            <span className="text-xs text-muted-foreground">{code.remaining}s</span>
+            <span className="font-mono text-2xl font-semibold tracking-[0.2em]">
+              {code.code}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {code.remaining}s
+            </span>
           </div>
         ) : (
           <span className="text-sm text-muted-foreground">
-            {secret ? t("passwords.view.totpInvalid") : t("passwords.view.totpEmpty")}
+            {secret
+              ? t("passwords.view.totpInvalid")
+              : t("passwords.view.totpEmpty")}
           </span>
         )}
         <CopyButton value={code?.code ?? ""} disabled={!code} />

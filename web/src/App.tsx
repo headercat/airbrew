@@ -28,14 +28,28 @@ export default function App() {
     <Routes>
       <Route
         path="/login"
-        element={<RedirectIfSignedIn><LoginPage /></RedirectIfSignedIn>}
+        element={
+          <RedirectIfSignedIn>
+            <LoginPage />
+          </RedirectIfSignedIn>
+        }
       />
       <Route
         path="/register"
-        element={<RedirectIfSignedIn><RegisterPage /></RedirectIfSignedIn>}
+        element={
+          <RedirectIfSignedIn>
+            <RegisterPage />
+          </RedirectIfSignedIn>
+        }
       />
 
-      <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
+      <Route
+        element={
+          <RequireAuth>
+            <AppLayout />
+          </RequireAuth>
+        }
+      >
         <Route path="/" element={<DashboardPage />} />
         <Route path="/profile" element={<ProfilePage />} />
 

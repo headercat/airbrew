@@ -7,7 +7,13 @@ import { Download, Loader2, Paperclip, Upload, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { isApiError } from "@/lib/api";
 import { useVault, type Attachment } from "@/lib/vault/store";
 
@@ -17,9 +23,20 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function AttachmentsCard({ itemId, editable }: { itemId: string; editable: boolean }) {
+export function AttachmentsCard({
+  itemId,
+  editable,
+}: {
+  itemId: string;
+  editable: boolean;
+}) {
   const { t } = useTranslation();
-  const { listAttachments, uploadAttachment, deleteAttachment, downloadAttachment } = useVault();
+  const {
+    listAttachments,
+    uploadAttachment,
+    deleteAttachment,
+    downloadAttachment,
+  } = useVault();
   const [atts, setAtts] = useState<Attachment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -33,7 +50,10 @@ export function AttachmentsCard({ itemId, editable }: { itemId: string; editable
         if (alive) setAtts(a);
       })
       .catch((e) => {
-        if (alive) setError(isApiError(e) ? e.error_description ?? e.error : String(e));
+        if (alive)
+          setError(
+            isApiError(e) ? (e.error_description ?? e.error) : String(e),
+          );
       });
     return () => {
       alive = false;
@@ -50,7 +70,9 @@ export function AttachmentsCard({ itemId, editable }: { itemId: string; editable
       const att = await uploadAttachment(itemId, file);
       setAtts((prev) => [...(prev ?? []), att]);
     } catch (err) {
-      setError(isApiError(err) ? err.error_description ?? err.error : String(err));
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : String(err),
+      );
     } finally {
       setBusy(false);
     }
@@ -70,7 +92,9 @@ export function AttachmentsCard({ itemId, editable }: { itemId: string; editable
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err) {
-      setError(isApiError(err) ? err.error_description ?? err.error : String(err));
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : String(err),
+      );
     } finally {
       setBusy(false);
     }
@@ -84,7 +108,9 @@ export function AttachmentsCard({ itemId, editable }: { itemId: string; editable
       await deleteAttachment(itemId, att.id);
       setAtts((prev) => (prev ?? []).filter((a) => a.id !== att.id));
     } catch (err) {
-      setError(isApiError(err) ? err.error_description ?? err.error : String(err));
+      setError(
+        isApiError(err) ? (err.error_description ?? err.error) : String(err),
+      );
     } finally {
       setBusy(false);
     }
@@ -97,7 +123,9 @@ export function AttachmentsCard({ itemId, editable }: { itemId: string; editable
           <Paperclip className="h-4 w-4" />
           {t("passwords.attachments.title")}
         </CardTitle>
-        <CardDescription>{t("passwords.attachments.description")}</CardDescription>
+        <CardDescription>
+          {t("passwords.attachments.description")}
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
         {atts === null ? (
@@ -116,7 +144,9 @@ export function AttachmentsCard({ itemId, editable }: { itemId: string; editable
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{att.name}</p>
-                <p className="text-xs text-muted-foreground">{formatBytes(att.size)}</p>
+                <p className="text-xs text-muted-foreground">
+                  {formatBytes(att.size)}
+                </p>
               </div>
               <Button
                 type="button"
@@ -164,7 +194,11 @@ export function AttachmentsCard({ itemId, editable }: { itemId: string; editable
               onClick={() => fileInput.current?.click()}
               disabled={busy}
             >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
               {t("passwords.attachments.upload")}
             </Button>
           </>

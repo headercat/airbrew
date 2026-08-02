@@ -22,11 +22,21 @@ import type { TFunction } from "i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader, PageWrapper } from "@/components/page";
-import { WrongMasterPassword, useVault, type DecryptedItem } from "@/lib/vault/store";
+import {
+  WrongMasterPassword,
+  useVault,
+  type DecryptedItem,
+} from "@/lib/vault/store";
 
 export default function PasswordsPage() {
   const { status, error } = useVault();
@@ -156,7 +166,9 @@ function UnlockView() {
         <CardContent>
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="ulpw">{t("passwords.unlock.masterPassword")}</Label>
+              <Label htmlFor="ulpw">
+                {t("passwords.unlock.masterPassword")}
+              </Label>
               <Input
                 id="ulpw"
                 type="password"
@@ -196,7 +208,9 @@ function itemIcon(type: DecryptedItem["type"]) {
 // itemSubtitle returns the first displayable field value (text or url) so the
 // list row previews something useful; falls back to the type label.
 function itemSubtitle(it: DecryptedItem, t: TFunction): string {
-  const first = it.fields.find((f) => (f.kind === "text" || f.kind === "url") && f.value);
+  const first = it.fields.find(
+    (f) => (f.kind === "text" || f.kind === "url") && f.value,
+  );
   if (first) return first.value;
   return t(`passwords.types.${it.type}`);
 }
@@ -213,7 +227,8 @@ function VaultListView() {
     return items.filter((it) => {
       if (it.name.toLowerCase().includes(q)) return true;
       return it.fields.some(
-        (f) => f.name.toLowerCase().includes(q) || f.value.toLowerCase().includes(q),
+        (f) =>
+          f.name.toLowerCase().includes(q) || f.value.toLowerCase().includes(q),
       );
     });
   }, [items, query]);
@@ -225,10 +240,25 @@ function VaultListView() {
         description={t("passwords.list.description", { count: items.length })}
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="icon" onClick={() => refresh()} disabled={busy} title={t("passwords.list.refresh")}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => refresh()}
+              disabled={busy}
+              title={t("passwords.list.refresh")}
+            >
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
             </Button>
-            <Button variant="outline" size="icon" onClick={lock} title={t("passwords.list.lock")}>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={lock}
+              title={t("passwords.list.lock")}
+            >
               <Lock className="h-4 w-4" />
             </Button>
             <Button onClick={() => navigate("/passwords/new")}>
@@ -265,10 +295,16 @@ function VaultListView() {
           <CardContent className="flex flex-col items-center justify-center gap-2 py-12 text-center">
             <KeyRound className="h-6 w-6 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              {query ? t("passwords.list.noMatches") : t("passwords.list.empty")}
+              {query
+                ? t("passwords.list.noMatches")
+                : t("passwords.list.empty")}
             </p>
             {!query && (
-              <Button variant="outline" size="sm" onClick={() => navigate("/passwords/new")}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/passwords/new")}
+              >
                 <Plus className="h-4 w-4" />
                 {t("passwords.list.add")}
               </Button>
@@ -294,7 +330,9 @@ function VaultListView() {
                     {itemSubtitle(it, t)}
                   </p>
                 </div>
-                {it.favorite && <Star className="h-3.5 w-3.5 fill-amber-500 text-amber-500" />}
+                {it.favorite && (
+                  <Star className="h-3.5 w-3.5 fill-amber-500 text-amber-500" />
+                )}
               </Link>
             );
           })}

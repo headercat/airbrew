@@ -98,13 +98,10 @@ function buf(u: Uint8Array): BufferSource {
 }
 
 async function importAesKey(raw: Uint8Array): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    "raw",
-    buf(raw),
-    { name: "AES-GCM" },
-    false,
-    ["encrypt", "decrypt"],
-  );
+  return crypto.subtle.importKey("raw", buf(raw), { name: "AES-GCM" }, false, [
+    "encrypt",
+    "decrypt",
+  ]);
 }
 
 export type Cipher = { cipher: string; nonce: string };
@@ -172,7 +169,10 @@ export async function decryptBytes(
 // seal encrypts data and prepends the 12-byte nonce, returning a single
 // self-describing blob (nonce || ciphertext). Used for attachment payloads,
 // which are stored as opaque bytes and need no separate nonce column.
-export async function seal(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+export async function seal(
+  key: Uint8Array,
+  data: Uint8Array,
+): Promise<Uint8Array> {
   const cryptoKey = await importAesKey(key);
   const nonce = randomBytes(12);
   const ct = await crypto.subtle.encrypt(
@@ -189,7 +189,10 @@ export async function seal(key: Uint8Array, data: Uint8Array): Promise<Uint8Arra
 
 // open is the inverse of seal: it splits the leading 12-byte nonce off and
 // decrypts the remainder.
-export async function open(key: Uint8Array, sealed: Uint8Array): Promise<Uint8Array> {
+export async function open(
+  key: Uint8Array,
+  sealed: Uint8Array,
+): Promise<Uint8Array> {
   if (sealed.length < 13) throw new Error("open: payload too short");
   const cryptoKey = await importAesKey(key);
   const nonce = sealed.slice(0, 12);

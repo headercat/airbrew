@@ -42,7 +42,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return (localStorage.getItem(STORAGE_KEY) as Theme) || "system";
   });
   const [resolved, setResolved] = useState<Resolved>(() =>
-    theme === "system" ? getSystem() : theme
+    theme === "system" ? getSystem() : theme,
   );
 
   useEffect(() => {
@@ -65,7 +65,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(
     () => ({ theme, resolved, setTheme }),
-    [theme, resolved, setTheme]
+    [theme, resolved, setTheme],
   );
 
   return (

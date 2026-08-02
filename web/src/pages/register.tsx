@@ -34,7 +34,9 @@ export default function RegisterPage() {
       navigate("/", { replace: true });
     } catch (err) {
       setError(
-        isApiError(err) ? err.error_description ?? err.error : t("common.error")
+        isApiError(err)
+          ? (err.error_description ?? err.error)
+          : t("common.error"),
       );
     } finally {
       setBusy(false);

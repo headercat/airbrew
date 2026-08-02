@@ -28,7 +28,12 @@ export default function DashboardPage() {
 
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         {MODULES.map((m) => (
-          <ModuleCard key={m.key} moduleKey={m.key} path={m.path} icon={m.icon} />
+          <ModuleCard
+            key={m.key}
+            moduleKey={m.key}
+            path={m.path}
+            icon={m.icon}
+          />
         ))}
       </div>
     </PageWrapper>
@@ -57,7 +62,9 @@ function ModuleCard({
         if (alive) setStatus("error");
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [moduleKey]);
 
   return (

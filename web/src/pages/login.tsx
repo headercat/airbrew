@@ -33,7 +33,9 @@ export default function LoginPage() {
       navigate(from, { replace: true });
     } catch (err) {
       setError(
-        isApiError(err) ? err.error_description ?? err.error : t("common.error")
+        isApiError(err)
+          ? (err.error_description ?? err.error)
+          : t("common.error"),
       );
     } finally {
       setBusy(false);

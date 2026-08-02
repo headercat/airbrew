@@ -25,7 +25,9 @@ export default function ModuleStubPage() {
       <PageWrapper>
         <PageHeader
           title={t("moduleStub.unknownTitle")}
-          description={t("moduleStub.unknownDescription", { module: params.module })}
+          description={t("moduleStub.unknownDescription", {
+            module: params.module,
+          })}
         />
       </PageWrapper>
     );
@@ -44,12 +46,16 @@ export default function ModuleStubPage() {
       } catch (err) {
         if (alive) {
           setError(
-            isApiError(err) ? err.error_description ?? err.error : "fetch failed"
+            isApiError(err)
+              ? (err.error_description ?? err.error)
+              : "fetch failed",
           );
         }
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [meta.key]);
 
   return (
@@ -74,9 +80,11 @@ export default function ModuleStubPage() {
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm">
-            <span className="font-mono text-xs">GET /api/{meta.key}/status</span>
+            <span className="font-mono text-xs">
+              GET /api/{meta.key}/status
+            </span>
             <code className="text-xs text-muted-foreground">
-              {status ? JSON.stringify(status) : error ?? "loading…"}
+              {status ? JSON.stringify(status) : (error ?? "loading…")}
             </code>
           </div>
         </CardContent>

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/headercat/airbrew/internal/ai/agent"
 	"github.com/headercat/airbrew/internal/ai/conv"
@@ -87,6 +88,47 @@ func TestStreamEmitsSSEFrames(t *testing.T) {
 				t.Fatalf("invalid JSON frame: %s", payload)
 			}
 		}
+	}
+}
+
+func TestStreamWaitsBrieflyForAutoTitle(t *testing.T) {
+	rt := &stubRuntime{events: []agent.Event{
+		{Kind: agent.EventMetadata, Content: "fake-1"},
+		{Kind: agent.EventDone, MessageID: "m1"},
+	}}
+
+	svc, uid, agentID := newTestConvService(t)
+	conv0, err := svc.Create(context.Background(), conv.CreateInput{
+		UserID: uid, AgentID: agentID, SnapModel: "fake-1",
+	})
+	if err != nil {
+		t.Fatalf("create conv: %v", err)
+	}
+
+	h := (&Handler{conv: svc, runtime: rt}).WithAutoTitle(
+		func(ctx context.Context, userID, conversationID, userMessage string) (string, error) {
+			select {
+			case <-time.After(25 * time.Millisecond):
+				return "Delayed Title", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		},
+	)
+	req := httptest.NewRequest(http.MethodPost,
+		fmt.Sprintf("/api/ai/conversations/%s/stream", conv0.ID),
+		strings.NewReader(`{"message":"hi"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", conv0.ID)
+	req = req.WithContext(session.WithContext(req.Context(), &session.Session{UserID: uid}))
+	rec := httptest.NewRecorder()
+
+	h.stream(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"title":"Delayed Title"`) {
+		t.Fatalf("missing title in done frame: %s", body)
 	}
 }
 

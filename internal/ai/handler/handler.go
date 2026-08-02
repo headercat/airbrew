@@ -338,7 +338,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 			"streaming unsupported")
 		return
 	}
-	stopBeat := sse.Heartbeat(15 * time.Second)
+	stopBeat, heartbeatErrs := sse.Heartbeat(15 * time.Second)
 	defer stopBeat()
 
 	spec := agent.Spec{
@@ -361,8 +361,9 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	var titleCh chan string
 	if needTitle {
 		titleCh = make(chan string, 1)
-		bgCtx, cancel := context.WithCancel(context.Background())
+		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		go func() {
+			defer cancel()
 			defer close(titleCh)
 			t, err := h.autoTitle(bgCtx, sess.UserID, id, req.Message)
 			if err != nil {
@@ -373,65 +374,77 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 			case <-bgCtx.Done():
 			}
 		}()
-		defer cancel()
 	}
 
-	for ev := range events {
-		switch ev.Kind {
-		case agent.EventMetadata:
-			if err := sse.Event("metadata", map[string]string{"model": ev.Content}); err != nil {
+	for {
+		select {
+		case err, ok := <-heartbeatErrs:
+			if ok && err != nil {
 				return
 			}
-		case agent.EventDelta:
-			if err := sse.Event("delta", map[string]string{"content": ev.Content}); err != nil {
+			heartbeatErrs = nil
+			continue
+		case ev, ok := <-events:
+			if !ok {
+				// Channel closed without an explicit done/error — emit one so the
+				// client EventSource always terminates.
+				_ = sse.Event("done", map[string]bool{"ok": true})
 				return
 			}
-		case agent.EventToolStart:
-			if err := sse.Event("tool_start", map[string]any{
-				"id": ev.ToolCallID, "name": ev.ToolName, "args": ev.ToolArgs,
-			}); err != nil {
-				return
-			}
-		case agent.EventTool:
-			if err := sse.Event("tool", map[string]any{
-				"id": ev.ToolCallID, "name": ev.ToolName,
-				"args": ev.ToolArgs, "result": ev.ToolResult,
-			}); err != nil {
-				return
-			}
-		case agent.EventDone:
-			payload := map[string]any{}
-			if ev.MessageID != "" {
-				payload["message_id"] = ev.MessageID
-			}
-			if ev.Usage != nil {
-				payload["usage"] = ev.Usage
-			}
-			// Drain a pending title result before closing the stream so
-			// the SPA receives the rename atomically with the done event.
-			if titleCh != nil {
-				select {
-				case t := <-titleCh:
-					if t != "" {
-						payload["title"] = t
-					}
-				default:
+
+			switch ev.Kind {
+			case agent.EventMetadata:
+				if err := sse.Event("metadata", map[string]string{"model": ev.Content}); err != nil {
+					return
 				}
-			}
-			if err := sse.Event("done", payload); err != nil {
+			case agent.EventDelta:
+				if err := sse.Event("delta", map[string]string{"content": ev.Content}); err != nil {
+					return
+				}
+			case agent.EventToolStart:
+				if err := sse.Event("tool_start", map[string]any{
+					"id": ev.ToolCallID, "name": ev.ToolName, "args": ev.ToolArgs,
+				}); err != nil {
+					return
+				}
+			case agent.EventTool:
+				if err := sse.Event("tool", map[string]any{
+					"id": ev.ToolCallID, "name": ev.ToolName,
+					"args": ev.ToolArgs, "result": ev.ToolResult,
+				}); err != nil {
+					return
+				}
+			case agent.EventDone:
+				payload := map[string]any{}
+				if ev.MessageID != "" {
+					payload["message_id"] = ev.MessageID
+				}
+				if ev.Usage != nil {
+					payload["usage"] = ev.Usage
+				}
+				// Drain a pending title result before closing the stream so
+				// the SPA receives the rename atomically with the done event.
+				if titleCh != nil {
+					select {
+					case t := <-titleCh:
+						if t != "" {
+							payload["title"] = t
+						}
+					case <-time.After(750 * time.Millisecond):
+					}
+				}
+				if err := sse.Event("done", payload); err != nil {
+					return
+				}
+				return
+			case agent.EventError:
+				if err := sse.Event("error", ev.Err); err != nil {
+					return
+				}
 				return
 			}
-			return
-		case agent.EventError:
-			if err := sse.Event("error", ev.Err); err != nil {
-				return
-			}
-			return
 		}
 	}
-	// Channel closed without an explicit done/error — emit one so the
-	// client EventSource always terminates.
-	_ = sse.Event("done", map[string]bool{"ok": true})
 }
 
 // --- helpers --------------------------------------------------------------

@@ -68,29 +68,41 @@ func (s *SSEWriter) Event(name string, payload any) error {
 // KeepAlive writes a comment frame. Call from a ticker when the runtime
 // may be silent for >15s (e.g. a long tool call) so the client knows the
 // connection is live.
-func (s *SSEWriter) KeepAlive() {
+func (s *SSEWriter) KeepAlive() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	fmt.Fprint(s.w, ": keep-alive\n\n")
+	if _, err := fmt.Fprint(s.w, ": keep-alive\n\n"); err != nil {
+		return err
+	}
 	s.flusher.Flush()
+	return nil
 }
 
 // Heartbeat spawns a goroutine that writes a keep-alive every interval
 // until the returned stop function is called. It is the caller's
 // responsibility to stop before the SSEWriter is torn down.
-func (s *SSEWriter) Heartbeat(interval time.Duration) (stop func()) {
+func (s *SSEWriter) Heartbeat(interval time.Duration) (stop func(), errs <-chan error) {
 	t := time.NewTicker(interval)
 	done := make(chan struct{})
+	errCh := make(chan error, 1)
 	go func() {
+		defer close(errCh)
 		for {
 			select {
 			case <-done:
 				t.Stop()
 				return
 			case <-t.C:
-				s.KeepAlive()
+				if err := s.KeepAlive(); err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+					t.Stop()
+					return
+				}
 			}
 		}
 	}()
-	return func() { close(done) }
+	return func() { close(done) }, errCh
 }

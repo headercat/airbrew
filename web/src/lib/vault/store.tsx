@@ -395,6 +395,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   // cacheUserIdRef holds the IndexedDB cache key derived from the envelope salt.
   const cacheUserIdRef = useRef<string>("");
 
+  const persistCiphertextCache = useCallback((nextCursor = cursorRef.current) => {
+    if (!cacheUserIdRef.current) return;
+    void putVaultCache({
+      userId: cacheUserIdRef.current,
+      cursor: nextCursor,
+      folders: Array.from(rawFoldersRef.current.values()),
+      items: Array.from(rawItemsRef.current.values()),
+    });
+  }, []);
+
   // Full/delta sync from the server, decrypt, and merge into local state.
   // Loops on has_more so a large vault streams in bounded pages. Reads inputs
   // from refs so it is safe to call immediately after a state reset.
@@ -449,15 +459,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     commitCursor(since);
     // Persist the ciphertext bundle so the next unlock can render instantly
     // (and survive being offline). Ciphertext only — the key is memory-only.
-    if (cacheUserIdRef.current) {
-      void putVaultCache({
-        userId: cacheUserIdRef.current,
-        cursor: since,
-        folders: Array.from(rawFoldersRef.current.values()),
-        items: Array.from(rawItemsRef.current.values()),
-      });
-    }
-  }, [commitItems, commitCursor]);
+    persistCiphertextCache(since);
+  }, [commitItems, commitCursor, persistCiphertextCache]);
 
   // hydrateFromCache decrypts the IndexedDB ciphertext cache (if any) into the
   // decrypted cache so the UI can render before the network sync completes.
@@ -655,14 +658,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const input = await encryptItemInput(key, draft);
       const raw = await VApi.createItem(input);
       const dec = await decryptItem(key, raw);
+      rawItemsRef.current.set(raw.id, raw);
       const next = [...itemsRef.current, dec].sort((a, b) =>
         a.name.localeCompare(b.name),
       );
       commitItems(next);
       commitCursor(raw.revision);
+      persistCiphertextCache(raw.revision);
       return dec;
     },
-    [commitItems, commitCursor],
+    [commitItems, commitCursor, persistCiphertextCache],
   );
 
   const updateItem = useCallback(
@@ -677,22 +682,26 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       input.if_revision = ifRevision;
       const raw = await VApi.updateItem(id, input);
       const dec = await decryptItem(key, raw);
+      rawItemsRef.current.set(raw.id, raw);
       const next = itemsRef.current
         .map((it) => (it.id === id ? dec : it))
         .sort((a, b) => a.name.localeCompare(b.name));
       commitItems(next);
       commitCursor(raw.revision);
+      persistCiphertextCache(raw.revision);
       return dec;
     },
-    [commitItems, commitCursor],
+    [commitItems, commitCursor, persistCiphertextCache],
   );
 
   const deleteItem = useCallback(
     async (id: string, ifRevision: number): Promise<void> => {
       await VApi.deleteItem(id, ifRevision);
+      rawItemsRef.current.delete(id);
       commitItems(itemsRef.current.filter((it) => it.id !== id));
+      persistCiphertextCache();
     },
-    [commitItems],
+    [commitItems, persistCiphertextCache],
   );
 
   // --- attachments ---
@@ -931,6 +940,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (!key) throw new Error("vault locked");
       const enc = await encryptString(key, name);
       const raw = await VApi.createFolder(enc.cipher, enc.nonce);
+      rawFoldersRef.current.set(raw.id, raw);
       const folder: DecryptedFolder = {
         id: raw.id,
         name,
@@ -942,9 +952,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       foldersRef.current = next;
       setFolders(next);
       commitCursor(raw.revision);
+      persistCiphertextCache(raw.revision);
       return folder;
     },
-    [commitCursor],
+    [commitCursor, persistCiphertextCache],
   );
 
   const renameFolder = useCallback(
@@ -960,26 +971,33 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         enc.nonce,
         existing.revision,
       );
+      rawFoldersRef.current.set(raw.id, raw);
       const next = foldersRef.current
         .map((f) => (f.id === id ? { id, name, revision: raw.revision } : f))
         .sort((a, b) => a.name.localeCompare(b.name));
       foldersRef.current = next;
       setFolders(next);
       commitCursor(raw.revision);
+      persistCiphertextCache(raw.revision);
     },
-    [commitCursor],
+    [commitCursor, persistCiphertextCache],
   );
 
-  const deleteFolder = useCallback(async (id: string): Promise<void> => {
-    const key = keyRef.current;
-    if (!key) throw new Error("vault locked");
-    const existing = foldersRef.current.find((f) => f.id === id);
-    if (!existing) throw new Error("folder not found");
-    await VApi.deleteFolder(id, existing.revision);
-    const next = foldersRef.current.filter((f) => f.id !== id);
-    foldersRef.current = next;
-    setFolders(next);
-  }, []);
+  const deleteFolder = useCallback(
+    async (id: string): Promise<void> => {
+      const key = keyRef.current;
+      if (!key) throw new Error("vault locked");
+      const existing = foldersRef.current.find((f) => f.id === id);
+      if (!existing) throw new Error("folder not found");
+      await VApi.deleteFolder(id, existing.revision);
+      rawFoldersRef.current.delete(id);
+      const next = foldersRef.current.filter((f) => f.id !== id);
+      foldersRef.current = next;
+      setFolders(next);
+      persistCiphertextCache();
+    },
+    [persistCiphertextCache],
+  );
 
   // --- master password change ----------------------------------------------
 
@@ -995,24 +1013,21 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       // vault key) so we never rotate on a wrong current password.
       const ok = await verifyMasterPassword(currentPassword);
       if (!ok) throw new WrongMasterPassword();
-      // Re-derive a fresh master key from the NEW password using the existing
-      // salt/params, re-wrap the SAME vault key, and rotate the envelope. The
+      // Re-derive a fresh master key from the NEW password using a new salt and
+      // the existing KDF params, re-wrap the SAME vault key, and rotate the envelope. The
       // vault key (and therefore every item) is untouched.
       const params: KdfParams = {
         memoryKiB: env.kdf_memory_kib,
         iterations: env.kdf_iterations,
         parallelism: env.kdf_parallelism,
       };
-      const newMaster = await deriveMasterKey(
-        newPassword,
-        env.kdf_salt,
-        params,
-      );
+      const newSalt = generateSalt();
+      const newMaster = await deriveMasterKey(newPassword, newSalt, params);
       const wrapped = await encryptBytes(newMaster, liveKey);
       zeroize(newMaster);
       await VApi.rotateKeys({
         kdf_algorithm: env.kdf_algorithm || "argon2id",
-        kdf_salt: env.kdf_salt,
+        kdf_salt: newSalt,
         kdf_memory_kib: params.memoryKiB,
         kdf_iterations: params.iterations,
         kdf_parallelism: params.parallelism,
@@ -1022,8 +1037,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       });
       // Refresh the cached envelope so the version advances locally.
       envelopeRef.current = await VApi.getKeys();
+      cacheUserIdRef.current = userIdForEnvelope(envelopeRef.current.kdf_salt);
+      persistCiphertextCache();
     },
-    [verifyMasterPassword],
+    [persistCiphertextCache, verifyMasterPassword],
   );
 
   // --- item history ---------------------------------------------------------
@@ -1083,13 +1100,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (!existing) throw new Error("item not found");
       const raw = await VApi.restoreRevision(itemId, revId, existing.revision);
       const dec = await decryptItem(key, raw);
+      rawItemsRef.current.set(raw.id, raw);
       const next = itemsRef.current
         .map((it) => (it.id === itemId ? dec : it))
         .sort((a, b) => a.name.localeCompare(b.name));
       commitItems(next);
       commitCursor(raw.revision);
+      persistCiphertextCache(raw.revision);
     },
-    [commitItems, commitCursor],
+    [commitItems, commitCursor, persistCiphertextCache],
   );
 
   // Auto-bootstrap on first mount so the page knows which gate to show.

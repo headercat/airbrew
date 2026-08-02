@@ -294,6 +294,16 @@ type VaultContextValue = {
     folders: { name_cipher: string; name_nonce: string }[],
     items: VApi.ItemInput[],
   ) => Promise<VApi.ImportCounts>;
+  // Folder CRUD (encrypts the folder name with the vault key).
+  createFolder: (name: string) => Promise<DecryptedFolder>;
+  renameFolder: (id: string, name: string) => Promise<void>;
+  deleteFolder: (id: string) => Promise<void>;
+  // changeMasterPassword re-wraps the existing vault key under a new master
+  // password and rotates the envelope server-side (version-guarded).
+  changeMasterPassword: (
+    currentPassword: string,
+    newPassword: string,
+  ) => Promise<void>;
 };
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -717,6 +727,109 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       return counts;
     },
     [syncAndDecrypt],
+  );
+
+  // --- folder CRUD ----------------------------------------------------------
+
+  const createFolder = useCallback(
+    async (name: string): Promise<DecryptedFolder> => {
+      const key = keyRef.current;
+      if (!key) throw new Error("vault locked");
+      const enc = await encryptString(key, name);
+      const raw = await VApi.createFolder(enc.cipher, enc.nonce);
+      const folder: DecryptedFolder = {
+        id: raw.id,
+        name,
+        revision: raw.revision,
+      };
+      const next = [...foldersRef.current, folder].sort((a, b) =>
+        a.name.localeCompare(b.name),
+      );
+      foldersRef.current = next;
+      setFolders(next);
+      commitCursor(raw.revision);
+      return folder;
+    },
+    [commitCursor],
+  );
+
+  const renameFolder = useCallback(
+    async (id: string, name: string): Promise<void> => {
+      const key = keyRef.current;
+      if (!key) throw new Error("vault locked");
+      const existing = foldersRef.current.find((f) => f.id === id);
+      if (!existing) throw new Error("folder not found");
+      const enc = await encryptString(key, name);
+      const raw = await VApi.updateFolder(id, enc.cipher, enc.nonce, existing.revision);
+      const next = foldersRef.current
+        .map((f) =>
+          f.id === id ? { id, name, revision: raw.revision } : f,
+        )
+        .sort((a, b) => a.name.localeCompare(b.name));
+      foldersRef.current = next;
+      setFolders(next);
+      commitCursor(raw.revision);
+    },
+    [commitCursor],
+  );
+
+  const deleteFolder = useCallback(
+    async (id: string): Promise<void> => {
+      const key = keyRef.current;
+      if (!key) throw new Error("vault locked");
+      const existing = foldersRef.current.find((f) => f.id === id);
+      if (!existing) throw new Error("folder not found");
+      await VApi.deleteFolder(id, existing.revision);
+      const next = foldersRef.current.filter((f) => f.id !== id);
+      foldersRef.current = next;
+      setFolders(next);
+    },
+    [],
+  );
+
+  // --- master password change ----------------------------------------------
+
+  const changeMasterPassword = useCallback(
+    async (currentPassword: string, newPassword: string) => {
+      const env = envelopeRef.current;
+      const liveKey = keyRef.current;
+      if (!env || !liveKey) throw new Error("vault locked");
+      if (newPassword.length < 8) {
+        throw new Error("master password must be at least 8 characters");
+      }
+      // Verify the current password first (constant-time compare to the live
+      // vault key) so we never rotate on a wrong current password.
+      const ok = await verifyMasterPassword(currentPassword);
+      if (!ok) throw new WrongMasterPassword();
+      // Re-derive a fresh master key from the NEW password using the existing
+      // salt/params, re-wrap the SAME vault key, and rotate the envelope. The
+      // vault key (and therefore every item) is untouched.
+      const params: KdfParams = {
+        memoryKiB: env.kdf_memory_kib,
+        iterations: env.kdf_iterations,
+        parallelism: env.kdf_parallelism,
+      };
+      const newMaster = await deriveMasterKey(
+        newPassword,
+        env.kdf_salt,
+        params,
+      );
+      const wrapped = await encryptBytes(newMaster, liveKey);
+      zeroize(newMaster);
+      await VApi.rotateKeys({
+        kdf_algorithm: env.kdf_algorithm || "argon2id",
+        kdf_salt: env.kdf_salt,
+        kdf_memory_kib: params.memoryKiB,
+        kdf_iterations: params.iterations,
+        kdf_parallelism: params.parallelism,
+        protected_vault_key: wrapped.cipher,
+        protected_vault_nonce: wrapped.nonce,
+        if_version: env.version,
+      });
+      // Refresh the cached envelope so the version advances locally.
+      envelopeRef.current = await VApi.getKeys();
+    },
+    [verifyMasterPassword],
   );
 
   // Auto-bootstrap on first mount so the page knows which gate to show.

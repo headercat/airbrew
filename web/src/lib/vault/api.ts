@@ -138,6 +138,26 @@ export function createFolder(
   });
 }
 
+export function updateFolder(
+  id: string,
+  nameCipher: string,
+  nameNonce: string,
+  ifRevision: number,
+): Promise<VaultFolder> {
+  return api.putRaw<VaultFolder>(`/api/vault/folders/${id}`, {
+    name_cipher: nameCipher,
+    name_nonce: nameNonce,
+    if_revision: ifRevision,
+  });
+}
+
+export function deleteFolder(
+  id: string,
+  ifRevision: number,
+): Promise<{ ok: true }> {
+  return api.del(`/api/vault/folders/${id}?if_revision=${ifRevision}`);
+}
+
 // ---- attachments ----
 
 export type AttachmentMeta = {

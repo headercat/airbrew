@@ -11,7 +11,7 @@ embeds its React SPA, so deployment is one file + one SQLite database.
 | ---------- | -------------------------------------- |
 | **Auth**   | Milestone 1 (users/sessions/password)  |
 | OAuth/OIDC | Schema ready, endpoints not yet built  |
-| Mail       | Stub                                   |
+| Mail       | Inbound/outbound drivers, mailbox storage                   |
 | Drive      | Stub                                   |
 | Contacts   | Stub                                   |
 | Chat       | Stub                                   |
@@ -94,7 +94,13 @@ internal/
     session/       Browser session lifecycle
     oauth/         Reserved for OAuth/OIDC endpoints
     handler/       JSON HTTP handlers
-  mail/            Stub
+  mail/            Mail module (mailboxes, inbound/outbound drivers)
+    letter/        shared MIME helpers (Address, Outgoing, BuildRFC822, Parse)
+    inbox/         Mailbox + Message domain, repository, service
+    provider/      admin-selectable driver registry (mail_providers)
+    inbound/       receive drivers: cloudflare/ses (webhook) + imap/pop3 (poll)
+    outbound/      send drivers: sendgrid/mailgun/ncloud/ses/cloudflare/smtp
+    handler/       JSON HTTP handlers
   drive/           Stub
   contacts/        Stub
   chat/            Stub

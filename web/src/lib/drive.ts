@@ -1,0 +1,140 @@
+// Typed client for the drive module. DTO field names mirror the Go JSON tags.
+import { api } from "@/lib/api";
+
+export type DriveNode = {
+  id: string;
+  parent_id: string;
+  kind: "file" | "folder";
+  name: string;
+  content_type: string;
+  size_bytes: number;
+  sha256?: string;
+  is_starred: boolean;
+  deleted_at?: string;
+  download_url?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DriveShare = {
+  id: string;
+  node_id: string;
+  token: string;
+  url: string;
+  has_password: boolean;
+  expires_at?: string;
+  downloads: number;
+  is_active: boolean;
+  created_at: string;
+};
+
+export type DriveStatus = {
+  module: string;
+  status: string;
+  enabled: boolean;
+  max_upload_bytes: number;
+  quota_bytes: number;
+};
+
+export type DriveUsage = { used: number; quota: number };
+
+export type DriveShareMeta = {
+  name: string;
+  content_type: string;
+  size_bytes: number;
+  has_password: boolean;
+  expired: boolean;
+};
+
+export type ListParams = {
+  parent?: string;
+  folder?: string;
+  view?: string;
+  q?: string;
+  kind?: string;
+  sort?: string;
+  order?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export const drive = {
+  status: () => api.get<DriveStatus>("/api/drive/status"),
+  list: (p: ListParams = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(p)) {
+      if (v !== undefined && v !== "") q.set(k, String(v));
+    }
+    const qs = q.toString();
+    return api.get<{ nodes: DriveNode[] }>(
+      "/api/drive/files" + (qs ? "?" + qs : ""),
+    );
+  },
+  get: (id: string) => api.get<DriveNode>(`/api/drive/files/${id}`),
+  createFolder: (name: string, parent = "") =>
+    api.post<DriveNode>("/api/drive/folders", { name, parent_id: parent }),
+  upload: (file: File, parent = "", name?: string) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const q = new URLSearchParams();
+    if (parent) q.set("parent", parent);
+    if (name) q.set("name", name);
+    const qs = q.toString();
+    return fetch("/api/drive/files" + (qs ? "?" + qs : ""), {
+      method: "POST",
+      body: fd,
+      credentials: "same-origin",
+    }).then(async (res) => {
+      const text = await res.text();
+      const body = text ? JSON.parse(text) : null;
+      if (!res.ok) throw body ?? { error: "http_error", status: res.status };
+      return body as DriveNode;
+    });
+  },
+  patch: (
+    id: string,
+    body: { name?: string; parent_id?: string; starred?: boolean },
+  ) => api.patch<DriveNode>(`/api/drive/files/${id}`, body),
+  remove: (id: string, permanent = false) =>
+    api.del<{ ok: boolean }>(
+      `/api/drive/files/${id}${permanent ? "?permanent=true" : ""}`,
+    ),
+  restore: (id: string) =>
+    api.post<{ ok: boolean }>(`/api/drive/files/${id}/restore`),
+  copy: (id: string, parent: string, name?: string) =>
+    api.post<DriveNode>(`/api/drive/files/${id}/copy`, {
+      parent_id: parent,
+      name: name ?? "",
+    }),
+  downloadURL: (id: string, inline = false) =>
+    `/api/drive/files/${id}/download${inline ? "?inline=true" : ""}`,
+  emptyTrash: () => api.post<{ ok: boolean }>("/api/drive/trash/empty"),
+  usage: () => api.get<DriveUsage>("/api/drive/usage"),
+
+  listShares: () => api.get<{ shares: DriveShare[] }>("/api/drive/shares"),
+  listNodeShares: (id: string) =>
+    api.get<{ shares: DriveShare[] }>(`/api/drive/files/${id}/shares`),
+  createShare: (
+    id: string,
+    body: { password?: string; expires_in_seconds?: number },
+  ) => api.post<DriveShare>(`/api/drive/files/${id}/shares`, body),
+  deleteShare: (id: string) =>
+    api.del<{ ok: boolean }>(`/api/drive/shares/${id}`),
+
+  // Public share access (no auth).
+  shareMeta: (token: string, password?: string) => {
+    const q = new URLSearchParams();
+    if (password) q.set("pw", password);
+    const qs = q.toString();
+    return api.get<DriveShareMeta>(
+      `/api/drive/s/${token}${qs ? "?" + qs : ""}`,
+    );
+  },
+  shareDownloadURL: (token: string, password?: string, inline = false) => {
+    const q = new URLSearchParams();
+    if (password) q.set("pw", password);
+    if (inline) q.set("inline", "true");
+    const qs = q.toString();
+    return `/api/drive/s/${token}/download${qs ? "?" + qs : ""}`;
+  },
+};

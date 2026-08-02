@@ -552,7 +552,6 @@ func (h *Handler) exportVault(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusServiceUnavailable, "unavailable", "blob store not configured")
 		return
 	}
-	var totalPayloadBytes int64
 	for _, a := range attachments {
 		body, _, err := h.blobs.Open(r.Context(), a.BlobPath)
 		if err != nil {
@@ -569,11 +568,6 @@ func (h *Handler) exportVault(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusInternalServerError, "internal_error", "attachment exceeds export cap")
 			return
 		}
-		totalPayloadBytes += int64(len(payload))
-		if totalPayloadBytes > maxExportAttachmentPayloadBytes {
-			response.Error(w, http.StatusRequestEntityTooLarge, "too_large", "vault backup exceeds export cap")
-			return
-		}
 		out.Attachments = append(out.Attachments, exportAttachmentResp{
 			ID: a.ID, ItemID: a.ItemID,
 			NameCipher: a.NameCipher, NameNonce: a.NameNonce,
@@ -582,8 +576,19 @@ func (h *Handler) exportVault(w http.ResponseWriter, r *http.Request) {
 			Payload:   base64.StdEncoding.EncodeToString(payload),
 		})
 	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	if int64(len(body)) > maxExportJSONBody {
+		response.Error(w, http.StatusRequestEntityTooLarge, "too_large", "vault backup exceeds export cap")
+		return
+	}
 	h.auditVault(r, "vault.export", sess.UserID, nil)
-	response.JSON(w, http.StatusOK, out)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 type importReq struct {
@@ -685,6 +690,7 @@ func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
 		}
 		blobPath, err := h.blobs.Save(r.Context(), "vault-attachments", "application/octet-stream", bytes.NewReader(payload))
 		if err != nil {
+			cleanupBlobs(r.Context(), h.blobs, savedBlobPaths)
 			response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 			return
 		}
@@ -771,9 +777,9 @@ func writeVaultError(w http.ResponseWriter, err error) {
 const maxJSONBody = 256 << 10
 const maxImportJSONBody = 256 << 20
 
-// Export embeds encrypted attachment blobs as base64 inside JSON. Keep the raw
-// payload aggregate below the import JSON cap after base64/metadata overhead.
-const maxExportAttachmentPayloadBytes = 180 << 20
+// Export must only produce backup JSON that the matching import endpoint can
+// accept, with a little headroom for transfer/client-side wrappers.
+const maxExportJSONBody = maxImportJSONBody - (4 << 20)
 
 func decodeJSON(r *http.Request, v any) error {
 	return decodeJSONLimit(r, v, maxJSONBody)

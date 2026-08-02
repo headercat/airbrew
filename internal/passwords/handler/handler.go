@@ -552,6 +552,7 @@ func (h *Handler) exportVault(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusServiceUnavailable, "unavailable", "blob store not configured")
 		return
 	}
+	var totalPayloadBytes int64
 	for _, a := range attachments {
 		body, _, err := h.blobs.Open(r.Context(), a.BlobPath)
 		if err != nil {
@@ -566,6 +567,11 @@ func (h *Handler) exportVault(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(payload) > maxAttachmentBytes {
 			response.Error(w, http.StatusInternalServerError, "internal_error", "attachment exceeds export cap")
+			return
+		}
+		totalPayloadBytes += int64(len(payload))
+		if totalPayloadBytes > maxExportAttachmentPayloadBytes {
+			response.Error(w, http.StatusRequestEntityTooLarge, "too_large", "vault backup exceeds export cap")
 			return
 		}
 		out.Attachments = append(out.Attachments, exportAttachmentResp{
@@ -764,6 +770,10 @@ func writeVaultError(w http.ResponseWriter, err error) {
 // are handled separately (multipart) with their own cap.
 const maxJSONBody = 256 << 10
 const maxImportJSONBody = 256 << 20
+
+// Export embeds encrypted attachment blobs as base64 inside JSON. Keep the raw
+// payload aggregate below the import JSON cap after base64/metadata overhead.
+const maxExportAttachmentPayloadBytes = 180 << 20
 
 func decodeJSON(r *http.Request, v any) error {
 	return decodeJSONLimit(r, v, maxJSONBody)

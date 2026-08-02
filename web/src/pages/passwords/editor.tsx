@@ -42,7 +42,7 @@ import {
   type Field,
   type FieldKind,
 } from "@/lib/vault/store";
-import type { VaultItemType } from "@/lib/vault/api";
+import type { VaultItem, VaultItemType } from "@/lib/vault/api";
 import { AttachmentsCard } from "./attachments";
 
 const TYPES: VaultItemType[] = ["login", "secure_note", "card", "identity"];
@@ -57,7 +57,8 @@ export default function PasswordEditor() {
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
   const navigate = useNavigate();
-  const { status, items, createItem, updateItem, deleteItem } = useVault();
+  const { status, items, createItem, updateItem, deleteItem, refresh } =
+    useVault();
 
   const existing = items.find((it) => it.id === id);
 
@@ -70,6 +71,7 @@ export default function PasswordEditor() {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<VaultItem | null>(null);
 
   // Hydrate form when editing.
   useEffect(() => {
@@ -145,6 +147,7 @@ export default function PasswordEditor() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setConflict(null);
     setBusy(true);
     try {
       if (isEdit && existing) {
@@ -154,9 +157,18 @@ export default function PasswordEditor() {
       }
       navigate("/passwords");
     } catch (err) {
-      if (isConflict(err)) setError(t("passwords.editor.conflict"));
-      else if (isApiError(err)) setError(err.error_description ?? err.error);
-      else setError(err instanceof Error ? err.message : String(err));
+      if (isConflict(err)) {
+        // A 409 means the row changed under us. Show the server's current row
+        // and offer to re-sync + re-hydrate so the user can reconcile instead
+        // of guessing at a stale revision.
+        const cur = (err as { current?: VaultItem }).current;
+        setConflict(cur ?? null);
+        setError(t("passwords.editor.conflict"));
+      } else if (isApiError(err)) {
+        setError(err.error_description ?? err.error);
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setBusy(false);
     }
@@ -201,6 +213,32 @@ export default function PasswordEditor() {
         </CardHeader>
         <form onSubmit={onSubmit}>
           <CardContent className="space-y-4">
+            {conflict && (
+              <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs">
+                <p className="text-amber-700 dark:text-amber-400">
+                  {t("passwords.editor.conflict")}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await refresh();
+                      setConflict(null);
+                      setError(null);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  {t("passwords.editor.resync")}
+                </Button>
+              </div>
+            )}
             <div className="grid gap-2">
               <Label htmlFor="name">{t("passwords.editor.name")}</Label>
               <Input

@@ -724,6 +724,44 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     void bootstrap();
   }, [bootstrap]);
 
+  // Auto-lock: when the vault is unlocked, lock it after a period of inactivity
+  // or when the tab stays hidden for a while. This limits the window in which a
+  // decrypted vault sits open on an unattended device. Activity resets the
+  // idle timer; lock() wipes the key and decrypted cache.
+  const lockRef = useRef(lock);
+  lockRef.current = lock;
+  useEffect(() => {
+    if (status !== "unlocked") return;
+    const IDLE_MS = 5 * 60_000; // 5 minutes
+    const HIDDEN_MS = 5 * 60_000; // 5 minutes hidden
+    let idleTimer: number | undefined;
+    let hiddenSince = 0;
+
+    const resetIdle = () => {
+      window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => lockRef.current(), IDLE_MS);
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        hiddenSince = Date.now();
+      } else if (hiddenSince && Date.now() - hiddenSince >= HIDDEN_MS) {
+        lockRef.current();
+        hiddenSince = 0;
+      }
+    };
+    const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+    events.forEach((e) =>
+      window.addEventListener(e, resetIdle, { passive: true }),
+    );
+    document.addEventListener("visibilitychange", onVisibility);
+    resetIdle();
+    return () => {
+      window.clearTimeout(idleTimer);
+      events.forEach((e) => window.removeEventListener(e, resetIdle));
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [status]);
+
   const value = useMemo<VaultContextValue>(
     () => ({
       status,

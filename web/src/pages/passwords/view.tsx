@@ -29,8 +29,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { PageWrapper } from "@/components/page";
 import { isApiError } from "@/lib/api";
+import { copyAndAutoClear } from "@/lib/vault/clipboard";
 import { useVault, type DecryptedItem, type Field } from "@/lib/vault/store";
 import { generateTotp, type TotpCode } from "@/lib/vault/totp";
 import { AttachmentsCard } from "./attachments";
@@ -64,6 +66,15 @@ export default function PasswordView() {
     if (status !== "unlocked") navigate("/passwords");
   }, [status, navigate]);
 
+  // Reprompt gate: items flagged reprompt hide their sensitive (password) fields
+  // until the user re-enters the master password. Verified state is kept only
+  // for this view session and resets on navigation away.
+  const { verifyMasterPassword } = useVault();
+  const [repromptVerified, setRepromptVerified] = useState(false);
+  const [repromptBusy, setRepromptBusy] = useState(false);
+  const [repromptError, setRepromptError] = useState<string | null>(null);
+  const [repromptPw, setRepromptPw] = useState("");
+
   if (status !== "unlocked") return null;
 
   if (!item) {
@@ -77,6 +88,8 @@ export default function PasswordView() {
       </PageWrapper>
     );
   }
+
+  const sensitiveGateActive = item.reprompt && !repromptVerified;
 
   async function onDelete() {
     if (!item) return;
@@ -145,12 +158,57 @@ export default function PasswordView() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
+          {sensitiveGateActive && (
+            <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-3">
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                {t("passwords.view.repromptRequired")}
+              </p>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="password"
+                  autoComplete="current-password"
+                  value={repromptPw}
+                  onChange={(e) => setRepromptPw(e.target.value)}
+                  placeholder={t("passwords.unlock.masterPassword")}
+                  className="h-8"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={repromptBusy || !repromptPw}
+                  onClick={async () => {
+                    setRepromptBusy(true);
+                    setRepromptError(null);
+                    try {
+                      const ok = await verifyMasterPassword(repromptPw);
+                      if (ok) setRepromptVerified(true);
+                      else setRepromptError(t("passwords.unlock.wrong"));
+                    } finally {
+                      setRepromptBusy(false);
+                      setRepromptPw("");
+                    }
+                  }}
+                >
+                  {t("passwords.view.reveal")}
+                </Button>
+              </div>
+              {repromptError && (
+                <p className="text-xs text-destructive">{repromptError}</p>
+              )}
+            </div>
+          )}
           {item.fields.length === 0 ? (
             <p className="rounded-md border border-dashed bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
               {t("passwords.view.noFields")}
             </p>
           ) : (
-            item.fields.map((f) => <FieldRow key={f.id} field={f} />)
+            item.fields.map((f) => (
+              <FieldRow
+                key={f.id}
+                field={f}
+                hideSensitive={sensitiveGateActive}
+              />
+            ))
           )}
         </CardContent>
       </Card>
@@ -195,7 +253,7 @@ function CopyButton({
   const [copied, setCopied] = useState(false);
   async function copy() {
     if (!value) return;
-    await navigator.clipboard.writeText(value);
+    await copyAndAutoClear(value);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
@@ -217,9 +275,30 @@ function CopyButton({
   );
 }
 
-function FieldRow({ field }: { field: Field }) {
+function FieldRow({
+  field,
+  hideSensitive,
+}: {
+  field: Field;
+  hideSensitive?: boolean;
+}) {
   const { t } = useTranslation();
   const label = field.name || t(`passwords.kinds.${field.kind}`);
+
+  if (hideSensitive && field.kind === "password") {
+    return (
+      <div className="grid gap-1">
+        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {label}
+        </span>
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-mono text-sm text-muted-foreground">
+            {"••••••••••••••••"}
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   if (field.kind === "totp") {
     return <TotpField label={label} secret={field.value} />;

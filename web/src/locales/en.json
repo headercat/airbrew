@@ -287,6 +287,8 @@
       "ipAllowlistEnabledDesc": "When enabled, only listed IPs or CIDRs are accepted.",
       "allowedNetworks": "Allowed networks",
       "allowedNetworksDesc": "Enter one IP address or CIDR per line.",
+      "trustedProxies": "Trusted proxies",
+      "trustedProxiesDesc": "Only these proxy IPs or CIDRs may supply Forwarded or X-Forwarded-For client addresses.",
       "loginHistory": "Login history",
       "loginHistoryDesc": "Review successful and failed sign-in attempts.",
       "emailFilter": "Filter by email",

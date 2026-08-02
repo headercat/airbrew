@@ -91,6 +91,7 @@ export type PasswordPolicy = {
 export type IPAllowlist = {
   enabled: boolean;
   cidrs: string[];
+  trusted_proxies: string[];
 };
 
 export type LoginAttempt = {

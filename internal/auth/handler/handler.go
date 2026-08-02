@@ -123,7 +123,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		EventType:   "user.created",
 		ActorUserID: u.ID,
 		TargetType:  "user", TargetID: u.ID,
-		IPAddress: clientIP(r),
+		IPAddress: h.clientIP(r),
 		UserAgent: r.UserAgent(),
 		Metadata:  map[string]any{"email": u.Email},
 	})
@@ -162,7 +162,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusForbidden, "password_expired", "password has expired")
 		return
 	}
-	token, _, err := h.sessions.Issue(r.Context(), u.ID, clientIP(r), r.UserAgent())
+	token, _, err := h.sessions.Issue(r.Context(), u.ID, h.clientIP(r), r.UserAgent())
 	if err != nil {
 		h.recordLoginAttempt(r, email, u.ID, false, "session_issue_failed")
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
@@ -174,7 +174,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		EventType:   "session.login",
 		ActorUserID: u.ID,
 		TargetType:  "user", TargetID: u.ID,
-		IPAddress: clientIP(r),
+		IPAddress: h.clientIP(r),
 		UserAgent: r.UserAgent(),
 	})
 	response.JSON(w, http.StatusOK, toResp(u))
@@ -214,7 +214,7 @@ func (h *Handler) recordLoginAttempt(r *http.Request, email, userID string, succ
 		UserID:    userID,
 		Email:     email,
 		Success:   success,
-		IPAddress: clientIP(r),
+		IPAddress: h.clientIP(r),
 		UserAgent: r.UserAgent(),
 		Failure:   failure,
 	})
@@ -224,7 +224,7 @@ func (h *Handler) loginRateLimited(w http.ResponseWriter, r *http.Request, email
 	if h.security == nil {
 		return false
 	}
-	limit, err := h.security.CheckLoginRateLimit(r.Context(), email, clientIP(r))
+	limit, err := h.security.CheckLoginRateLimit(r.Context(), email, h.clientIP(r))
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return true
@@ -250,7 +250,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 				EventType:   "session.logout",
 				ActorUserID: sess.UserID,
 				TargetType:  "session", TargetID: sess.ID,
-				IPAddress: clientIP(r),
+				IPAddress: h.clientIP(r),
 				UserAgent: r.UserAgent(),
 			})
 		}
@@ -325,7 +325,7 @@ func (h *Handler) updateProfile(w http.ResponseWriter, r *http.Request) {
 		EventType:   "profile.updated",
 		ActorUserID: sess.UserID,
 		TargetType:  "user", TargetID: sess.UserID,
-		IPAddress: clientIP(r),
+		IPAddress: h.clientIP(r),
 		UserAgent: r.UserAgent(),
 	})
 	response.JSON(w, http.StatusOK, toResp(u))
@@ -370,7 +370,7 @@ func (h *Handler) changeExpiredPassword(w http.ResponseWriter, r *http.Request) 
 		EventType:   "user.password_changed",
 		ActorUserID: u.ID,
 		TargetType:  "user", TargetID: u.ID,
-		IPAddress: clientIP(r),
+		IPAddress: h.clientIP(r),
 		UserAgent: r.UserAgent(),
 	})
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -399,7 +399,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		EventType:   "user.password_changed",
 		ActorUserID: sess.UserID,
 		TargetType:  "user", TargetID: sess.UserID,
-		IPAddress: clientIP(r),
+		IPAddress: h.clientIP(r),
 		UserAgent: r.UserAgent(),
 	})
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -464,7 +464,7 @@ func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request) {
 		EventType:   "avatar.uploaded",
 		ActorUserID: sess.UserID,
 		TargetType:  "user", TargetID: sess.UserID,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 	})
 	response.JSON(w, http.StatusOK, map[string]string{"avatar_url": url})
 }
@@ -497,4 +497,15 @@ func clientIP(r *http.Request) string {
 		return host
 	}
 	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func (h *Handler) clientIP(r *http.Request) string {
+	if h.security == nil {
+		return clientIP(r)
+	}
+	ip, err := h.security.RequestIP(r.Context(), r)
+	if err != nil {
+		return clientIP(r)
+	}
+	return ip
 }

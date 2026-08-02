@@ -142,7 +142,7 @@ func (h *Handler) patchModule(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: eventType, ActorUserID: callerUserID(r),
 		TargetType: "module", TargetID: key,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 	})
 	response.JSON(w, http.StatusOK, map[string]any{"key": key, "enabled": *req.Enabled})
 }
@@ -246,7 +246,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "user.created", ActorUserID: callerUserID(r),
 		TargetType: "user", TargetID: u.ID,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{"email": u.Email, "role": string(u.Role)},
 	})
 	resp := map[string]any{"user": toUserDTO(u)}
@@ -313,7 +313,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 		h.audit.Log(r.Context(), audit.Entry{
 			EventType: "user.role_changed", ActorUserID: callerID,
 			TargetType: "user", TargetID: id,
-			IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+			IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 			Metadata: map[string]any{"from": string(target.Role), "to": string(newRole)},
 		})
 	}
@@ -354,7 +354,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 		h.audit.Log(r.Context(), audit.Entry{
 			EventType: "user.status_changed", ActorUserID: callerID,
 			TargetType: "user", TargetID: id,
-			IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+			IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 			Metadata: map[string]any{
 				"from": string(target.Status), "to": string(newStatus),
 				"revoked_sessions": revoked,
@@ -405,7 +405,7 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "user.deleted", ActorUserID: callerID,
 		TargetType: "user", TargetID: id,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{
 			"from": string(target.Status), "to": string(user.StatusDeleted),
 			"revoked_sessions": revoked,
@@ -436,7 +436,7 @@ func (h *Handler) restoreUser(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "user.restored", ActorUserID: callerUserID(r),
 		TargetType: "user", TargetID: id,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{"from": string(user.StatusDeleted), "to": string(user.StatusActive)},
 	})
 	updated, _ := h.userRepo.GetByID(r.Context(), id)
@@ -477,7 +477,7 @@ func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "user.password_reset", ActorUserID: callerUserID(r),
 		TargetType: "user", TargetID: id,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{"revoked_sessions": revoked},
 	})
 	resp := map[string]any{"ok": true, "revoked_sessions": revoked}
@@ -626,7 +626,7 @@ func (h *Handler) createOAuthClient(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "oauth.client_created", ActorUserID: callerUserID(r),
 		TargetType: "oauth_client", TargetID: res.Client.ID,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{
 			"client_id":   res.Client.ClientID,
 			"client_type": string(res.Client.ClientType),
@@ -690,7 +690,7 @@ func (h *Handler) updateOAuthClient(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "oauth.client_updated", ActorUserID: callerUserID(r),
 		TargetType: "oauth_client", TargetID: c.ID,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{
 			"client_id": c.ClientID, "name": c.Name, "is_active": c.IsActive,
 			"revoked_authorization_codes": revoked.AuthorizationCodes,
@@ -727,7 +727,7 @@ func (h *Handler) deleteOAuthClient(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "oauth.client_deleted", ActorUserID: callerUserID(r),
 		TargetType: "oauth_client", TargetID: id,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{
 			"client_id": c.ClientID, "name": c.Name,
 			"revoked_authorization_codes": revoked.AuthorizationCodes,
@@ -762,7 +762,7 @@ func (h *Handler) rotateOAuthClientSecret(w http.ResponseWriter, r *http.Request
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "oauth.client_secret_rotated", ActorUserID: callerUserID(r),
 		TargetType: "oauth_client", TargetID: id,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{
 			"revoked_authorization_codes": revoked.AuthorizationCodes,
 			"revoked_refresh_tokens":      revoked.RefreshTokens,
@@ -807,6 +807,17 @@ func clientIP(r *http.Request) string {
 		return host
 	}
 	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func (h *Handler) clientIP(r *http.Request) string {
+	if h.security == nil {
+		return clientIP(r)
+	}
+	ip, err := h.security.RequestIP(r.Context(), r)
+	if err != nil {
+		return clientIP(r)
+	}
+	return ip
 }
 
 // validateCIDR returns an error when raw is not a parseable IPv4/IPv6 CIDR.
@@ -895,7 +906,7 @@ func (h *Handler) revokeSession(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "session.revoked", ActorUserID: callerUserID(r),
 		TargetType: "session", TargetID: id,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 	})
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -952,7 +963,7 @@ func (h *Handler) revokeUserSessions(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "session.revoked", ActorUserID: callerUserID(r),
 		TargetType: "user", TargetID: id,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{"count": n},
 	})
 	response.JSON(w, http.StatusOK, map[string]any{"ok": true, "revoked": n})
@@ -1044,7 +1055,7 @@ func (h *Handler) putBranding(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "branding.updated", ActorUserID: callerUserID(r),
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 	})
 	b := h.loadBranding(r.Context())
 	response.JSON(w, http.StatusOK, b)
@@ -1157,7 +1168,7 @@ func (h *Handler) backupDatabase(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "system.backup_downloaded", ActorUserID: callerUserID(r),
 		TargetType: "system", TargetID: filepath.Base(dbPath),
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 	})
 
 	filename := "airbrew-backup-" + time.Now().UTC().Format("20060102T150405Z") + ".sqlite"
@@ -1244,7 +1255,7 @@ func (h *Handler) putPasswordPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "security.password_policy_changed", ActorUserID: callerUserID(r),
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress: h.clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{
 			"min_length": current.MinLength,
 		},
@@ -1265,8 +1276,9 @@ func (h *Handler) getIPAllowlist(w http.ResponseWriter, r *http.Request) {
 }
 
 type putIPAllowlistReq struct {
-	Enabled *bool    `json:"enabled,omitempty"`
-	CIDRs   []string `json:"cidrs,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
+	CIDRs          []string `json:"cidrs,omitempty"`
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
 }
 
 func (h *Handler) putIPAllowlist(w http.ResponseWriter, r *http.Request) {
@@ -1286,13 +1298,23 @@ func (h *Handler) putIPAllowlist(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	for _, c := range req.TrustedProxies {
+		if err := validateCIDR(c); err != nil {
+			response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+	}
 	if req.Enabled != nil {
 		current.Enabled = *req.Enabled
 	}
 	if req.CIDRs != nil {
 		current.CIDRs = req.CIDRs
 	}
-	if current.Enabled && !ipAllowedByCIDRs(clientIP(r), current.CIDRs) {
+	if req.TrustedProxies != nil {
+		current.TrustedProxies = req.TrustedProxies
+	}
+	requestIP := security.ResolveRequestIP(r, current)
+	if current.Enabled && !security.IPMatches(requestIP, current.CIDRs) {
 		response.Error(w, http.StatusBadRequest, "would_lock_out_current_ip", "current request IP must be included before enabling the allowlist")
 		return
 	}
@@ -1302,36 +1324,14 @@ func (h *Handler) putIPAllowlist(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "security.ip_allowlist_changed", ActorUserID: callerUserID(r),
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
-		Metadata: map[string]any{"enabled": current.Enabled, "count": len(current.CIDRs)},
+		IPAddress: requestIP, UserAgent: r.UserAgent(),
+		Metadata: map[string]any{
+			"enabled": current.Enabled, "count": len(current.CIDRs),
+			"trusted_proxies": len(current.TrustedProxies),
+		},
 	})
 	saved, _ := h.security.IPAllowlist(r.Context())
 	response.JSON(w, http.StatusOK, saved)
-}
-
-func ipAllowedByCIDRs(rawIP string, cidrs []string) bool {
-	host, _, err := net.SplitHostPort(rawIP)
-	if err == nil {
-		rawIP = host
-	}
-	ip := net.ParseIP(strings.TrimSpace(rawIP))
-	if ip == nil {
-		return false
-	}
-	for _, c := range cidrs {
-		c = strings.TrimSpace(c)
-		if strings.Contains(c, "/") {
-			_, network, err := net.ParseCIDR(c)
-			if err == nil && network.Contains(ip) {
-				return true
-			}
-			continue
-		}
-		if other := net.ParseIP(c); other != nil && other.Equal(ip) {
-			return true
-		}
-	}
-	return false
 }
 
 // ---- Security: login history ----

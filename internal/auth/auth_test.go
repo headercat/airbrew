@@ -75,6 +75,56 @@ func TestSessionMiddlewareIgnoresForwardedForForAllowlist(t *testing.T) {
 	}
 }
 
+func TestSessionMiddlewareAllowsForwardedForFromTrustedProxy(t *testing.T) {
+	ctx := context.Background()
+	securitySvc := newTestSecurityService(t, ctx)
+	if err := securitySvc.SetIPAllowlist(ctx, security.IPAllowlist{
+		Enabled:        true,
+		CIDRs:          []string{"203.0.113.7"},
+		TrustedProxies: []string{"198.51.100.10"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	module := &Module{Security: securitySvc}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	req.RemoteAddr = "198.51.100.10:44121"
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
+	rec := httptest.NewRecorder()
+	module.SessionMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func TestSessionMiddlewareRejectsForwardedForFromUntrustedProxy(t *testing.T) {
+	ctx := context.Background()
+	securitySvc := newTestSecurityService(t, ctx)
+	if err := securitySvc.SetIPAllowlist(ctx, security.IPAllowlist{
+		Enabled:        true,
+		CIDRs:          []string{"203.0.113.7"},
+		TrustedProxies: []string{"198.51.100.10"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	module := &Module{Security: securitySvc}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	req.RemoteAddr = "198.51.100.11:44121"
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
+	rec := httptest.NewRecorder()
+	module.SessionMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
 func newTestSecurityService(t *testing.T, ctx context.Context) *security.Service {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file::memory:?cache=shared&_pragma=foreign_keys(1)&_time_format=sqlite")

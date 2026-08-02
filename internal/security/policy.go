@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -214,8 +215,9 @@ func normalizePolicy(p PasswordPolicy) PasswordPolicy {
 
 // IPAllowlist is the optional set of CIDRs the session middleware enforces.
 type IPAllowlist struct {
-	Enabled bool     `json:"enabled"`
-	CIDRs   []string `json:"cidrs"`
+	Enabled        bool     `json:"enabled"`
+	CIDRs          []string `json:"cidrs"`
+	TrustedProxies []string `json:"trusted_proxies"`
 }
 
 const ipAllowlistKey = "security.ip_allowlist"
@@ -242,12 +244,16 @@ func (s *Service) IPAllowlist(ctx context.Context) (IPAllowlist, error) {
 	if out.CIDRs == nil {
 		out.CIDRs = []string{}
 	}
+	if out.TrustedProxies == nil {
+		out.TrustedProxies = []string{}
+	}
 	return out, nil
 }
 
 // SetIPAllowlist persists the allowlist.
 func (s *Service) SetIPAllowlist(ctx context.Context, a IPAllowlist) error {
 	a.CIDRs = normalizeCIDRs(a.CIDRs)
+	a.TrustedProxies = normalizeCIDRs(a.TrustedProxies)
 	raw, err := json.Marshal(a)
 	if err != nil {
 		return err
@@ -270,23 +276,94 @@ func (s *Service) AllowsIP(ctx context.Context, rawIP string) (bool, error) {
 	if !a.Enabled {
 		return true, nil
 	}
+	return IPMatches(rawIP, a.CIDRs), nil
+}
+
+// RequestIP resolves the client IP for security decisions. Forwarded headers
+// are used only when the direct peer is explicitly configured as trusted.
+func (s *Service) RequestIP(ctx context.Context, r *http.Request) (string, error) {
+	a, err := s.IPAllowlist(ctx)
+	if err != nil {
+		return "", err
+	}
+	return ResolveRequestIP(r, a), nil
+}
+
+// ResolveRequestIP applies trusted-proxy client IP resolution to r.
+func ResolveRequestIP(r *http.Request, a IPAllowlist) string {
+	direct := directRequestIP(r)
+	if !IPMatches(direct, a.TrustedProxies) {
+		return direct
+	}
+	if f := firstForwardedFor(r.Header.Get("Forwarded")); f != "" {
+		return f
+	}
+	if f := r.Header.Get("X-Forwarded-For"); f != "" {
+		parts := strings.Split(f, ",")
+		if len(parts) > 0 {
+			if ip := strings.TrimSpace(parts[0]); ip != "" {
+				return ip
+			}
+		}
+	}
+	return direct
+}
+
+// IPMatches reports whether rawIP is contained in any IP or CIDR entry.
+func IPMatches(rawIP string, cidrs []string) bool {
+	host, _, err := net.SplitHostPort(rawIP)
+	if err == nil {
+		rawIP = host
+	}
 	ip := net.ParseIP(strings.TrimSpace(rawIP))
 	if ip == nil {
-		return false, nil
+		return false
 	}
-	for _, allowed := range a.CIDRs {
+	for _, allowed := range cidrs {
+		allowed = strings.TrimSpace(allowed)
 		if strings.Contains(allowed, "/") {
 			_, network, err := net.ParseCIDR(allowed)
 			if err == nil && network.Contains(ip) {
-				return true, nil
+				return true
 			}
 			continue
 		}
 		if other := net.ParseIP(allowed); other != nil && other.Equal(ip) {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
+}
+
+func directRequestIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func firstForwardedFor(raw string) string {
+	for _, part := range strings.Split(raw, ",") {
+		for _, kv := range strings.Split(part, ";") {
+			k, v, ok := strings.Cut(strings.TrimSpace(kv), "=")
+			if !ok || strings.ToLower(strings.TrimSpace(k)) != "for" {
+				continue
+			}
+			v = strings.Trim(strings.TrimSpace(v), `"`)
+			if strings.HasPrefix(v, "[") {
+				if end := strings.Index(v, "]"); end >= 0 {
+					v = v[1:end]
+				}
+			} else if host, _, err := net.SplitHostPort(v); err == nil {
+				v = host
+			}
+			if v != "" {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 func normalizeCIDRs(in []string) []string {

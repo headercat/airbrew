@@ -3,6 +3,7 @@ package security
 import (
 	"context"
 	"database/sql"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -80,6 +81,27 @@ func TestCheckLoginRateLimit(t *testing.T) {
 	}
 	if limit.Blocked {
 		t.Fatal("failures from one IP should not block a different IP")
+	}
+}
+
+func TestResolveRequestIPUsesForwardedHeadersOnlyForTrustedProxies(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "198.51.100.10:443"
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
+
+	if got := ResolveRequestIP(req, IPAllowlist{}); got != "198.51.100.10" {
+		t.Fatalf("untrusted proxy resolved IP = %q, want direct peer", got)
+	}
+
+	got := ResolveRequestIP(req, IPAllowlist{TrustedProxies: []string{"198.51.100.10"}})
+	if got != "203.0.113.7" {
+		t.Fatalf("trusted proxy resolved IP = %q, want forwarded client", got)
+	}
+
+	req.Header.Set("Forwarded", `for="[2001:db8::7]:443"`)
+	got = ResolveRequestIP(req, IPAllowlist{TrustedProxies: []string{"198.51.100.0/24"}})
+	if got != "2001:db8::7" {
+		t.Fatalf("trusted proxy Forwarded IP = %q, want IPv6 client", got)
 	}
 }
 

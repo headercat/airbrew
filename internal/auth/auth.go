@@ -7,9 +7,7 @@ package auth
 
 import (
 	"database/sql"
-	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/headercat/airbrew/internal/audit"
@@ -96,7 +94,12 @@ func (m *Module) allowIP(w http.ResponseWriter, r *http.Request) bool {
 	if m.Security == nil {
 		return true
 	}
-	ok, err := m.Security.AllowsIP(r.Context(), requestIP(r))
+	ip, err := m.Security.RequestIP(r.Context(), r)
+	if err != nil {
+		deny(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return false
+	}
+	ok, err := m.Security.AllowsIP(r.Context(), ip)
 	if err != nil {
 		deny(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return false
@@ -106,14 +109,6 @@ func (m *Module) allowIP(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
-}
-
-func requestIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
-	}
-	return strings.TrimSpace(r.RemoteAddr)
 }
 
 func deny(w http.ResponseWriter, status int, code, desc string) {

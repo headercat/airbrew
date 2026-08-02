@@ -38,6 +38,7 @@ export default function AdminSecurity() {
   const [policy, setPolicy] = useState<PasswordPolicy | null>(null);
   const [allowlist, setAllowlist] = useState<IPAllowlist | null>(null);
   const [cidrsText, setCidrsText] = useState("");
+  const [trustedProxiesText, setTrustedProxiesText] = useState("");
   const [attempts, setAttempts] = useState<LoginAttempt[] | null>(null);
   const [loginResult, setLoginResult] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
@@ -55,6 +56,7 @@ export default function AdminSecurity() {
       setPolicy(nextPolicy);
       setAllowlist(nextAllowlist);
       setCidrsText(nextAllowlist.cidrs.join("\n"));
+      setTrustedProxiesText((nextAllowlist.trusted_proxies ?? []).join("\n"));
       setError(null);
     } catch (err) {
       setError(
@@ -118,13 +120,18 @@ export default function AdminSecurity() {
       .split(/\r?\n/)
       .map((v) => v.trim())
       .filter(Boolean);
+    const trustedProxies = trustedProxiesText
+      .split(/\r?\n/)
+      .map((v) => v.trim())
+      .filter(Boolean);
     try {
       const saved = await api.putRaw<IPAllowlist>(
         "/api/admin/security/ip-allowlist",
-        { ...allowlist, cidrs },
+        { ...allowlist, cidrs, trusted_proxies: trustedProxies },
       );
       setAllowlist(saved);
       setCidrsText(saved.cidrs.join("\n"));
+      setTrustedProxiesText((saved.trusted_proxies ?? []).join("\n"));
       setNotice(t("admin.security.saved"));
       setError(null);
     } catch (err) {
@@ -360,6 +367,22 @@ export default function AdminSecurity() {
               placeholder={"192.168.0.0/24\n10.0.0.5"}
               value={cidrsText}
               onChange={(e) => setCidrsText(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2 px-4 py-5 lg:px-6">
+            <div>
+              <p className="text-[13px] font-medium">
+                {t("admin.security.trustedProxies")}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {t("admin.security.trustedProxiesDesc")}
+              </p>
+            </div>
+            <Textarea
+              className="min-h-20 font-mono text-xs"
+              placeholder={"127.0.0.1\n10.0.0.0/8"}
+              value={trustedProxiesText}
+              onChange={(e) => setTrustedProxiesText(e.target.value)}
             />
           </div>
         </CardContent>

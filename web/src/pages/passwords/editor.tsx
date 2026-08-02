@@ -39,6 +39,7 @@ import {
   PRESETS,
   WrongMasterPassword,
   useVault,
+  type DecryptedItem,
   type DraftItem,
   type Field,
   type FieldKind,
@@ -73,6 +74,8 @@ export default function PasswordEditor() {
   } = useVault();
 
   const existing = items.find((it) => it.id === id);
+  const [unlockedItem, setUnlockedItem] = useState<DecryptedItem | null>(null);
+  const editableItem = unlockedItem ?? existing;
 
   const [type, setType] = useState<VaultItemType>("login");
   const [name, setName] = useState("");
@@ -89,17 +92,19 @@ export default function PasswordEditor() {
 
   // Hydrate form when editing.
   useEffect(() => {
-    if (!existing) return;
-    setType(existing.type);
-    setName(existing.name);
+    if (!editableItem) return;
+    setType(editableItem.type);
+    setName(editableItem.name);
     setFields(
-      existing.fields.length ? existing.fields.map((f) => ({ ...f })) : [],
+      editableItem.fields.length
+        ? editableItem.fields.map((f) => ({ ...f }))
+        : [],
     );
-    setNotes(existing.notes);
-    setFolderId(existing.folderId);
-    setFavorite(existing.favorite);
-    setReprompt(existing.reprompt);
-  }, [existing]);
+    setNotes(editableItem.notes);
+    setFolderId(editableItem.folderId);
+    setFavorite(editableItem.favorite);
+    setReprompt(editableItem.reprompt);
+  }, [editableItem]);
 
   // Redirect when the vault is no longer unlocked. Done in an effect (not
   // during render) to avoid a state update mid-render.
@@ -126,8 +131,9 @@ export default function PasswordEditor() {
       <RepromptEditorGate
         onCancel={() => navigate(`/passwords/${existing.id}`)}
         onVerify={async (password) => {
-          const ok = await unlockItemDetails(existing.id, password);
-          if (!ok) throw new WrongMasterPassword();
+          const unlocked = await unlockItemDetails(existing.id, password);
+          if (!unlocked) throw new WrongMasterPassword();
+          setUnlockedItem(unlocked);
           setRepromptVerified(true);
         }}
       />
@@ -178,8 +184,8 @@ export default function PasswordEditor() {
     setConflict(null);
     setBusy(true);
     try {
-      if (isEdit && existing) {
-        await updateItem(existing.id, buildDraft(), existing.revision);
+      if (isEdit && editableItem) {
+        await updateItem(editableItem.id, buildDraft(), editableItem.revision);
       } else {
         await createItem(buildDraft());
       }
@@ -203,12 +209,12 @@ export default function PasswordEditor() {
   }
 
   async function onDelete() {
-    if (!existing) return;
+    if (!editableItem) return;
     if (!confirm(t("passwords.editor.confirmDelete"))) return;
     setBusy(true);
     setError(null);
     try {
-      await deleteItem(existing.id, existing.revision);
+      await deleteItem(editableItem.id, editableItem.revision);
       navigate("/passwords");
     } catch (err) {
       setError(
@@ -416,7 +422,9 @@ export default function PasswordEditor() {
         </form>
       </Card>
 
-      {isEdit && existing && <AttachmentsCard itemId={existing.id} editable />}
+      {isEdit && editableItem && (
+        <AttachmentsCard itemId={editableItem.id} editable />
+      )}
     </PageWrapper>
   );
 }

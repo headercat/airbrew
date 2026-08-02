@@ -75,6 +75,7 @@ export default function PasswordView() {
   const [repromptBusy, setRepromptBusy] = useState(false);
   const [repromptError, setRepromptError] = useState<string | null>(null);
   const [repromptPw, setRepromptPw] = useState("");
+  const [revealedItem, setRevealedItem] = useState<DecryptedItem | null>(null);
 
   if (status !== "unlocked") return null;
 
@@ -91,6 +92,7 @@ export default function PasswordView() {
   }
 
   const sensitiveGateActive = item.reprompt && !repromptVerified;
+  const visibleItem = revealedItem ?? item;
 
   async function onDelete() {
     if (!item) return;
@@ -181,9 +183,16 @@ export default function PasswordView() {
                     setRepromptBusy(true);
                     setRepromptError(null);
                     try {
-                      const ok = await unlockItemDetails(item.id, repromptPw);
-                      if (ok) setRepromptVerified(true);
-                      else setRepromptError(t("passwords.unlock.wrong"));
+                      const unlocked = await unlockItemDetails(
+                        item.id,
+                        repromptPw,
+                      );
+                      if (unlocked) {
+                        setRevealedItem(unlocked);
+                        setRepromptVerified(true);
+                      } else {
+                        setRepromptError(t("passwords.unlock.wrong"));
+                      }
                     } finally {
                       setRepromptBusy(false);
                       setRepromptPw("");
@@ -202,18 +211,18 @@ export default function PasswordView() {
             <p className="rounded-md border border-dashed bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
               {t("passwords.view.lockedContent")}
             </p>
-          ) : item.fields.length === 0 ? (
+          ) : visibleItem.fields.length === 0 ? (
             <p className="rounded-md border border-dashed bg-muted/30 px-3 py-6 text-center text-xs text-muted-foreground">
               {t("passwords.view.noFields")}
             </p>
           ) : (
-            item.fields.map((f) => <FieldRow key={f.id} field={f} />)
+            visibleItem.fields.map((f) => <FieldRow key={f.id} field={f} />)
           )}
         </CardContent>
       </Card>
 
       {/* notes */}
-      {!sensitiveGateActive && item.notes && (
+      {!sensitiveGateActive && visibleItem.notes && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
@@ -221,7 +230,7 @@ export default function PasswordView() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="whitespace-pre-wrap text-sm">{item.notes}</p>
+            <p className="whitespace-pre-wrap text-sm">{visibleItem.notes}</p>
           </CardContent>
         </Card>
       )}

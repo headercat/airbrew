@@ -232,9 +232,7 @@ function VaultListView() {
     if (!q) return items;
     return items.filter((it) => {
       if (it.name.toLowerCase().includes(q)) return true;
-      if (it.reprompt) {
-        return it.fields.some((f) => f.name.toLowerCase().includes(q));
-      }
+      if (it.reprompt) return false;
       return it.fields.some(
         (f) =>
           f.name.toLowerCase().includes(q) || f.value.toLowerCase().includes(q),

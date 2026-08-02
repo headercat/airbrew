@@ -375,7 +375,10 @@ type VaultContextValue = {
   // matches the key currently in memory. Used by the "reprompt" feature so a
   // sensitive item is only revealed after re-entering the master password.
   verifyMasterPassword: (password: string) => Promise<boolean>;
-  unlockItemDetails: (itemId: string, password: string) => Promise<boolean>;
+  unlockItemDetails: (
+    itemId: string,
+    password: string,
+  ) => Promise<DecryptedItem | null>;
   // exportBundle / importBundle move encrypted backups between vaults by
   // unlocking the source envelope and re-encrypting under the current vault key.
   exportBundle: () => Promise<VApi.ExportBundle>;
@@ -917,22 +920,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   );
 
   const unlockItemDetails = useCallback(
-    async (itemId: string, password: string): Promise<boolean> => {
+    async (itemId: string, password: string): Promise<DecryptedItem | null> => {
       const key = keyRef.current;
-      if (!key) return false;
+      if (!key) return null;
       const ok = await verifyMasterPassword(password);
-      if (!ok) return false;
+      if (!ok) return null;
       const raw = rawItemsRef.current.get(itemId);
-      if (!raw) return false;
-      const dec = await decryptItem(key, raw, { includeSensitive: true });
-      commitItems(
-        itemsRef.current
-          .map((it) => (it.id === itemId ? dec : it))
-          .sort((a, b) => a.name.localeCompare(b.name)),
-      );
-      return true;
+      if (!raw) return null;
+      return decryptItem(key, raw, { includeSensitive: true });
     },
-    [commitItems, verifyMasterPassword],
+    [verifyMasterPassword],
   );
 
   const exportBundle = useCallback(async () => {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -202,13 +203,16 @@ func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
 	var body io.Reader
 
 	if mt := r.Header.Get("Content-Type"); strings.HasPrefix(mt, "multipart/form-data") {
+		// Honour the per-upload limit; when unlimited (>0 means a cap here too)
+		// fall back to a generous 1 GiB so the parser doesn't reject big files
+		// the service would otherwise accept. The service's streaming counter is
+		// the real backstop.
+		parseMax := int64(1 << 30)
 		if max := h.svc.Config().MaxUploadBytes; max > 0 {
-			_ = r.ParseMultipartForm(max + (1 << 20))
-		} else {
-			_ = r.ParseMultipartForm(32 << 20)
+			parseMax = max + (1 << 20)
 		}
-		if r.MultipartForm == nil {
-			respondErr(w, http.StatusBadRequest, "invalid_request", "could not parse multipart")
+		if err := r.ParseMultipartForm(parseMax); err != nil {
+			respondErr(w, http.StatusBadRequest, "invalid_request", "could not parse multipart: "+err.Error())
 			return
 		}
 		f, hdr, err := r.FormFile("file")
@@ -305,6 +309,10 @@ func (h *Handler) patchFile(w http.ResponseWriter, r *http.Request) {
 	var req patchFileReq
 	if err := decodeJSON(r, &req); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if req.Name == nil && req.ParentID == nil && req.Starred == nil {
+		respondErr(w, http.StatusBadRequest, "invalid_request", "at least one of name, parent_id or starred is required")
 		return
 	}
 	id := r.PathValue("id")
@@ -443,7 +451,9 @@ func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// disposition builds a Content-Disposition header, URL-safe quoting the name.
+// disposition builds a Content-Disposition header with both an ASCII filename
+// fallback and a UTF-8 filename* (RFC 6266) so non-ASCII names survive Safari
+// and strict download managers.
 func disposition(name string, inline bool) string {
 	if inline {
 		return "inline"
@@ -452,7 +462,8 @@ func disposition(name string, inline bool) string {
 	if clean == "" {
 		clean = "file"
 	}
-	return "attachment; filename=\"" + clean + "\""
+	ascii := strings.ToValidUTF8(clean, "_")
+	return "attachment; filename=\"" + ascii + "\"; filename*=UTF-8''" + url.PathEscape(name)
 }
 
 func (h *Handler) emptyTrash(w http.ResponseWriter, r *http.Request) {

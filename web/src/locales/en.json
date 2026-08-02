@@ -2,6 +2,7 @@
   "common": {
     "back": "Back",
     "save": "Save",
+    "edit": "Edit",
     "loading": "Loading…",
     "open": "Open",
     "search": "Search",
@@ -138,7 +139,11 @@
     "tools": "tools",
     "tokens": "Tokens: {{prompt}} in + {{completion}} out",
     "streamError": "⚠️ stream error: {{msg}}",
-    "confirmDelete": "Delete this conversation?"
+    "confirmDelete": "Delete this conversation?",
+    "copy": "Copy",
+    "regenerate": "Regenerate",
+    "editTitle": "Edit title",
+    "generatingTitle": "Generating title…"
   },
   "admin": {
     "title": "Admin Console",
@@ -603,6 +608,7 @@
     "download": "Download",
     "downloadFailed": "Download failed.",
     "file": "file",
-    "expiresOn": "Expires {{date}}"
+    "expiresOn": "Expires {{date}}",
+    "wrongPassword": "Incorrect password. Please try again."
   }
 }

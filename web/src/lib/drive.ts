@@ -108,6 +108,20 @@ export const drive = {
     }),
   downloadURL: (id: string, inline = false) =>
     `/api/drive/files/${id}/download${inline ? "?inline=true" : ""}`,
+  // Fetches a file (session-scoped) and resolves to an object URL the caller
+  // can hand to a transient <a download>. Keeps errors in-app instead of
+  // navigating the SPA to a raw JSON error body.
+  downloadBlob: async (id: string) => {
+    const res = await fetch(`/api/drive/files/${id}/download`, {
+      credentials: "same-origin",
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      const body = text ? JSON.parse(text) : null;
+      throw body ?? { error: "http_error", status: res.status };
+    }
+    return URL.createObjectURL(await res.blob());
+  },
   emptyTrash: () => api.post<{ ok: boolean }>("/api/drive/trash/empty"),
   usage: () => api.get<DriveUsage>("/api/drive/usage"),
 

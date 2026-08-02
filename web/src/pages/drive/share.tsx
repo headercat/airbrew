@@ -15,6 +15,7 @@ export default function DriveSharePage() {
   const [meta, setMeta] = useState<DriveShareMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [needsPw, setNeedsPw] = useState(false);
+  const [pwWrong, setPwWrong] = useState(false);
   const [pw, setPw] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -27,10 +28,14 @@ export default function DriveSharePage() {
       .then((m) => {
         setMeta(m);
         setNeedsPw(false);
+        setPwWrong(false);
       })
       .catch((e) => {
         if (isApiError(e) && (e as ApiError).error === "password_required") {
           setNeedsPw(true);
+          // Distinguish a fresh prompt from a rejected attempt: if we sent a
+          // password, this is a wrong-password; otherwise it's the first view.
+          setPwWrong(!!password);
           setMeta(null);
         } else if (isApiError(e) && (e as ApiError).error === "expired") {
           setError(t("share.expired"));
@@ -94,6 +99,11 @@ export default function DriveSharePage() {
             }}
             className="space-y-3"
           >
+            {pwWrong && (
+              <p className="text-sm text-destructive">
+                {t("share.wrongPassword")}
+              </p>
+            )}
             <Input
               type="password"
               autoFocus

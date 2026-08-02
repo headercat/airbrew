@@ -233,8 +233,19 @@ export default function DrivePage() {
     }
   };
 
-  const download = (n: DriveNode) => {
-    window.location.href = drive.downloadURL(n.id);
+  const download = async (n: DriveNode) => {
+    try {
+      const url = await drive.downloadBlob(n.id);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = n.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (e) {
+      setError(errMsg(e));
+    }
   };
 
   if (status && !status.enabled) {
@@ -1091,7 +1102,7 @@ function ShareModal({
             {t("drive.sharePassword")}
           </label>
           <Input
-            type="text"
+            type="password"
             value={pw}
             onChange={(e) => setPw(e.target.value)}
             placeholder={t("drive.optional")}

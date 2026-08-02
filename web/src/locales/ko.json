@@ -2,6 +2,7 @@
   "common": {
     "back": "뒤로",
     "save": "저장",
+    "edit": "편집",
     "loading": "로딩 중…",
     "open": "열기",
     "search": "검색",
@@ -138,7 +139,11 @@
     "tools": "도구",
     "tokens": "토큰: {{prompt}} 입력 + {{completion}} 출력",
     "streamError": "⚠️ 스트림 오류: {{msg}}",
-    "confirmDelete": "이 대화를 삭제하시겠습니까?"
+    "confirmDelete": "이 대화를 삭제하시겠습니까?",
+    "copy": "복사",
+    "regenerate": "다시 생성",
+    "editTitle": "제목 편집",
+    "generatingTitle": "제목 생성 중…"
   },
   "admin": {
     "title": "관리 콘솔",
@@ -603,6 +608,7 @@
     "download": "다운로드",
     "downloadFailed": "다운로드에 실패했습니다.",
     "file": "파일",
-    "expiresOn": "만료: {{date}}"
+    "expiresOn": "만료: {{date}}",
+    "wrongPassword": "비밀번호가 틀렸습니다. 다시 시도해주세요."
   }
 }

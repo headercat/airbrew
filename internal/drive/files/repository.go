@@ -287,11 +287,11 @@ func (r *Repository) Trash(ctx context.Context, userID, id string) error {
 		  SELECT id FROM drive_nodes WHERE id = ? AND user_id = ? AND deleted_at IS NULL
 		  UNION ALL
 		  SELECT c.id FROM drive_nodes c JOIN subtree ON c.parent_id = subtree.id
-		    WHERE c.deleted_at IS NULL
+		    WHERE c.deleted_at IS NULL AND c.user_id = ?
 		)
 		UPDATE drive_nodes SET deleted_at = ?, updated_at = ?
 		WHERE id IN (SELECT id FROM subtree)
-	`, id, userID, now, now)
+	`, id, userID, userID, now, now)
 	if err != nil {
 		return fmt.Errorf("drive: trash: %w", err)
 	}
@@ -319,10 +319,11 @@ func (r *Repository) Restore(ctx context.Context, userID, id string) error {
 		  SELECT id FROM drive_nodes WHERE id = ? AND user_id = ?
 		  UNION ALL
 		  SELECT c.id FROM drive_nodes c JOIN subtree ON c.parent_id = subtree.id
+		    WHERE c.user_id = ?
 		)
 		UPDATE drive_nodes SET deleted_at = NULL, updated_at = ?
 		WHERE id IN (SELECT id FROM subtree) AND deleted_at = ?
-	`, id, userID, now, marker)
+	`, id, userID, userID, now, marker)
 	if err != nil {
 		return fmt.Errorf("drive: restore: %w", err)
 	}
@@ -334,15 +335,24 @@ func (r *Repository) Restore(ctx context.Context, userID, id string) error {
 
 // DeletePermanent hard-deletes a node and its subtree. It returns the blob
 // paths that were dropped so the caller can purge them after commit succeeds.
+// The collect + delete run in one transaction so the blob list exactly matches
+// the deleted rows (no concurrent Restore can interleave).
 func (r *Repository) DeletePermanent(ctx context.Context, userID, id string) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("drive: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck
+
+	rows, err := tx.QueryContext(ctx, `
 		WITH RECURSIVE subtree(id) AS (
 		  SELECT id FROM drive_nodes WHERE id = ? AND user_id = ?
 		  UNION ALL
 		  SELECT c.id FROM drive_nodes c JOIN subtree ON c.parent_id = subtree.id
+		    WHERE c.user_id = ?
 		)
-		SELECT COALESCE(blob_path,'') FROM drive_nodes WHERE id IN (SELECT id FROM subtree) AND blob_path IS NOT NULL
-	`, id, userID)
+		SELECT COALESCE(blob_path,'') FROM drive_nodes WHERE id IN (SELECT id FROM subtree) AND blob_path IS NOT NULL`,
+		id, userID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("drive: collect blobs: %w", err)
 	}
@@ -357,33 +367,42 @@ func (r *Repository) DeletePermanent(ctx context.Context, userID, id string) ([]
 			paths = append(paths, p)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
 	rows.Close()
 
-	res, err := r.db.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 		WITH RECURSIVE subtree(id) AS (
 		  SELECT id FROM drive_nodes WHERE id = ? AND user_id = ?
 		  UNION ALL
 		  SELECT c.id FROM drive_nodes c JOIN subtree ON c.parent_id = subtree.id
+		    WHERE c.user_id = ?
 		)
-		DELETE FROM drive_nodes WHERE id IN (SELECT id FROM subtree)
-	`, id, userID)
+		DELETE FROM drive_nodes WHERE id IN (SELECT id FROM subtree)`,
+		id, userID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("drive: permanent delete: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, ErrNotFound
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("drive: commit permanent delete: %w", err)
+	}
 	return paths, nil
 }
 
 // EmptyTrash hard-deletes every trashed node for a user, returning dropped blob
-// paths.
+// paths. The collect + delete run in one transaction so a concurrent Restore
+// cannot resurrect a row whose blob is about to be purged.
 func (r *Repository) EmptyTrash(ctx context.Context, userID string) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx,
-		"SELECT COALESCE(blob_path,'') FROM drive_nodes WHERE user_id = ? AND deleted_at IS NOT NULL AND blob_path IS NOT NULL", userID)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("drive: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck
+
+	rows, err := tx.QueryContext(ctx,
+		"SELECT COALESCE(blob_path,'') FROM drive_nodes WHERE user_id = ? AND deleted_at IS NOT NULL AND blob_path IS NOT NULL",
+		userID)
 	if err != nil {
 		return nil, err
 	}
@@ -400,9 +419,12 @@ func (r *Repository) EmptyTrash(ctx context.Context, userID string) ([]string, e
 	}
 	rows.Close()
 
-	if _, err := r.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		"DELETE FROM drive_nodes WHERE user_id = ? AND deleted_at IS NOT NULL", userID); err != nil {
 		return nil, fmt.Errorf("drive: empty trash: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("drive: commit empty trash: %w", err)
 	}
 	return paths, nil
 }
@@ -564,7 +586,8 @@ func (r *Repository) ListSharesWithNode(ctx context.Context, userID string) ([]*
 	return out, rows.Err()
 }
 
-// ListSharesByNode returns the active shares for a node.
+// ListSharesByNode returns all shares for a node (active and revoked), so the
+// owner's share dialog can list and revoke them.
 func (r *Repository) ListSharesByNode(ctx context.Context, userID, nodeID string) ([]*Share, error) {
 	rows, err := r.db.QueryContext(ctx,
 		"SELECT "+shareColumns+" FROM drive_shares WHERE user_id = ? AND node_id = ? ORDER BY created_at DESC",

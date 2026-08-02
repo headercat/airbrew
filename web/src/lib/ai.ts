@@ -295,7 +295,17 @@ export async function streamChat(opts: {
       const frame = buf.slice(0, sep);
       buf = buf.slice(sep + 2);
       const ev = parseFrame(frame);
-      if (ev) onEvent(ev);
+      if (ev) {
+        onEvent(ev);
+        if (ev.kind === "error") {
+          const err: ApiError = {
+            error: ev.error.code,
+            error_description: ev.error.description,
+            status: 0,
+          };
+          throw err;
+        }
+      }
     }
   }
 }

@@ -118,6 +118,15 @@ type LLMClient interface {
 	Model() string
 }
 
+func sendDelta(ctx context.Context, out chan<- Delta, d Delta) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case out <- d:
+		return true
+	}
+}
+
 // Config holds the values needed to build a driver. APIKey is already
 // decrypted by the caller.
 type Config struct {

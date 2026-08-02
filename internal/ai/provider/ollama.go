@@ -54,13 +54,13 @@ func (c *ollamaClient) ChatStream(ctx context.Context, req Request) <-chan Delta
 		defer close(out)
 		body, err := c.buildBody(req)
 		if err != nil {
-			out <- Delta{Kind: DeltaError, Err: err}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})
 			return
 		}
 		url := strings.TrimRight(c.cfg.BaseURL, "/") + "/api/chat"
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
-			out <- Delta{Kind: DeltaError, Err: err}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})
 			return
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -68,12 +68,12 @@ func (c *ollamaClient) ChatStream(ctx context.Context, req Request) <-chan Delta
 
 		resp, err := c.http.Do(httpReq)
 		if err != nil {
-			out <- Delta{Kind: DeltaError, Err: err}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})
 			return
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode/100 != 2 {
-			out <- Delta{Kind: DeltaError, Err: c.httpError(resp)}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: c.httpError(resp)})
 			return
 		}
 		c.streamNDJSON(ctx, resp.Body, out)
@@ -157,17 +157,17 @@ func (c *ollamaClient) streamNDJSON(ctx context.Context, body io.Reader, out cha
 	for {
 		select {
 		case <-ctx.Done():
-			out <- Delta{Kind: DeltaError, Err: ctx.Err()}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: ctx.Err()})
 			return
 		default:
 		}
 		line, err := br.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				out <- Delta{Kind: DeltaError, Err: io.ErrUnexpectedEOF}
+				_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: io.ErrUnexpectedEOF})
 				return
 			}
-			out <- Delta{Kind: DeltaError, Err: err}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})
 			return
 		}
 		line = strings.TrimSpace(line)
@@ -179,28 +179,34 @@ func (c *ollamaClient) streamNDJSON(ctx context.Context, body io.Reader, out cha
 			continue
 		}
 		if ch.Error != "" {
-			out <- Delta{Kind: DeltaError, Err: fmt.Errorf("ollama stream error: %s", ch.Error)}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: fmt.Errorf("ollama stream error: %s", ch.Error)})
 			return
 		}
 		if ch.Message.Content != "" {
-			out <- Delta{Kind: DeltaContent, Content: ch.Message.Content}
+			if !sendDelta(ctx, out, Delta{Kind: DeltaContent, Content: ch.Message.Content}) {
+				return
+			}
 		}
 		for _, tc := range ch.Message.ToolCalls {
-			out <- Delta{
+			if !sendDelta(ctx, out, Delta{
 				Kind: DeltaToolCallStart, Index: toolIdx,
 				ToolCallID: fmt.Sprintf("call_%d", toolIdx),
 				ToolName:   tc.Function.Name,
+			}) {
+				return
 			}
-			out <- Delta{
+			if !sendDelta(ctx, out, Delta{
 				Kind: DeltaToolCallArgs, Index: toolIdx,
 				Content: tc.Function.Arguments,
+			}) {
+				return
 			}
 			toolIdx++
 		}
 		if ch.Done {
-			out <- Delta{Kind: DeltaDone, Usage: &Usage{
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaDone, Usage: &Usage{
 				PromptTokens: ch.PromptEval, CompletionTokens: ch.Completion,
-			}}
+			}})
 			return
 		}
 	}

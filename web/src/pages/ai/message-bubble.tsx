@@ -5,18 +5,12 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, Copy, Loader2, RotateCcw, Wrench } from "lucide-react";
+import { Check, Copy, Loader2, Wrench } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import type { ChatMessage } from "./index";
 
-export function MessageBubble({
-  message,
-  onRegenerate,
-}: {
-  message: ChatMessage;
-  onRegenerate?: () => void;
-}) {
+export function MessageBubble({ message }: { message: ChatMessage }) {
   const { t } = useTranslation();
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
@@ -78,9 +72,7 @@ export function MessageBubble({
           </div>
         ) : null}
 
-        {!message.streaming && (
-          <BubbleActions message={message} onRegenerate={onRegenerate} />
-        )}
+        {!message.streaming && <BubbleActions message={message} />}
       </div>
     </div>
   );
@@ -124,13 +116,7 @@ function ToolNoticeView({
   );
 }
 
-function BubbleActions({
-  message,
-  onRegenerate,
-}: {
-  message: ChatMessage;
-  onRegenerate?: () => void;
-}) {
+function BubbleActions({ message }: { message: ChatMessage }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
@@ -154,16 +140,6 @@ function BubbleActions({
       >
         {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
       </button>
-      {onRegenerate && message.role === "assistant" && (
-        <button
-          type="button"
-          onClick={onRegenerate}
-          aria-label={t("ai.regenerate")}
-          className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
-        >
-          <RotateCcw className="h-3 w-3" />
-        </button>
-      )}
     </div>
   );
 }

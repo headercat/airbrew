@@ -57,13 +57,13 @@ func (c *anthropicClient) ChatStream(ctx context.Context, req Request) <-chan De
 		defer close(out)
 		body, err := c.buildBody(req)
 		if err != nil {
-			out <- Delta{Kind: DeltaError, Err: err}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})
 			return
 		}
 		url := strings.TrimRight(c.cfg.BaseURL, "/") + "/v1/messages"
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
-			out <- Delta{Kind: DeltaError, Err: err}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})
 			return
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -73,12 +73,12 @@ func (c *anthropicClient) ChatStream(ctx context.Context, req Request) <-chan De
 
 		resp, err := c.http.Do(httpReq)
 		if err != nil {
-			out <- Delta{Kind: DeltaError, Err: err}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})
 			return
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode/100 != 2 {
-			out <- Delta{Kind: DeltaError, Err: c.httpError(resp)}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: c.httpError(resp)})
 			return
 		}
 		c.streamSSE(ctx, resp.Body, out)
@@ -279,17 +279,17 @@ func (c *anthropicClient) streamSSE(ctx context.Context, body io.Reader, out cha
 	for {
 		select {
 		case <-ctx.Done():
-			out <- Delta{Kind: DeltaError, Err: ctx.Err()}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: ctx.Err()})
 			return
 		default:
 		}
 		line, err := br.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				out <- Delta{Kind: DeltaError, Err: io.ErrUnexpectedEOF}
+				_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: io.ErrUnexpectedEOF})
 				return
 			}
-			out <- Delta{Kind: DeltaError, Err: err}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})
 			return
 		}
 		line = strings.TrimRight(line, "\r\n")
@@ -303,7 +303,7 @@ func (c *anthropicClient) streamSSE(ctx context.Context, body io.Reader, out cha
 		}
 		switch ev.Type {
 		case "error":
-			out <- Delta{Kind: DeltaError, Err: fmt.Errorf("anthropic stream error: %s", ev.Error.Message)}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: fmt.Errorf("anthropic stream error: %s", ev.Error.Message)})
 			return
 		case "message_start":
 			if ev.Message.Usage.InputTokens > 0 {
@@ -312,9 +312,11 @@ func (c *anthropicClient) streamSSE(ctx context.Context, body io.Reader, out cha
 		case "content_block_start":
 			if ev.ContentBlock.Type == "tool_use" {
 				toolMeta[ev.Index] = ev.ContentBlock
-				out <- Delta{
+				if !sendDelta(ctx, out, Delta{
 					Kind: DeltaToolCallStart, Index: ev.Index,
 					ToolCallID: ev.ContentBlock.ID, ToolName: ev.ContentBlock.Name,
+				}) {
+					return
 				}
 			}
 		case "content_block_delta":
@@ -324,9 +326,13 @@ func (c *anthropicClient) streamSSE(ctx context.Context, body io.Reader, out cha
 			}
 			switch d.Type {
 			case "text_delta":
-				out <- Delta{Kind: DeltaContent, Content: d.Text}
+				if !sendDelta(ctx, out, Delta{Kind: DeltaContent, Content: d.Text}) {
+					return
+				}
 			case "input_json_delta":
-				out <- Delta{Kind: DeltaToolCallArgs, Index: ev.Index, Content: d.PartialJSON}
+				if !sendDelta(ctx, out, Delta{Kind: DeltaToolCallArgs, Index: ev.Index, Content: d.PartialJSON}) {
+					return
+				}
 			}
 		case "message_delta":
 			// ev.Delta carries a stop_reason; ev.Message.Usage carries the
@@ -344,9 +350,9 @@ func (c *anthropicClient) streamSSE(ctx context.Context, body io.Reader, out cha
 				outputTokens = md.Usage.OutputTokens
 			}
 		case "message_stop":
-			out <- Delta{Kind: DeltaDone, Usage: &Usage{
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaDone, Usage: &Usage{
 				PromptTokens: inputTokens, CompletionTokens: outputTokens,
-			}}
+			}})
 			return
 		}
 	}

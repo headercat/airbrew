@@ -236,6 +236,10 @@ export default function AIPage() {
       });
     } catch (err) {
       if (!ctrl.signal.aborted) {
+        if (isApiError(err)) {
+          setError(fmtErr(err));
+          return;
+        }
         setError(fmtErr(err));
         setMessages((prev) =>
           prev.map((m) =>
@@ -540,27 +544,31 @@ function upsertToolNotice(
 
 function normalizeMessages(messages: Message[]): ChatMessage[] {
   const out: ChatMessage[] = [];
-  const toolByID = new Map<string, Message>();
-  for (const msg of messages) {
-    if (msg.role === "tool" && msg.tool_call_id) {
-      toolByID.set(msg.tool_call_id, msg);
-    }
-  }
-  for (const msg of messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
     if (msg.role === "tool") continue;
-    const toolNotices =
-      msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0
-        ? msg.tool_calls.map((tc) => {
-            const tool = toolByID.get(tc.id);
-            return {
-              id: tc.id,
-              name: tc.name,
-              args: tc.args,
-              result: tool?.content ?? "",
-              pending: !tool,
-            };
-          })
-        : undefined;
+    let toolNotices: ToolNotice[] | undefined;
+    if (
+      msg.role === "assistant" &&
+      msg.tool_calls &&
+      msg.tool_calls.length > 0
+    ) {
+      toolNotices = msg.tool_calls.map((tc, offset) => {
+        const tool = messages[i + 1 + offset];
+        const matched =
+          tool?.role === "tool" && tool.tool_call_id === tc.id
+            ? tool
+            : undefined;
+        return {
+          id: tc.id,
+          name: tc.name,
+          args: tc.args,
+          result: matched?.content ?? "",
+          pending: !matched,
+        };
+      });
+      i += toolNotices.filter((notice) => !notice.pending).length;
+    }
     out.push({ ...msg, toolNotices });
   }
   return out;

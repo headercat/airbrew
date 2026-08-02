@@ -58,13 +58,13 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request) <-chan Delta
 		defer close(out)
 		body, err := c.buildBody(req)
 		if err != nil {
-			out <- Delta{Kind: DeltaError, Err: err}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})
 			return
 		}
 		url := strings.TrimRight(c.cfg.BaseURL, "/") + "/chat/completions"
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
-			out <- Delta{Kind: DeltaError, Err: err}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})
 			return
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -73,12 +73,12 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request) <-chan Delta
 
 		resp, err := c.http.Do(httpReq)
 		if err != nil {
-			out <- Delta{Kind: DeltaError, Err: err}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})
 			return
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode/100 != 2 {
-			out <- Delta{Kind: DeltaError, Err: c.httpError(resp)}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: c.httpError(resp)})
 			return
 		}
 		c.streamSSE(ctx, resp.Body, out)
@@ -170,17 +170,17 @@ func (c *openAIClient) streamSSE(ctx context.Context, body io.Reader, out chan<-
 	for {
 		select {
 		case <-ctx.Done():
-			out <- Delta{Kind: DeltaError, Err: ctx.Err()}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: ctx.Err()})
 			return
 		default:
 		}
 		line, err := br.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				out <- Delta{Kind: DeltaError, Err: io.ErrUnexpectedEOF}
+				_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: io.ErrUnexpectedEOF})
 				return
 			}
-			out <- Delta{Kind: DeltaError, Err: err}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})
 			return
 		}
 		line = strings.TrimRight(line, "\r\n")
@@ -189,7 +189,7 @@ func (c *openAIClient) streamSSE(ctx context.Context, body io.Reader, out chan<-
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
-			out <- Delta{Kind: DeltaDone}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaDone})
 			return
 		}
 		var chunk openAIChunk
@@ -197,14 +197,14 @@ func (c *openAIClient) streamSSE(ctx context.Context, body io.Reader, out chan<-
 			continue // tolerate keep-alive noise
 		}
 		if chunk.Error != nil {
-			out <- Delta{Kind: DeltaError, Err: fmt.Errorf("openai stream error: %s", chunk.Error.Message)}
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: fmt.Errorf("openai stream error: %s", chunk.Error.Message)})
 			return
 		}
 		if chunk.Usage != nil {
-			out <- Delta{Kind: DeltaDone, Usage: &Usage{
+			_ = sendDelta(ctx, out, Delta{Kind: DeltaDone, Usage: &Usage{
 				PromptTokens:     chunk.Usage.PromptTokens,
 				CompletionTokens: chunk.Usage.CompletionTokens,
-			}}
+			}})
 			return
 		}
 		if len(chunk.Choices) == 0 {
@@ -212,7 +212,9 @@ func (c *openAIClient) streamSSE(ctx context.Context, body io.Reader, out chan<-
 		}
 		ch := chunk.Choices[0]
 		if ch.Delta.Content != "" {
-			out <- Delta{Kind: DeltaContent, Content: ch.Delta.Content}
+			if !sendDelta(ctx, out, Delta{Kind: DeltaContent, Content: ch.Delta.Content}) {
+				return
+			}
 		}
 		for _, tcd := range ch.Delta.ToolCalls {
 			idx := tcd.Index
@@ -234,13 +236,17 @@ func (c *openAIClient) streamSSE(ctx context.Context, body io.Reader, out chan<-
 				// First sight of this call: announce it once we know the id.
 				if rc.id != "" && !rc.announced {
 					rc.announced = true
-					out <- Delta{
+					if !sendDelta(ctx, out, Delta{
 						Kind: DeltaToolCallStart, Index: rc.index,
 						ToolCallID: rc.id, ToolName: rc.name,
+					}) {
+						return
 					}
 				}
 				if tcd.Function.Arguments != "" {
-					out <- Delta{Kind: DeltaToolCallArgs, Index: rc.index, Content: tcd.Function.Arguments}
+					if !sendDelta(ctx, out, Delta{Kind: DeltaToolCallArgs, Index: rc.index, Content: tcd.Function.Arguments}) {
+						return
+					}
 				}
 			}
 		}

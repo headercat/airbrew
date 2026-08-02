@@ -13,8 +13,9 @@ Server-Sent-Events chat surface that the SPA streams token-by-token.
 | 2     | Tool calling, agent definitions, system prompts                |
 | 3     | Per-agent tool selection, token accounting, audit hardening    |
 
-All three phases are implemented; remaining work is captured under
-"Future" below.
+The agent framework and hardening work for these phases is implemented.
+Domain-specific production tools such as vault search or mail drafting
+remain future integrations.
 
 ## Design constraints
 

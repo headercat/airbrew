@@ -1,0 +1,139 @@
+version: "3"
+
+vars:
+  API_HOST: '{{.API_HOST | default "127.0.0.1"}}'
+  API_PORT: '{{.API_PORT | default "5050"}}'
+  WEB_HOST: '{{.WEB_HOST | default "127.0.0.1"}}'
+  WEB_PORT: '{{.WEB_PORT | default "5051"}}'
+  WEB_PROXY_TARGET: '{{.WEB_PROXY_TARGET | default (printf "http://127.0.0.1:%s" .WEB_PORT)}}'
+  GO_CACHE: '{{.GO_CACHE | default (printf "%s/.tmp/go-cache" .TASKFILE_DIR)}}'
+  AIR: '{{.AIR | default "go run github.com/air-verse/air@latest"}}'
+
+tasks:
+  dev:
+    desc: Run API and web dev servers
+    deps:
+      - dev:server
+      - dev:vite
+
+  dev:server:
+    internal: true
+    env:
+      AIRBREW_HTTP_ADDR: "{{.API_HOST}}:{{.API_PORT}}"
+      AIRBREW_WEB_PROXY_TARGET: "{{.WEB_PROXY_TARGET}}"
+      GOCACHE: "{{.GO_CACHE}}"
+    cmds:
+      - mkdir -p {{.GO_CACHE}}
+      - "{{.AIR}}"
+
+  dev:vite:
+    internal: true
+    env:
+      VITE_API_PROXY_TARGET: "http://{{.API_HOST}}:{{.API_PORT}}"
+    cmds:
+      - npm --prefix web run dev -- --host {{.WEB_HOST}} --port {{.WEB_PORT}}
+
+  run:
+    desc: Run the Go API without hot reload
+    env:
+      AIRBREW_HTTP_ADDR: "{{.API_HOST}}:{{.API_PORT}}"
+      GOCACHE: "{{.GO_CACHE}}"
+    cmds:
+      - mkdir -p {{.GO_CACHE}}
+      - go run ./cmd/airbrew
+
+  build:
+    desc: Build SPA and Go binary
+    deps:
+      - build:web
+      - build:api
+
+  build:api:
+    desc: Build Go binary
+    env:
+      GOCACHE: "{{.GO_CACHE}}"
+    cmds:
+      - mkdir -p {{.GO_CACHE}} bin
+      - go build -o bin/airbrew ./cmd/airbrew
+
+  build:web:
+    desc: Build React SPA
+    cmds:
+      - npm --prefix web run build
+
+  test:
+    desc: Run backend and frontend tests
+    deps:
+      - test:api
+      - test:web
+
+  test:api:
+    desc: Run Go tests
+    env:
+      GOCACHE: "{{.GO_CACHE}}"
+    cmds:
+      - mkdir -p {{.GO_CACHE}}
+      - go test ./...
+
+  test:web:
+    desc: Run web tests
+    cmds:
+      - npm --prefix web run test
+
+  fmt:
+    desc: Format backend and frontend code
+    deps:
+      - fmt:api
+      - fmt:web
+
+  fmt:api:
+    desc: Format Go code
+    cmds:
+      - gofmt -w ./cmd ./internal
+
+  fmt:web:
+    desc: Format web code
+    cmds:
+      - npm --prefix web run format
+
+  fmt:check:
+    desc: Check backend and frontend formatting
+    deps:
+      - fmt:check:api
+      - fmt:check:web
+
+  fmt:check:api:
+    desc: Check Go formatting
+    cmds:
+      - test -z "$(gofmt -l ./cmd ./internal)"
+
+  fmt:check:web:
+    desc: Check web formatting
+    cmds:
+      - npm --prefix web run format:check
+
+  lint:
+    desc: Run backend and frontend checks
+    deps:
+      - vet
+      - test:web
+
+  vet:
+    desc: Run go vet
+    env:
+      GOCACHE: "{{.GO_CACHE}}"
+    cmds:
+      - mkdir -p {{.GO_CACHE}}
+      - go vet ./...
+
+  tidy:
+    desc: Tidy Go module files
+    cmds:
+      - go mod tidy
+
+  check:
+    desc: Run formatting checks, tests, and vet
+    deps:
+      - fmt:check
+      - test
+      - vet

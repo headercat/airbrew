@@ -569,6 +569,7 @@
       "importPasswordTitle": "백업 잠금 해제",
       "importPasswordPrompt": "이 백업을 여는 마스터 비밀번호를 입력하세요.",
       "backupPassword": "백업 마스터 비밀번호",
+      "importTooLarge": "이 백업 파일은 가져오기에는 너무 큽니다.",
       "exported": "암호화된 백업을 다운로드했습니다.",
       "imported": "백업을 검증하고 폴더 {{folders}}개, 항목 {{items}}개, 첨부 {{attachments}}개를 현재 보관함으로 다시 암호화해 가져왔습니다.",
       "newFolder": "새 폴더",

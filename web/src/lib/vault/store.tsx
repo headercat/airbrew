@@ -1020,9 +1020,29 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (!ok) return null;
       const raw = rawItemsRef.current.get(itemId);
       if (!raw) return null;
-      return decryptItem(key, raw, { includeSensitive: true });
+      const dec = await decryptItem(key, raw, { includeSensitive: true });
+      if (isLegacyCrypto(raw.crypto_version)) {
+        try {
+          const input = await encryptItemInput(key, {
+            type: dec.type,
+            folderId: dec.folderId,
+            name: dec.name,
+            notes: dec.notes,
+            fields: dec.fields,
+            favorite: dec.favorite,
+            reprompt: dec.reprompt,
+          });
+          input.if_revision = raw.revision;
+          const migrated = await VApi.updateItem(raw.id, input);
+          rawItemsRef.current.set(migrated.id, migrated);
+          persistCiphertextCache(migrated.revision);
+        } catch {
+          // Best-effort: keep the reveal working and retry migration later.
+        }
+      }
+      return dec;
     },
-    [verifyMasterPassword],
+    [persistCiphertextCache, verifyMasterPassword],
   );
 
   const exportBundle = useCallback(async () => {

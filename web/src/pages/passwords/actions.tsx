@@ -30,6 +30,8 @@ import {
 import { WrongMasterPassword, useVault } from "@/lib/vault/store";
 import { PasswordStrengthHint } from "./password-strength";
 
+const MAX_IMPORT_FILE_BYTES = 256 << 20;
+
 export function VaultActions() {
   const { t } = useTranslation();
   const { exportBundle, importBundle, changeMasterPassword, createFolder } =
@@ -70,6 +72,10 @@ export function VaultActions() {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    if (file.size > MAX_IMPORT_FILE_BYTES) {
+      setError(t("passwords.actions.importTooLarge"));
+      return;
+    }
     setBusy(true);
     setError(null);
     setInfo(null);

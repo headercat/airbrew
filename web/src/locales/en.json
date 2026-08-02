@@ -569,6 +569,7 @@
       "importPasswordTitle": "Unlock backup",
       "importPasswordPrompt": "Enter the master password that unlocks this backup.",
       "backupPassword": "Backup master password",
+      "importTooLarge": "This backup file is too large to import.",
       "exported": "Encrypted backup downloaded.",
       "imported": "Verified the backup and re-encrypted {{folders}} folders, {{items}} items, and {{attachments}} attachments into this vault.",
       "newFolder": "New folder",

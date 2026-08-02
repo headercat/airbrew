@@ -35,6 +35,7 @@ import {
   putVaultCache,
   userIdForEnvelope,
 } from "@/lib/vault/cache";
+import { readVaultSecuritySettings } from "@/lib/vault/security";
 import * as VApi from "@/lib/vault/api";
 import type {
   AttachmentMeta,
@@ -312,7 +313,9 @@ type VaultContextValue = {
   // Item history: list decrypted revision snapshots and restore one.
   listItemRevisions: (
     itemId: string,
-  ) => Promise<{ id: string; name: string; revision: number; createdAt: string }[]>;
+  ) => Promise<
+    { id: string; name: string; revision: number; createdAt: string }[]
+  >;
   restoreItemRevision: (itemId: string, revId: string) => Promise<void>;
 };
 
@@ -512,13 +515,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           protected_vault_key: wrapped.cipher,
           protected_vault_nonce: wrapped.nonce,
         };
-		await VApi.setup(env);
-		keyRef.current = vaultKey;
-		envelopeRef.current = {
-			...env,
-			version: 1,
-			updated_at: new Date().toISOString(),
-		};
+        await VApi.setup(env);
+        keyRef.current = vaultKey;
+        envelopeRef.current = {
+          ...env,
+          version: 1,
+          updated_at: new Date().toISOString(),
+        };
         cacheUserIdRef.current = userIdForEnvelope(salt);
         cursorRef.current = 0;
         itemsRef.current = [];
@@ -839,11 +842,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const existing = foldersRef.current.find((f) => f.id === id);
       if (!existing) throw new Error("folder not found");
       const enc = await encryptString(key, name);
-      const raw = await VApi.updateFolder(id, enc.cipher, enc.nonce, existing.revision);
+      const raw = await VApi.updateFolder(
+        id,
+        enc.cipher,
+        enc.nonce,
+        existing.revision,
+      );
       const next = foldersRef.current
-        .map((f) =>
-          f.id === id ? { id, name, revision: raw.revision } : f,
-        )
+        .map((f) => (f.id === id ? { id, name, revision: raw.revision } : f))
         .sort((a, b) => a.name.localeCompare(b.name));
       foldersRef.current = next;
       setFolders(next);
@@ -852,19 +858,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     [commitCursor],
   );
 
-  const deleteFolder = useCallback(
-    async (id: string): Promise<void> => {
-      const key = keyRef.current;
-      if (!key) throw new Error("vault locked");
-      const existing = foldersRef.current.find((f) => f.id === id);
-      if (!existing) throw new Error("folder not found");
-      await VApi.deleteFolder(id, existing.revision);
-      const next = foldersRef.current.filter((f) => f.id !== id);
-      foldersRef.current = next;
-      setFolders(next);
-    },
-    [],
-  );
+  const deleteFolder = useCallback(async (id: string): Promise<void> => {
+    const key = keyRef.current;
+    if (!key) throw new Error("vault locked");
+    const existing = foldersRef.current.find((f) => f.id === id);
+    if (!existing) throw new Error("folder not found");
+    await VApi.deleteFolder(id, existing.revision);
+    const next = foldersRef.current.filter((f) => f.id !== id);
+    foldersRef.current = next;
+    setFolders(next);
+  }, []);
 
   // --- master password change ----------------------------------------------
 
@@ -873,8 +876,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const env = envelopeRef.current;
       const liveKey = keyRef.current;
       if (!env || !liveKey) throw new Error("vault locked");
-      if (newPassword.length < 8) {
-        throw new Error("master password must be at least 8 characters");
+      if (newPassword.length < 15) {
+        throw new Error("master password must be at least 15 characters");
       }
       // Verify the current password first (constant-time compare to the live
       // vault key) so we never rotate on a wrong current password.
@@ -913,35 +916,32 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   // --- item history ---------------------------------------------------------
 
-  const listItemRevisions = useCallback(
-    async (itemId: string) => {
-      const key = keyRef.current;
-      if (!key) throw new Error("vault locked");
-      const revs = await VApi.listRevisions(itemId);
-      const out: {
-        id: string;
-        name: string;
-        revision: number;
-        createdAt: string;
-      }[] = [];
-      for (const r of revs) {
-        let name = "—";
-        try {
-          name = await decryptString(key, r.name_cipher, r.name_nonce);
-        } catch {
-          name = "—";
-        }
-        out.push({
-          id: r.id,
-          name,
-          revision: r.revision,
-          createdAt: r.created_at,
-        });
+  const listItemRevisions = useCallback(async (itemId: string) => {
+    const key = keyRef.current;
+    if (!key) throw new Error("vault locked");
+    const revs = await VApi.listRevisions(itemId);
+    const out: {
+      id: string;
+      name: string;
+      revision: number;
+      createdAt: string;
+    }[] = [];
+    for (const r of revs) {
+      let name = "—";
+      try {
+        name = await decryptString(key, r.name_cipher, r.name_nonce);
+      } catch {
+        name = "—";
       }
-      return out;
-    },
-    [],
-  );
+      out.push({
+        id: r.id,
+        name,
+        revision: r.revision,
+        createdAt: r.created_at,
+      });
+    }
+    return out;
+  }, []);
 
   const restoreItemRevision = useCallback(
     async (itemId: string, revId: string) => {
@@ -973,33 +973,50 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   lockRef.current = lock;
   useEffect(() => {
     if (status !== "unlocked") return;
-    const IDLE_MS = 5 * 60_000; // 5 minutes
-    const HIDDEN_MS = 5 * 60_000; // 5 minutes hidden
+    let settings = readVaultSecuritySettings();
     let idleTimer: number | undefined;
     let hiddenSince = 0;
 
     const resetIdle = () => {
       window.clearTimeout(idleTimer);
-      idleTimer = window.setTimeout(() => lockRef.current(), IDLE_MS);
+      idleTimer = window.setTimeout(
+        () => lockRef.current(),
+        settings.autoLockMinutes * 60_000,
+      );
     };
     const onVisibility = () => {
       if (document.hidden) {
         hiddenSince = Date.now();
-      } else if (hiddenSince && Date.now() - hiddenSince >= HIDDEN_MS) {
+      } else if (
+        hiddenSince &&
+        Date.now() - hiddenSince >= settings.autoLockMinutes * 60_000
+      ) {
         lockRef.current();
         hiddenSince = 0;
       }
+    };
+    const onSettingsChanged = () => {
+      settings = readVaultSecuritySettings();
+      resetIdle();
     };
     const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
     events.forEach((e) =>
       window.addEventListener(e, resetIdle, { passive: true }),
     );
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener(
+      "vault-security-settings-changed",
+      onSettingsChanged,
+    );
     resetIdle();
     return () => {
       window.clearTimeout(idleTimer);
       events.forEach((e) => window.removeEventListener(e, resetIdle));
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener(
+        "vault-security-settings-changed",
+        onSettingsChanged,
+      );
     };
   }, [status]);
 

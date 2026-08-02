@@ -7,16 +7,22 @@
 // in the meantime we still overwrite it (acceptable for a security tool), and
 // clipboard write can be rejected by browser permissions.
 
-const DEFAULT_CLEAR_AFTER_MS = 30_000;
+import { readVaultSecuritySettings } from "@/lib/vault/security";
 
 export async function copyAndAutoClear(
   value: string,
-  clearAfterMs = DEFAULT_CLEAR_AFTER_MS,
+  clearAfterMs = readVaultSecuritySettings().clipboardClearSeconds * 1000,
 ): Promise<void> {
   if (!value) return;
   await navigator.clipboard.writeText(value);
   window.setTimeout(() => {
-    // Only nudge the clipboard clear; ignore failures (permission, tab gone).
-    navigator.clipboard.writeText("").catch(() => {});
+    // Avoid overwriting a newer user clipboard value when read permission is
+    // available. If read fails, fall back to the safer secret-clearing write.
+    navigator.clipboard
+      .readText()
+      .then((current) => {
+        if (current === value) return navigator.clipboard.writeText("");
+      })
+      .catch(() => navigator.clipboard.writeText("").catch(() => {}));
   }, clearAfterMs);
 }

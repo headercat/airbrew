@@ -396,12 +396,25 @@
       "title": "Set up your vault",
       "subtitle": "Choose a master password. It encrypts your vault and is never sent to the server.",
       "masterPassword": "Master password",
-      "masterPasswordPlaceholder": "At least 8 characters",
+      "masterPasswordPlaceholder": "15+ characters recommended",
       "confirm": "Confirm master password",
       "warning": "There is no recovery. If you forget this password, your vault cannot be decrypted.",
       "submit": "Create vault",
       "tooShort": "Master password must be at least 8 characters.",
+      "tooWeak": "Make the master password longer and harder to guess.",
       "mismatch": "Passwords do not match."
+    },
+    "strength": {
+      "hint": "Use a long passphrase of at least 15 characters.",
+      "weak": "Weak",
+      "fair": "Fair",
+      "good": "Good",
+      "excellent": "Excellent",
+      "length": "use 15+ characters",
+      "variety": "add character variety",
+      "repeated": "reduce repeated characters",
+      "sequence": "avoid sequences",
+      "common": "avoid common passwords"
     },
     "unlock": {
       "title": "Unlock vault",
@@ -512,7 +525,13 @@
       "currentPassword": "Current master password",
       "newPassword": "New master password",
       "save": "Save",
-      "passwordChanged": "Master password changed."
+      "passwordChanged": "Master password changed.",
+      "autoLock": "Auto-lock",
+      "clipboardClear": "Clear clipboard after",
+      "minutes_one": "{{count}} minute",
+      "minutes_other": "{{count}} minutes",
+      "seconds_one": "{{count}} second",
+      "seconds_other": "{{count}} seconds"
     }
   },
   "profile": {

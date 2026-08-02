@@ -20,16 +20,18 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { isApiError } from "@/lib/api";
+import {
+  evaluateMasterPassword,
+  readVaultSecuritySettings,
+  vaultSecurityOptions,
+  writeVaultSecuritySettings,
+} from "@/lib/vault/security";
 import { WrongMasterPassword, useVault } from "@/lib/vault/store";
 
 export function VaultActions() {
   const { t } = useTranslation();
-  const {
-    exportBundle,
-    importBundle,
-    changeMasterPassword,
-    createFolder,
-  } = useVault();
+  const { exportBundle, importBundle, changeMasterPassword, createFolder } =
+    useVault();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -42,7 +44,9 @@ export function VaultActions() {
     try {
       const bundle = await exportBundle();
       const text = JSON.stringify(bundle, null, 2);
-      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const url = URL.createObjectURL(
+        new Blob([text], { type: "application/json" }),
+      );
       const a = document.createElement("a");
       a.href = url;
       a.download = "airbrew-vault-export.json";
@@ -82,7 +86,10 @@ export function VaultActions() {
           reprompt?: boolean;
         }[];
       };
-      const counts = await importBundle(parsed.folders ?? [], (parsed.items ?? []) as never);
+      const counts = await importBundle(
+        parsed.folders ?? [],
+        (parsed.items ?? []) as never,
+      );
       setInfo(
         t("passwords.actions.imported", {
           folders: counts.folders,
@@ -107,8 +114,18 @@ export function VaultActions() {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={onExport} disabled={busy}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onExport}
+            disabled={busy}
+          >
+            {busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
             {t("passwords.actions.export")}
           </Button>
           <Button
@@ -129,15 +146,22 @@ export function VaultActions() {
             onChange={onImport}
           />
         </div>
-        <CreateFolder onCreate={createFolder} disabled={busy} onError={setError} />
+        <CreateFolder
+          onCreate={createFolder}
+          disabled={busy}
+          onError={setError}
+        />
         <ChangeMasterPassword
           onChange={changeMasterPassword}
           disabled={busy}
           onError={setError}
           onSuccess={() => setInfo(t("passwords.actions.passwordChanged"))}
         />
+        <SecuritySettings />
         {error && <p className="text-sm text-destructive">{error}</p>}
-        {info && <p className="text-sm text-green-600 dark:text-green-500">{info}</p>}
+        {info && (
+          <p className="text-sm text-green-600 dark:text-green-500">{info}</p>
+        )}
       </CardContent>
     </Card>
   );
@@ -206,6 +230,7 @@ function ChangeMasterPassword({
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
+  const strength = evaluateMasterPassword(next);
 
   if (!open) {
     return (
@@ -223,7 +248,7 @@ function ChangeMasterPassword({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (next.length < 8) return onError(t("passwords.setup.tooShort"));
+    if (!strength.acceptable) return onError(t("passwords.setup.tooWeak"));
     if (next !== confirm) return onError(t("passwords.setup.mismatch"));
     setBusy(true);
     try {
@@ -245,7 +270,10 @@ function ChangeMasterPassword({
   }
 
   return (
-    <form onSubmit={submit} className="grid gap-2 rounded-md border bg-muted/20 p-3">
+    <form
+      onSubmit={submit}
+      className="grid gap-2 rounded-md border bg-muted/20 p-3"
+    >
       <div className="grid gap-1">
         <Label htmlFor="curmp">{t("passwords.actions.currentPassword")}</Label>
         <Input
@@ -265,6 +293,7 @@ function ChangeMasterPassword({
           value={next}
           onChange={(e) => setNext(e.target.value)}
         />
+        <PasswordStrengthText password={next} />
       </div>
       <div className="grid gap-1">
         <Label htmlFor="confmp">{t("passwords.setup.confirm")}</Label>
@@ -291,6 +320,77 @@ function ChangeMasterPassword({
         </Button>
       </div>
     </form>
+  );
+}
+
+function PasswordStrengthText({ password }: { password: string }) {
+  const { t } = useTranslation();
+  const strength = evaluateMasterPassword(password);
+  if (!password) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        {t("passwords.strength.hint")}
+      </p>
+    );
+  }
+  return (
+    <p className="text-xs text-muted-foreground">
+      {t(strength.labelKey)}
+      {strength.feedbackKeys.length > 0
+        ? ` · ${strength.feedbackKeys.map((k) => t(k)).join(" · ")}`
+        : ""}
+    </p>
+  );
+}
+
+function SecuritySettings() {
+  const { t } = useTranslation();
+  const [settings, setSettings] = useState(() => readVaultSecuritySettings());
+  const options = vaultSecurityOptions();
+
+  function update(next: Partial<typeof settings>) {
+    setSettings(writeVaultSecuritySettings({ ...settings, ...next }));
+  }
+
+  return (
+    <div className="grid gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
+      <div className="grid gap-1">
+        <Label htmlFor="vault-auto-lock">
+          {t("passwords.actions.autoLock")}
+        </Label>
+        <select
+          id="vault-auto-lock"
+          className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+          value={settings.autoLockMinutes}
+          onChange={(e) => update({ autoLockMinutes: Number(e.target.value) })}
+        >
+          {options.autoLockMinutes.map((m) => (
+            <option key={m} value={m}>
+              {t("passwords.actions.minutes", { count: m })}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="grid gap-1">
+        <Label htmlFor="vault-clipboard-clear">
+          {t("passwords.actions.clipboardClear")}
+        </Label>
+        <select
+          id="vault-clipboard-clear"
+          className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+          value={settings.clipboardClearSeconds}
+          onChange={(e) =>
+            update({ clipboardClearSeconds: Number(e.target.value) })
+          }
+        >
+          {options.clipboardClearSeconds.map((s) => (
+            <option key={s} value={s}>
+              {t("passwords.actions.seconds", { count: s })}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
   );
 }
 

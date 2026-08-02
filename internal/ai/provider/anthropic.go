@@ -41,7 +41,7 @@ func (AnthropicDriver) Build(cfg Config) (LLMClient, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = anthropicDefaultTimeout
 	}
-	return &anthropicClient{cfg: cfg, http: http.DefaultClient}, nil
+	return &anthropicClient{cfg: cfg, http: &http.Client{Timeout: cfg.Timeout}}, nil
 }
 
 type anthropicClient struct {

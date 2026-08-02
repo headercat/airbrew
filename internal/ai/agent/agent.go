@@ -133,10 +133,13 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 	for turn := 0; turn < maxTurns; turn++ {
 		// 2. Rebuild history each turn so the previous assistant + tool
 		//    messages are visible. Snap the system prompt from the spec.
+		//    Trim to MaxHistoryMessages to bound prompt cost on long
+		//    conversations (docs/ai.md).
 		hist, err := rt.conv.History(ctx, in.UserID, in.ConversationID)
 		if err != nil {
 			return fmt.Errorf("load history: %w", err)
 		}
+		hist = trimHistory(hist, MaxHistoryMessages)
 		msgs := buildProviderMessages(in.Spec.System, hist)
 
 		// 3. Stream the assistant response.
@@ -235,6 +238,27 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 		CompletionTokens: lastUsage.CompletionTokens,
 	}}
 	return fmt.Errorf("agent: hit max_turns (%d) without a terminal assistant turn", maxTurns)
+}
+
+// MaxHistoryMessages bounds the number of past turns replayed to the
+// provider on each turn. Long conversations trim from the head so the
+// most recent context (and any in-flight tool exchange) survive.
+const MaxHistoryMessages = 50
+
+// trimHistory returns the most recent n messages of hist, preserving
+// any trailing role=tool block (a tool result is meaningless without
+// the assistant tool_calls that preceded it, but if the slice begins
+// with an orphan tool row we drop it cleanly).
+func trimHistory(hist []provider.Message, n int) []provider.Message {
+	if n <= 0 || len(hist) <= n {
+		return hist
+	}
+	trimmed := hist[len(hist)-n:]
+	// Drop a leading tool row whose assistant tool_calls were trimmed off.
+	for len(trimmed) > 0 && trimmed[0].Role == provider.RoleTool {
+		trimmed = trimmed[1:]
+	}
+	return trimmed
 }
 
 // buildProviderMessages prepends the system prompt to history. If the

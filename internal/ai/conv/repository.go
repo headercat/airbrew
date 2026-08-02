@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/headercat/airbrew/internal/ai/provider"
@@ -134,6 +135,11 @@ func (r *Repository) BumpRevision(ctx context.Context, userID, id string) error 
 
 // AppendMessage inserts a message with seq assigned inside the transaction
 // so order is always deterministic. Returns the inserted row.
+//
+// Two concurrent AppendMessage calls on the same conversation may race
+// the MAX(seq)+1 selection; the UNIQUE(conversation_id, seq) index turns
+// that race into a deterministic ErrConflict that the caller can surface
+// to the user.
 func (r *Repository) AppendMessage(ctx context.Context, userID string, m Message) (Message, error) {
 	if userID == "" {
 		return Message{}, fmt.Errorf("%w: user_id required", ErrInvalidInput)
@@ -165,9 +171,30 @@ func (r *Repository) AppendMessage(ctx context.Context, userID string, m Message
 		tools = string(b)
 	}
 
+	// Loop on the unique-seq race so the common case (a single in-flight
+	// turn) succeeds on the first try and the rare race retries. We cap
+	// attempts so a pathological contention scenario still terminates.
+	const maxAttempts = 5
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		out, done, err := r.tryAppendMessage(ctx, m, tools)
+		if err != nil {
+			return Message{}, err
+		}
+		if done {
+			return out, nil
+		}
+	}
+	return Message{}, ErrConflict
+}
+
+// tryAppendMessage performs one attempt at assigning seq and inserting.
+// Returns (inserted, true, nil) on success, (zero, false, nil) on a
+// unique-seq race (caller may retry), and (zero, false, err) on any
+// other failure.
+func (r *Repository) tryAppendMessage(ctx context.Context, m Message, tools string) (Message, bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return Message{}, fmt.Errorf("conv: begin tx: %w", err)
+		return Message{}, false, fmt.Errorf("conv: begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -176,7 +203,7 @@ func (r *Repository) AppendMessage(ctx context.Context, userID string, m Message
 		"SELECT COALESCE(MAX(seq),0) + 1 FROM ai_messages WHERE conversation_id = ?",
 		m.ConversationID,
 	).Scan(&seq); err != nil {
-		return Message{}, fmt.Errorf("conv: next seq: %w", err)
+		return Message{}, false, fmt.Errorf("conv: next seq: %w", err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	m.ID = id.New()
@@ -190,18 +217,34 @@ func (r *Repository) AppendMessage(ctx context.Context, userID string, m Message
 	`, m.ID, m.ConversationID, string(m.Role), m.Content, tools,
 		m.ToolCallID, m.ToolName, m.PromptTokens, m.CompletionTokens, m.Seq, m.CreatedAt)
 	if err != nil {
-		return Message{}, fmt.Errorf("conv: insert message: %w", err)
+		// UNIQUE violation → race; signal retry.
+		if isUniqueViolation(err) {
+			return Message{}, false, nil
+		}
+		return Message{}, false, fmt.Errorf("conv: insert message: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
 		"UPDATE ai_conversations SET updated_at = ?, revision = revision + 1 WHERE id = ?",
 		now, m.ConversationID,
 	); err != nil {
-		return Message{}, fmt.Errorf("conv: bump updated_at: %w", err)
+		return Message{}, false, fmt.Errorf("conv: bump updated_at: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return Message{}, fmt.Errorf("conv: commit: %w", err)
+		return Message{}, false, fmt.Errorf("conv: commit: %w", err)
 	}
-	return m, nil
+	return m, true, nil
+}
+
+// isUniqueViolation detects SQLite's UNIQUE constraint failure across the
+// modernc.org/sqlite driver (text matching, since the driver exposes
+// errors as opaque strings).
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") ||
+		strings.Contains(msg, "constraint failed: UNIQUE")
 }
 
 // ListMessages returns all messages for a conversation in seq order.

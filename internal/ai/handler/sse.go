@@ -3,12 +3,17 @@
 // Helpers for writing Server-Sent Events: writeEvent frames one event,
 // and writeKeepAlive flushes a comment line so proxies with a long
 // buffer threshold do not kill the stream while a tool is dispatching.
+//
+// All write paths acquire mu — net/http's ResponseWriter is not safe for
+// concurrent use, and the heartbeat goroutine runs alongside the main
+// event loop.
 package handler
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -17,6 +22,7 @@ import (
 type SSEWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
+	mu      sync.Mutex
 }
 
 // NewSSEWriter upgrades w. If the ResponseWriter does not implement
@@ -50,6 +56,8 @@ func (s *SSEWriter) Event(name string, payload any) error {
 	if err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if _, err := fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", name, b); err != nil {
 		return err
 	}
@@ -61,6 +69,8 @@ func (s *SSEWriter) Event(name string, payload any) error {
 // may be silent for >15s (e.g. a long tool call) so the client knows the
 // connection is live.
 func (s *SSEWriter) KeepAlive() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	fmt.Fprint(s.w, ": keep-alive\n\n")
 	s.flusher.Flush()
 }

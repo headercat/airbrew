@@ -84,14 +84,18 @@ func (r *Repository) Put(ctx context.Context, direction Direction, driver, name,
 	}
 
 	keyEnc, nonceEnc := "", ""
-	if apiKey != "" && r.seal != nil {
+	if apiKey != "" {
+		if r.seal == nil {
+			// No seal configured: refuse to store plaintext keys. The
+			// server wiring should never reach this branch in production
+			// (seal init failure aborts the module), but we defend in
+			// depth so a misconfiguration cannot silently leak keys.
+			return StoredProvider{}, fmt.Errorf("%w: seal not configured; cannot encrypt api key", ErrInvalidInput)
+		}
 		keyEnc, nonceEnc, err = r.seal.EncryptString(apiKey)
 		if err != nil {
 			return StoredProvider{}, err
 		}
-	} else if apiKey != "" {
-		// No seal configured: store as-is (test mode only).
-		keyEnc, nonceEnc = "plain:"+apiKey, "0"
 	}
 
 	now := time.Now().UTC().Truncate(time.Second)
@@ -188,8 +192,6 @@ func (r *Repository) Resolve(ctx context.Context, direction Direction) (LLMClien
 			return nil, fmt.Errorf("provider: decrypt api key: %w", err)
 		}
 		apiKey = dec
-	} else if strings.HasPrefix(p.APIKeyEnc, "plain:") {
-		apiKey = strings.TrimPrefix(p.APIKeyEnc, "plain:")
 	}
 	cfg := Config{
 		Direction: p.Direction, Driver: p.Driver, BaseURL: p.BaseURL,

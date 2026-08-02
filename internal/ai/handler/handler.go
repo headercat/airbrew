@@ -373,6 +373,9 @@ func writeConvError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, conv.ErrNotFound):
 		response.Error(w, http.StatusNotFound, "not_found", "conversation not found")
+	case errors.Is(err, conv.ErrConflict):
+		response.Error(w, http.StatusConflict, "conflict",
+			"another message is being sent; please retry")
 	case errors.Is(err, conv.ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 	default:

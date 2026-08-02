@@ -17,6 +17,10 @@ import (
 var (
 	ErrNotFound     = errors.New("conv: not found")
 	ErrInvalidInput = errors.New("conv: invalid input")
+	// ErrConflict signals a concurrent-append race on the same
+	// conversation. The handler surfaces it as 409 so the SPA can
+	// re-fetch and retry.
+	ErrConflict = errors.New("conv: conflict")
 )
 
 // Conversation is one chat thread.

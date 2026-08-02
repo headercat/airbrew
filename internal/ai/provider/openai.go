@@ -42,7 +42,7 @@ func (OpenAIDriver) Build(cfg Config) (LLMClient, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = openAIDefaultTimeout
 	}
-	return &openAIClient{cfg: cfg, http: http.DefaultClient}, nil
+	return &openAIClient{cfg: cfg, http: &http.Client{Timeout: cfg.Timeout}}, nil
 }
 
 type openAIClient struct {

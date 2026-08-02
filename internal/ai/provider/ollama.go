@@ -38,7 +38,7 @@ func (OllamaDriver) Build(cfg Config) (LLMClient, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = ollamaDefaultTimeout
 	}
-	return &ollamaClient{cfg: cfg, http: http.DefaultClient}, nil
+	return &ollamaClient{cfg: cfg, http: &http.Client{Timeout: cfg.Timeout}}, nil
 }
 
 type ollamaClient struct {

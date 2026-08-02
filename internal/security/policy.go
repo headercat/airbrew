@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -248,6 +249,35 @@ func (s *Service) SetIPAllowlist(ctx context.Context, a IPAllowlist) error {
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
 	`, ipAllowlistKey, string(raw), now)
 	return err
+}
+
+// AllowsIP reports whether rawIP is allowed by the configured allowlist. When
+// the allowlist is disabled, every address is accepted.
+func (s *Service) AllowsIP(ctx context.Context, rawIP string) (bool, error) {
+	a, err := s.IPAllowlist(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !a.Enabled {
+		return true, nil
+	}
+	ip := net.ParseIP(strings.TrimSpace(rawIP))
+	if ip == nil {
+		return false, nil
+	}
+	for _, allowed := range a.CIDRs {
+		if strings.Contains(allowed, "/") {
+			_, network, err := net.ParseCIDR(allowed)
+			if err == nil && network.Contains(ip) {
+				return true, nil
+			}
+			continue
+		}
+		if other := net.ParseIP(allowed); other != nil && other.Equal(ip) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func normalizeCIDRs(in []string) []string {

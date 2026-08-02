@@ -65,7 +65,7 @@ func Build(d Deps) *http.ServeMux {
 	adminMod := admin.New(d.DB.DB)
 	adminMod.RegisterPublicRoutes(mux) // public: GET /api/branding, GET /api/admin/status
 
-	authMod := auth.New(d.DB.DB, auth.Config{SessionMaxAge: d.SessionMax, Blobs: d.Blobs, Audit: adminMod.Audit(), CookieSecure: d.CookieSecure})
+	authMod := auth.New(d.DB.DB, auth.Config{SessionMaxAge: d.SessionMax, Blobs: d.Blobs, Audit: adminMod.Audit(), Security: adminMod.Security(), CookieSecure: d.CookieSecure})
 	authSub := http.NewServeMux()
 	authMod.Handler.RegisterRoutes(authSub)
 	mux.Handle("/api/auth/", authMod.SessionMiddleware(authSub))

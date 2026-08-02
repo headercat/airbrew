@@ -14,6 +14,7 @@ import (
 	"github.com/headercat/airbrew/internal/auth/user"
 	"github.com/headercat/airbrew/internal/blob"
 	"github.com/headercat/airbrew/internal/httpserver/response"
+	"github.com/headercat/airbrew/internal/security"
 )
 
 // Handler exposes the auth JSON endpoints.
@@ -23,6 +24,7 @@ type Handler struct {
 	sessions     *session.Service
 	blobs        blob.Store
 	audit        *audit.Service
+	security     *security.Service
 	cookieSecure bool
 }
 
@@ -33,6 +35,7 @@ type Deps struct {
 	SessSvc  *session.Service
 	Blobs    blob.Store
 	Audit    *audit.Service
+	Security *security.Service
 	// CookieSecure, when true, marks the session cookie with the Secure
 	// attribute so it is only ever sent over HTTPS. Required for production;
 	// false is fine for local HTTP dev.
@@ -43,7 +46,7 @@ type Deps struct {
 func New(d Deps) *Handler {
 	return &Handler{
 		users: d.UserRepo, userSvc: d.UserSvc, sessions: d.SessSvc,
-		blobs: d.Blobs, audit: d.Audit, cookieSecure: d.CookieSecure,
+		blobs: d.Blobs, audit: d.Audit, security: d.Security, cookieSecure: d.CookieSecure,
 	}
 }
 
@@ -114,12 +117,12 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit.Log(r.Context(), audit.Entry{
-		EventType:  "user.created",
+		EventType:   "user.created",
 		ActorUserID: u.ID,
-		TargetType: "user", TargetID: u.ID,
-		IPAddress:  clientIP(r),
-		UserAgent:  r.UserAgent(),
-		Metadata:   map[string]any{"email": u.Email},
+		TargetType:  "user", TargetID: u.ID,
+		IPAddress: clientIP(r),
+		UserAgent: r.UserAgent(),
+		Metadata:  map[string]any{"email": u.Email},
 	})
 	response.JSON(w, http.StatusCreated, toResp(u))
 }
@@ -135,25 +138,48 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	email := strings.TrimSpace(req.Email)
 	u, err := h.userSvc.Authenticate(r.Context(), req.Email, req.Password)
 	if err != nil {
+		h.recordLoginAttempt(r, email, "", false, "invalid_credentials")
 		response.Error(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
 		return
 	}
 	token, _, err := h.sessions.Issue(r.Context(), u.ID, clientIP(r), r.UserAgent())
 	if err != nil {
+		h.recordLoginAttempt(r, email, u.ID, false, "session_issue_failed")
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
+	h.recordLoginAttempt(r, email, u.ID, true, "")
 	h.setSessionCookie(w, token, h.sessions.MaxAge())
 	h.audit.Log(r.Context(), audit.Entry{
-		EventType:  "session.login",
+		EventType:   "session.login",
 		ActorUserID: u.ID,
-		TargetType: "user", TargetID: u.ID,
+		TargetType:  "user", TargetID: u.ID,
 		IPAddress: clientIP(r),
 		UserAgent: r.UserAgent(),
 	})
 	response.JSON(w, http.StatusOK, toResp(u))
+}
+
+func (h *Handler) recordLoginAttempt(r *http.Request, email, userID string, success bool, failure string) {
+	if h.security == nil {
+		return
+	}
+	if userID == "" && email != "" {
+		if u, err := h.users.GetByEmail(r.Context(), email); err == nil {
+			userID = u.ID
+		}
+	}
+	_ = h.security.RecordLoginAttempt(r.Context(), security.LoginAttempt{
+		UserID:    userID,
+		Email:     email,
+		Success:   success,
+		IPAddress: clientIP(r),
+		UserAgent: r.UserAgent(),
+		Failure:   failure,
+	})
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
@@ -161,9 +187,9 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		if sess, err := h.sessions.Lookup(r.Context(), c.Value); err == nil {
 			_ = h.sessions.Revoke(r.Context(), sess.ID)
 			h.audit.Log(r.Context(), audit.Entry{
-				EventType:  "session.logout",
+				EventType:   "session.logout",
 				ActorUserID: sess.UserID,
-				TargetType: "session", TargetID: sess.ID,
+				TargetType:  "session", TargetID: sess.ID,
 				IPAddress: clientIP(r),
 				UserAgent: r.UserAgent(),
 			})
@@ -236,9 +262,9 @@ func (h *Handler) updateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit.Log(r.Context(), audit.Entry{
-		EventType:  "profile.updated",
+		EventType:   "profile.updated",
 		ActorUserID: sess.UserID,
-		TargetType: "user", TargetID: sess.UserID,
+		TargetType:  "user", TargetID: sess.UserID,
 		IPAddress: clientIP(r),
 		UserAgent: r.UserAgent(),
 	})
@@ -270,9 +296,9 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit.Log(r.Context(), audit.Entry{
-		EventType:  "user.password_changed",
+		EventType:   "user.password_changed",
 		ActorUserID: sess.UserID,
-		TargetType: "user", TargetID: sess.UserID,
+		TargetType:  "user", TargetID: sess.UserID,
 		IPAddress: clientIP(r),
 		UserAgent: r.UserAgent(),
 	})

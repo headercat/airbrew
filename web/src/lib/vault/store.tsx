@@ -17,6 +17,7 @@ import {
 } from "react";
 
 import {
+  b64ToBytes,
   decryptBytes,
   decryptString,
   deriveMasterKey,
@@ -856,6 +857,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           att.file_key_cipher,
           att.file_key_nonce,
         );
+        const verifiedPayload = await open(fileKey, b64ToBytes(att.payload));
+        zeroize(verifiedPayload);
         const wrapped = await encryptBytes(key, fileKey);
         zeroize(fileKey);
         const name = await decryptString(key, att.name_cipher, att.name_nonce);

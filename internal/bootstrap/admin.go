@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -50,7 +51,26 @@ func EnsureAdmin(ctx context.Context, db *sql.DB, cfg config.Config, logger *slo
 	svc := user.NewService(repo)
 	admin, err := svc.RegisterAdmin(ctx, adminEmail, adminPassword, "Administrator")
 	if err != nil {
-		return fmt.Errorf("bootstrap: create admin user: %w", err)
+		if !errors.Is(err, user.ErrEmailTaken) {
+			return fmt.Errorf("bootstrap: create admin user: %w", err)
+		}
+		admin, err = repo.GetByEmail(ctx, adminEmail)
+		if err != nil {
+			return fmt.Errorf("bootstrap: load existing admin email: %w", err)
+		}
+		if err := svc.AdminSetPassword(ctx, admin.ID, adminPassword); err != nil {
+			return fmt.Errorf("bootstrap: reset existing admin password: %w", err)
+		}
+		if err := repo.SetRole(ctx, admin.ID, user.RoleAdmin); err != nil {
+			return fmt.Errorf("bootstrap: promote existing admin email: %w", err)
+		}
+		if err := repo.SetStatus(ctx, admin.ID, user.StatusActive); err != nil {
+			return fmt.Errorf("bootstrap: activate existing admin email: %w", err)
+		}
+		admin, err = repo.GetByID(ctx, admin.ID)
+		if err != nil {
+			return fmt.Errorf("bootstrap: reload recovered admin: %w", err)
+		}
 	}
 
 	audit.NewService(db).Log(ctx, audit.Entry{
@@ -64,7 +84,7 @@ func EnsureAdmin(ctx context.Context, db *sql.DB, cfg config.Config, logger *slo
 	})
 
 	printAdminCredentials(admin.Email, adminPassword, admin.ID, generatedPassword)
-	logger.Info("bootstrap admin created", "email", admin.Email, "user_id", admin.ID)
+	logger.Info("bootstrap admin ready", "email", admin.Email, "user_id", admin.ID)
 	return nil
 }
 

@@ -418,18 +418,11 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusBadRequest, "cannot_demote_self", "you cannot remove your own admin role")
 			return
 		}
-		if target.Role == user.RoleAdmin && newRole == user.RoleUser {
-			count, err := h.userRepo.CountActiveByRole(r.Context(), user.RoleAdmin)
-			if err != nil {
-				response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
-				return
-			}
-			if count <= 1 {
+		if err := h.userRepo.SetRolePreservingActiveAdmin(r.Context(), id, newRole); err != nil {
+			if errors.Is(err, user.ErrLastActiveAdmin) {
 				response.Error(w, http.StatusBadRequest, "last_admin", "cannot demote the last admin")
 				return
 			}
-		}
-		if err := h.userRepo.SetRole(r.Context(), id, newRole); err != nil {
 			response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 			return
 		}
@@ -451,18 +444,11 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusBadRequest, "cannot_suspend_self", "you cannot suspend or delete yourself")
 			return
 		}
-		if target.Role == user.RoleAdmin && newStatus != user.StatusActive {
-			count, err := h.userRepo.CountActiveByRole(r.Context(), user.RoleAdmin)
-			if err != nil {
-				response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
-				return
-			}
-			if count <= 1 {
+		if err := h.userRepo.SetStatusPreservingActiveAdmin(r.Context(), id, newStatus); err != nil {
+			if errors.Is(err, user.ErrLastActiveAdmin) {
 				response.Error(w, http.StatusBadRequest, "last_admin", "cannot suspend the last admin")
 				return
 			}
-		}
-		if err := h.userRepo.SetStatus(r.Context(), id, newStatus); err != nil {
 			response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 			return
 		}
@@ -505,18 +491,11 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "cannot_delete_self", "you cannot delete yourself")
 		return
 	}
-	if target.Role == user.RoleAdmin {
-		count, err := h.userRepo.CountActiveByRole(r.Context(), user.RoleAdmin)
-		if err != nil {
-			response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
-			return
-		}
-		if count <= 1 {
+	if err := h.userRepo.SetStatusPreservingActiveAdmin(r.Context(), id, user.StatusDeleted); err != nil {
+		if errors.Is(err, user.ErrLastActiveAdmin) {
 			response.Error(w, http.StatusBadRequest, "last_admin", "cannot delete the last admin")
 			return
 		}
-	}
-	if err := h.userRepo.SetStatus(r.Context(), id, user.StatusDeleted); err != nil {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}

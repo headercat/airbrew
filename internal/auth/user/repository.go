@@ -26,6 +26,9 @@ var ErrNotFound = errors.New("user not found")
 // ErrEmailTaken is returned by Create when the email is already registered.
 var ErrEmailTaken = errors.New("email already taken")
 
+// ErrLastActiveAdmin is returned when a change would leave no active admins.
+var ErrLastActiveAdmin = errors.New("cannot remove the last active admin")
+
 var errPasswordHistoryUnavailable = errors.New("password history unavailable")
 
 // IsPasswordHistoryUnavailable reports whether err means the password_history
@@ -240,6 +243,37 @@ func (r *Repository) SetRole(ctx context.Context, userID string, role Role) erro
 	return nil
 }
 
+// SetRolePreservingActiveAdmin updates the role unless doing so would leave no
+// active admin able to access the console.
+func (r *Repository) SetRolePreservingActiveAdmin(ctx context.Context, userID string, role Role) error {
+	now := time.Now().UTC().Truncate(time.Second)
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE users
+		SET role = ?, updated_at = ?
+		WHERE id = ?
+		  AND NOT (
+		    role = ?
+		    AND status = ?
+		    AND ? != ?
+		    AND (SELECT COUNT(*) FROM users WHERE role = ? AND status = ?) <= 1
+		  )
+	`,
+		string(role), now, userID,
+		string(RoleAdmin), string(StatusActive), string(role), string(RoleAdmin),
+		string(RoleAdmin), string(StatusActive),
+	)
+	if err != nil {
+		return fmt.Errorf("user: set role: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, err := r.GetByID(ctx, userID); errors.Is(err, ErrNotFound) {
+			return ErrNotFound
+		}
+		return ErrLastActiveAdmin
+	}
+	return nil
+}
+
 // SetStatus updates only the status column.
 func (r *Repository) SetStatus(ctx context.Context, userID string, status Status) error {
 	now := time.Now().UTC().Truncate(time.Second)
@@ -256,6 +290,41 @@ func (r *Repository) SetStatus(ctx context.Context, userID string, status Status
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// SetStatusPreservingActiveAdmin updates the status unless doing so would
+// leave no active admin able to access the console.
+func (r *Repository) SetStatusPreservingActiveAdmin(ctx context.Context, userID string, status Status) error {
+	now := time.Now().UTC().Truncate(time.Second)
+	var deletedAt any
+	if status == StatusDeleted {
+		deletedAt = now
+	}
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE users
+		SET status = ?, deleted_at = ?, updated_at = ?
+		WHERE id = ?
+		  AND NOT (
+		    role = ?
+		    AND status = ?
+		    AND ? != ?
+		    AND (SELECT COUNT(*) FROM users WHERE role = ? AND status = ?) <= 1
+		  )
+	`,
+		string(status), deletedAt, now, userID,
+		string(RoleAdmin), string(StatusActive), string(status), string(StatusActive),
+		string(RoleAdmin), string(StatusActive),
+	)
+	if err != nil {
+		return fmt.Errorf("user: set status: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, err := r.GetByID(ctx, userID); errors.Is(err, ErrNotFound) {
+			return ErrNotFound
+		}
+		return ErrLastActiveAdmin
 	}
 	return nil
 }

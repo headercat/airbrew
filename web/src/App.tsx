@@ -13,6 +13,8 @@ import AdminBranding from "@/pages/admin/branding";
 import AdminOAuth from "@/pages/admin/oauth";
 import AdminSystem from "@/pages/admin/system";
 import DashboardPage from "@/pages/dashboard";
+import DrivePage from "@/pages/drive";
+import DriveSharePage from "@/pages/drive/share";
 import LoginPage from "@/pages/login";
 import ModuleStubPage from "@/pages/module-stub";
 import NotFoundPage from "@/pages/not-found";
@@ -42,6 +44,8 @@ export default function App() {
           </RedirectIfSignedIn>
         }
       />
+
+      <Route path="/s/:token" element={<DriveSharePage />} />
 
       <Route
         element={
@@ -76,6 +80,9 @@ export default function App() {
           <Route path=":id" element={<PasswordView />} />
           <Route path=":id/edit" element={<PasswordEditor />} />
         </Route>
+
+        {/* Drive — file storage with folders, shares, trash. */}
+        <Route path="/drive" element={<DrivePage />} />
 
         <Route path="/:module" element={<ModuleStubPage />} />
       </Route>

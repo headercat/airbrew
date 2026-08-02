@@ -52,7 +52,7 @@ export const MODULES: ModuleMeta[] = [
     descriptionKey: "dashboard.modules.drive.description",
     icon: Cloud,
     path: "/drive",
-    status: "not_implemented",
+    status: "alpha",
   },
   {
     key: "contacts",

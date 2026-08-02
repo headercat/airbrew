@@ -308,10 +308,18 @@ type VaultContextValue = {
     newPassword: string,
   ) => Promise<void>;
   // Item history: list decrypted revision snapshots and restore one.
-  listItemRevisions: (
-    itemId: string,
-  ) => Promise<
-    { id: string; name: string; revision: number; createdAt: string }[]
+  listItemRevisions: (itemId: string) => Promise<
+    {
+      id: string;
+      name: string;
+      type: VaultItemType;
+      folderId: string;
+      hasNotes: boolean;
+      favorite: boolean;
+      reprompt: boolean;
+      revision: number;
+      createdAt: string;
+    }[]
   >;
   restoreItemRevision: (itemId: string, revId: string) => Promise<void>;
 };
@@ -983,19 +991,39 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     const out: {
       id: string;
       name: string;
+      type: VaultItemType;
+      folderId: string;
+      hasNotes: boolean;
+      favorite: boolean;
+      reprompt: boolean;
       revision: number;
       createdAt: string;
     }[] = [];
     for (const r of revs) {
       let name = "—";
+      let hasNotes = Boolean(r.notes_cipher && r.notes_nonce);
       try {
         name = await decryptString(key, r.name_cipher, r.name_nonce);
       } catch {
         name = "—";
       }
+      if (r.notes_cipher && r.notes_nonce) {
+        try {
+          hasNotes = Boolean(
+            await decryptString(key, r.notes_cipher, r.notes_nonce),
+          );
+        } catch {
+          hasNotes = true;
+        }
+      }
       out.push({
         id: r.id,
         name,
+        type: r.type,
+        folderId: r.folder_id,
+        hasNotes,
+        favorite: r.favorite,
+        reprompt: r.reprompt,
         revision: r.revision,
         createdAt: r.created_at,
       });

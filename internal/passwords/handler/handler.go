@@ -453,13 +453,19 @@ func (h *Handler) sync(w http.ResponseWriter, r *http.Request) {
 // --- history ----------------------------------------------------------------
 
 type itemRevisionResp struct {
-	ID         string `json:"id"`
-	NameCipher string `json:"name_cipher"`
-	NameNonce  string `json:"name_nonce"`
-	DataCipher string `json:"data_cipher"`
-	DataNonce  string `json:"data_nonce"`
-	Revision   int64  `json:"revision"`
-	CreatedAt  string `json:"created_at"`
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	FolderID    string `json:"folder_id"`
+	NameCipher  string `json:"name_cipher"`
+	NameNonce   string `json:"name_nonce"`
+	DataCipher  string `json:"data_cipher"`
+	DataNonce   string `json:"data_nonce"`
+	NotesCipher string `json:"notes_cipher"`
+	NotesNonce  string `json:"notes_nonce"`
+	Favorite    bool   `json:"favorite"`
+	Reprompt    bool   `json:"reprompt"`
+	Revision    int64  `json:"revision"`
+	CreatedAt   string `json:"created_at"`
 }
 
 func (h *Handler) listRevisions(w http.ResponseWriter, r *http.Request) {
@@ -476,8 +482,11 @@ func (h *Handler) listRevisions(w http.ResponseWriter, r *http.Request) {
 	out := make([]itemRevisionResp, 0, len(revs))
 	for _, rv := range revs {
 		out = append(out, itemRevisionResp{
-			ID: rv.ID, NameCipher: rv.NameCipher, NameNonce: rv.NameNonce,
+			ID: rv.ID, Type: string(rv.Type), FolderID: rv.FolderID,
+			NameCipher: rv.NameCipher, NameNonce: rv.NameNonce,
 			DataCipher: rv.DataCipher, DataNonce: rv.DataNonce,
+			NotesCipher: rv.NotesCipher, NotesNonce: rv.NotesNonce,
+			Favorite: rv.Favorite, Reprompt: rv.Reprompt,
 			Revision: rv.Revision, CreatedAt: rv.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}

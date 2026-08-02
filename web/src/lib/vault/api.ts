@@ -241,10 +241,16 @@ export async function uploadAttachment(
 
 export type ItemRevision = {
   id: string;
+  type: VaultItemType;
+  folder_id: string;
   name_cipher: string;
   name_nonce: string;
   data_cipher: string;
   data_nonce: string;
+  notes_cipher: string;
+  notes_nonce: string;
+  favorite: boolean;
+  reprompt: boolean;
   revision: number;
   created_at: string;
 };

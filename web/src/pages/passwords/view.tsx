@@ -448,6 +448,11 @@ function TotpField({ label, secret }: { label: string; secret: string }) {
 type RevSummary = {
   id: string;
   name: string;
+  type: DecryptedItem["type"];
+  folderId: string;
+  hasNotes: boolean;
+  favorite: boolean;
+  reprompt: boolean;
   revision: number;
   createdAt: string;
 };
@@ -533,6 +538,12 @@ function HistoryCard({ itemId }: { itemId: string }) {
                 <p className="truncate text-sm">{r.name}</p>
                 <p className="text-xs text-muted-foreground">
                   {new Date(r.createdAt).toLocaleString()} · rev {r.revision}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t(`passwords.types.${r.type}`)}
+                  {r.hasNotes ? ` · ${t("passwords.editor.notes")}` : ""}
+                  {r.favorite ? ` · ${t("passwords.editor.favorite")}` : ""}
+                  {r.reprompt ? ` · ${t("passwords.editor.reprompt")}` : ""}
                 </p>
               </div>
               <Button

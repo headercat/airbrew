@@ -556,7 +556,7 @@
     },
     "actions": {
       "title": "Vault actions",
-      "description": "Back up or restore items, folders, and attachments, or change your master password.",
+      "description": "Back up or restore items, folders, and attachments, or change your master password. Import only supports backups that unlock with this master password.",
       "export": "Export backup",
       "import": "Import backup",
       "exported": "Encrypted backup downloaded.",

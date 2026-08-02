@@ -124,8 +124,14 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]LogEntry, int, erro
 		args = append(args, f.EventType)
 	}
 	if f.ActorID != "" {
-		where += " AND actor_user_id = ?"
-		args = append(args, f.ActorID)
+		where += ` AND (
+			actor_user_id = ?
+			OR actor_client_id = ?
+			OR actor_user_id IN (
+				SELECT id FROM users WHERE email LIKE ? COLLATE NOCASE
+			)
+		)`
+		args = append(args, f.ActorID, f.ActorID, "%"+f.ActorID+"%")
 	}
 	if f.TargetType != "" {
 		where += " AND target_type = ?"

@@ -68,6 +68,47 @@ func (r *Repository) CreateNode(ctx context.Context, n *Node) error {
 	return nil
 }
 
+// CreateNodeWithQuota inserts a file node and enforces the per-user quota
+// atomically in one transaction, closing the TOCTOU window between a standalone
+// size read and the insert. quota <= 0 disables the check (unlimited).
+func (r *Repository) CreateNodeWithQuota(ctx context.Context, n *Node, quota int64) error {
+	now := time.Now().UTC().Truncate(time.Second)
+	n.CreatedAt = now
+	n.UpdatedAt = now
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("drive: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck
+	if quota > 0 {
+		var used sql.NullInt64
+		if err := tx.QueryRowContext(ctx,
+			"SELECT COALESCE(SUM(size_bytes),0) FROM drive_nodes WHERE user_id = ? AND kind = 'file' AND deleted_at IS NULL",
+			n.UserID).Scan(&used); err != nil {
+			return fmt.Errorf("drive: quota read: %w", err)
+		}
+		if used.Int64+n.SizeBytes > quota {
+			return ErrQuotaExceeded
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO drive_nodes
+		  (id, user_id, parent_id, kind, name, blob_path, content_type,
+		   size_bytes, sha256, is_starred, deleted_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		n.ID, n.UserID, nullableParent(n.ParentID), string(n.Kind), n.Name,
+		nullable(n.BlobPath), nullable(n.ContentType), n.SizeBytes, nullable(n.SHA256),
+		boolToInt(n.IsStarred), nil, now, now,
+	); err != nil {
+		return fmt.Errorf("drive: insert node: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("drive: commit node: %w", err)
+	}
+	return nil
+}
+
 // GetNode returns one live node owned by userID.
 func (r *Repository) GetNode(ctx context.Context, userID, id string) (*Node, error) {
 	row := r.db.QueryRowContext(ctx,
@@ -114,8 +155,8 @@ func (r *Repository) ListNodes(ctx context.Context, f ListFilter) ([]*Node, erro
 	case "search":
 		q += " AND deleted_at IS NULL"
 		if s := strings.TrimSpace(f.Search); s != "" {
-			q += " AND name LIKE ?"
-			args = append(args, "%"+s+"%")
+			q += " AND name LIKE ? ESCAPE '\\'"
+			args = append(args, "%"+likeEscape(s)+"%")
 		}
 	default: // regular listing
 		q += " AND deleted_at IS NULL"
@@ -260,18 +301,28 @@ func (r *Repository) Trash(ctx context.Context, userID, id string) error {
 	return nil
 }
 
-// Restore clears the soft-delete flag for a node and its descendants.
+// Restore clears the soft-delete flag for a node and the descendants that were
+// trashed together with it (same cascade timestamp). A descendant that was
+// trashed independently — before or after the folder — stays in the trash.
 func (r *Repository) Restore(ctx context.Context, userID, id string) error {
+	n, err := r.GetNodeAny(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	if n.DeletedAt == nil {
+		return ErrNotFound
+	}
+	marker := *n.DeletedAt
 	now := time.Now().UTC().Truncate(time.Second)
 	res, err := r.db.ExecContext(ctx, `
 		WITH RECURSIVE subtree(id) AS (
-		  SELECT id FROM drive_nodes WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL
+		  SELECT id FROM drive_nodes WHERE id = ? AND user_id = ?
 		  UNION ALL
 		  SELECT c.id FROM drive_nodes c JOIN subtree ON c.parent_id = subtree.id
 		)
 		UPDATE drive_nodes SET deleted_at = NULL, updated_at = ?
-		WHERE id IN (SELECT id FROM subtree)
-	`, id, userID, now)
+		WHERE id IN (SELECT id FROM subtree) AND deleted_at = ?
+	`, id, userID, now, marker)
 	if err != nil {
 		return fmt.Errorf("drive: restore: %w", err)
 	}
@@ -431,6 +482,13 @@ func (r *Repository) allBlobPathsWhere(ctx context.Context, q string) ([]string,
 const shareColumns = `id, node_id, user_id, token, CASE WHEN password_hash IS NOT NULL THEN 1 ELSE 0 END,
 	expires_at, downloads, is_active, created_at, updated_at`
 
+// shareColumnsForJoin qualifies the share columns with "s." and appends the
+// joined node's name + a trashed flag (CASE). Used by ListSharesWithNode.
+const shareColumnsForJoin = `s.id, s.node_id, s.user_id, s.token,
+	CASE WHEN s.password_hash IS NOT NULL THEN 1 ELSE 0 END,
+	s.expires_at, s.downloads, s.is_active, s.created_at, s.updated_at,
+	COALESCE(n.name,''), CASE WHEN n.deleted_at IS NULL THEN 0 ELSE 1 END`
+
 // CreateShare inserts a share row.
 func (r *Repository) CreateShare(ctx context.Context, s *Share, passwordHash string) error {
 	now := time.Now().UTC().Truncate(time.Second)
@@ -474,6 +532,30 @@ func (r *Repository) ListShares(ctx context.Context, userID string) ([]*Share, e
 	var out []*Share
 	for rows.Next() {
 		s, err := scanShare(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// ListSharesWithNode returns the owner's shares joined to their source node so
+// the Shared view can label each link and flag a link whose source is trashed.
+func (r *Repository) ListSharesWithNode(ctx context.Context, userID string) ([]*Share, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT `+shareColumnsForJoin+`
+		FROM drive_shares s
+		LEFT JOIN drive_nodes n ON n.id = s.node_id
+		WHERE s.user_id = ?
+		ORDER BY s.created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Share
+	for rows.Next() {
+		s, err := scanShareWithNode(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -650,6 +732,20 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// likeEscape escapes LIKE wildcards (\, %, _) so a user search term is matched
+// literally. Pair with "LIKE ? ESCAPE '\\'".
+func likeEscape(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '\\', '%', '_':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func sortClause(by string, desc bool) string {

@@ -68,11 +68,14 @@ func (h *Handler) downloadShare(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Disposition", disposition(n.Name, parseBool(r.URL.Query().Get("inline"))))
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if n.SizeBytes > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(n.SizeBytes, 10))
 	}
-	h.svc.IncDownload(r.Context(), token)
-	_, _ = io.Copy(w, body)
+	if _, err := io.Copy(w, body); err == nil {
+		h.svc.IncDownload(r.Context(), token) // count only successful transfers
+	}
 }
 
 // writeShareErr maps share-access errors with the codes a public caller needs.

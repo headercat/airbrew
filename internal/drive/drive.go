@@ -81,9 +81,17 @@ func (m *Module) Status(w http.ResponseWriter, r *http.Request) {
 }
 
 // RegisterPublicRoutes mounts routes reachable without a session: the status
-// endpoint and the public share accessors.
+// endpoint and the public share accessors. (Status may also be mounted
+// standalone; share routes are rate-limited by the caller — see server.go.)
 func (m *Module) RegisterPublicRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/drive/status", m.Status)
+	m.h.RegisterShareRoutes(mux)
+}
+
+// RegisterShareRoutes mounts only the public share accessors
+// (/api/drive/s/{token}...). The caller is expected to wrap these in a per-IP
+// rate limiter to blunt password brute-force.
+func (m *Module) RegisterShareRoutes(mux *http.ServeMux) {
 	m.h.RegisterShareRoutes(mux)
 }
 

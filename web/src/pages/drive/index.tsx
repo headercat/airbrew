@@ -112,13 +112,8 @@ export default function DrivePage() {
           order,
         });
         setNodes(res.nodes ?? []);
-      } else if (view === "shared") {
-        const res = await drive.listShares();
-        // For "shared", render as a flat list derived from shares; nodes list
-        // isn't directly applicable, handled separately below.
-        setNodes([]);
-        void res;
       }
+      // view === "shared" is owned entirely by <SharedView /> (its own fetch).
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -906,8 +901,10 @@ function MoveModal({
   useEffect(() => {
     if (node) {
       setErr(null);
+      // List every folder at any depth (parent:"*" = any parent) so the user
+      // can move into nested folders, not just top-level ones.
       drive
-        .list({ kind: "folder" })
+        .list({ kind: "folder", parent: "*" })
         .then((r) => setFolders(r.nodes ?? []))
         .catch(() => setFolders([]));
     }

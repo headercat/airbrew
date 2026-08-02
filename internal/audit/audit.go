@@ -237,6 +237,16 @@ func humanMessage(actor, target string, e Entry) string {
 		return fmt.Sprintf("%s created folder %s", actor, metadataOrTarget(e, "name", target))
 	case "drive.file_uploaded":
 		return fmt.Sprintf("%s uploaded file %s", actor, metadataOrTarget(e, "name", target))
+	case "drive.file_renamed":
+		return fmt.Sprintf("%s renamed %s", actor, target)
+	case "drive.file_moved":
+		return fmt.Sprintf("%s moved %s", actor, target)
+	case "drive.file_starred":
+		return fmt.Sprintf("%s toggled star on %s", actor, target)
+	case "drive.file_copied":
+		return fmt.Sprintf("%s copied %s", actor, target)
+	case "drive.file_restored":
+		return fmt.Sprintf("%s restored %s from trash", actor, target)
 	case "drive.file_trashed":
 		return fmt.Sprintf("%s moved %s to trash", actor, target)
 	case "drive.file_deleted":

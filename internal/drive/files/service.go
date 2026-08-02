@@ -154,18 +154,8 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*Node, error) {
 		blobPath = p
 	}
 
-	// Quota check against the freshly-counted size.
-	if cfg.QuotaBytes > 0 {
-		used, err := s.repo.TotalSize(ctx, in.UserID)
-		if err != nil {
-			s.deleteBlob(ctx, blobPath)
-			return nil, err
-		}
-		if used+size > cfg.QuotaBytes {
-			s.deleteBlob(ctx, blobPath)
-			return nil, fmt.Errorf("%w: used %d + %d > quota %d", ErrQuotaExceeded, used, size, cfg.QuotaBytes)
-		}
-	}
+	// Quota is enforced atomically with the insert (CreateNodeWithQuota) to
+	// close the TOCTOU window between a standalone size read and the insert.
 
 	n := &Node{
 		ID:          nextID(),
@@ -178,7 +168,11 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*Node, error) {
 		SizeBytes:   size,
 		SHA256:      hex.EncodeToString(h.Sum(nil)),
 	}
-	if err := s.repo.CreateNode(ctx, n); err != nil {
+	if err := s.repo.CreateNodeWithQuota(ctx, n, cfg.QuotaBytes); err != nil {
+		if errors.Is(err, ErrQuotaExceeded) {
+			s.deleteBlob(ctx, blobPath)
+			return nil, fmt.Errorf("%w: quota %d exceeded", ErrQuotaExceeded, cfg.QuotaBytes)
+		}
 		s.deleteBlob(ctx, blobPath)
 		return nil, err
 	}
@@ -319,7 +313,7 @@ func (s *Service) Copy(ctx context.Context, userID, id, newParentID, newName str
 		SizeBytes:   src.SizeBytes,
 		SHA256:      src.SHA256,
 	}
-	if err := s.repo.CreateNode(ctx, dup); err != nil {
+	if err := s.repo.CreateNodeWithQuota(ctx, dup, s.Config().QuotaBytes); err != nil {
 		s.deleteBlob(ctx, blobPath)
 		return nil, err
 	}
@@ -474,9 +468,9 @@ func cleanName(name string) string {
 	if strings.ContainsAny(name, "/\\\x00") {
 		return ""
 	}
-	// Cap length to keep the UI and DB sane.
-	if len(name) > 255 {
-		name = name[:255]
+	// Cap length by rune (not byte) so a multi-byte name isn't split mid-rune.
+	if r := []rune(name); len(r) > 255 {
+		name = string(r[:255])
 	}
 	return name
 }

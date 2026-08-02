@@ -91,13 +91,21 @@ func Build(d Deps) *http.ServeMux {
 	adminSub.Handle("/api/admin/mail/", admin.RequireAdmin(authMod.UserRepo)(mailAdminSub))
 	mailMod.Start(d.Ctx) // inbound poll coordinator
 
-	// Drive module. Status + public share links are public; file/folder/share
-	// management endpoints require a session; storage limits live under admin.
+	// Drive module. Status + public share links are public (share routes are
+	// rate-limited per IP to blunt password brute-force); file/folder/share
+	// management endpoints require a session plus module-enable gating; storage
+	// limits live under admin.
 	driveMod := drive.New(d.Ctx, d.DB.DB, stubState, adminMod.Audit(), d.Blobs)
-	driveMod.RegisterPublicRoutes(mux) // GET /api/drive/status, GET /api/drive/s/{token}
+	mux.HandleFunc("GET /api/drive/status", driveMod.Status)
+	shareLimiter := middleware.NewRateLimiter(30, time.Minute)
+	shareSub := http.NewServeMux()
+	driveMod.RegisterShareRoutes(shareSub)
+	mux.Handle("/api/drive/s/", middleware.RateLimit(shareLimiter, middleware.ClientIPKey)(shareSub))
 	driveSub := http.NewServeMux()
 	driveMod.RegisterRoutes(driveSub)
-	mux.Handle("/api/drive/", authMod.SessionMiddleware(driveSub))
+	mux.Handle("/api/drive/", authMod.SessionMiddleware(middleware.Chain(driveSub,
+		modules.RequireEnabled(stubState, "drive"),
+	)))
 	driveAdminSub := http.NewServeMux()
 	driveMod.RegisterAdminRoutes(driveAdminSub)
 	adminSub.Handle("/api/admin/drive/", admin.RequireAdmin(authMod.UserRepo)(driveAdminSub))

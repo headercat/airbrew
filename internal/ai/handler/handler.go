@@ -16,6 +16,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -31,17 +32,23 @@ import (
 	"github.com/headercat/airbrew/internal/httpserver/response"
 )
 
+// Runtime is the contract Handler needs from the agent runtime. The
+// production *agent.Runtime satisfies it; tests can substitute their own.
+type Runtime interface {
+	Run(ctx context.Context, in agent.RunInput) <-chan agent.Event
+}
+
 // Handler exposes the user-facing AI endpoints.
 type Handler struct {
 	conv     *conv.Service
 	agents   *agent.DefinitionRepo
-	runtime  *agent.Runtime
+	runtime  Runtime
 	audit    *audit.Service
 }
 
 // New builds a Handler. runtime may be nil when providers are not
 // configured; in that case chat returns a friendly 503.
-func New(c *conv.Service, a *agent.DefinitionRepo, rt *agent.Runtime, auditSvc *audit.Service) *Handler {
+func New(c *conv.Service, a *agent.DefinitionRepo, rt Runtime, auditSvc *audit.Service) *Handler {
 	return &Handler{conv: c, agents: a, runtime: rt, audit: auditSvc}
 }
 

@@ -82,6 +82,11 @@ type Share struct {
 	IsActive    bool
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+
+	// NodeName / NodeTrashed are populated by the "list with node" join query
+	// so the owner's Shared view can label links and flag trashed sources.
+	NodeName    string
+	NodeTrashed bool
 }
 
 // CreateFolderInput carries the editable fields for creating a folder.

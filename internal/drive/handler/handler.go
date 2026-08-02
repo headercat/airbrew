@@ -188,12 +188,24 @@ func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	parentID := r.URL.Query().Get("parent")
 
+	// Cap the request body at the per-upload limit (plus slack for multipart
+	// overhead) so an oversized upload is rejected early by the HTTP layer,
+	// not only after the streaming counter trips.
+	if max := h.svc.Config().MaxUploadBytes; max > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, max+(1<<20))
+	}
+
 	var name, contentType string
 	var body io.Reader
 
 	if mt := r.Header.Get("Content-Type"); strings.HasPrefix(mt, "multipart/form-data") {
-		if err := r.ParseMultipartForm(32 << 20); err != nil {
-			respondErr(w, http.StatusBadRequest, "invalid_request", "could not parse multipart: "+err.Error())
+		if max := h.svc.Config().MaxUploadBytes; max > 0 {
+			_ = r.ParseMultipartForm(max + (1 << 20))
+		} else {
+			_ = r.ParseMultipartForm(32 << 20)
+		}
+		if r.MultipartForm == nil {
+			respondErr(w, http.StatusBadRequest, "invalid_request", "could not parse multipart")
 			return
 		}
 		f, hdr, err := r.FormFile("file")
@@ -296,15 +308,19 @@ func (h *Handler) patchFile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var n *files.Node
 	var err error
+	var event string
 	switch {
 	case req.Name != nil:
 		n, err = h.svc.Rename(ctx, sess.UserID, id, *req.Name)
+		event = "drive.file_renamed"
 	case req.ParentID != nil:
 		n, err = h.svc.Move(ctx, sess.UserID, id, *req.ParentID)
+		event = "drive.file_moved"
 	case req.Starred != nil:
 		err = h.svc.SetStarred(ctx, sess.UserID, id, *req.Starred)
 		if err == nil {
 			n, _ = h.svc.Get(ctx, sess.UserID, id)
+			event = "drive.file_starred"
 		}
 	default:
 		n, err = h.svc.Get(ctx, sess.UserID, id)
@@ -312,6 +328,13 @@ func (h *Handler) patchFile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+	if event != "" {
+		h.audit.Log(ctx, audit.Entry{
+			EventType: event, ActorUserID: sess.UserID,
+			TargetType: "drive_node", TargetID: id,
+			IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		})
 	}
 	jsonResp(w, http.StatusOK, toNodeResp(n))
 }
@@ -355,6 +378,11 @@ func (h *Handler) restoreFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "drive.file_restored", ActorUserID: sess.UserID,
+		TargetType: "drive_node", TargetID: r.PathValue("id"),
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
 	jsonResp(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -378,6 +406,12 @@ func (h *Handler) copyFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	h.audit.Log(r.Context(), audit.Entry{
+		EventType: "drive.file_copied", ActorUserID: sess.UserID,
+		TargetType: "drive_node", TargetID: r.PathValue("id"),
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		Metadata:  map[string]any{"copy_id": n.ID},
+	})
 	jsonResp(w, http.StatusCreated, toNodeResp(n))
 }
 
@@ -398,6 +432,8 @@ func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Disposition", disposition(n.Name, parseBool(r.URL.Query().Get("inline"))))
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if n.SizeBytes > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(n.SizeBytes, 10))
 	}

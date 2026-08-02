@@ -209,7 +209,6 @@ func (r *Repository) CountNodesFiltered(ctx context.Context, f ListFilter) (int,
 	}
 	return n, nil
 }
-}
 
 // CountNodes returns the number of live nodes matching a parent.
 func (r *Repository) CountNodes(ctx context.Context, userID, parentID string) (int, error) {

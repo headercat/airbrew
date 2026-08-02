@@ -629,7 +629,8 @@
     "inTrash": "휴지통에 있음",
     "colName": "이름",
     "colSize": "크기",
-    "colModified": "수정됨"
+    "colModified": "수정됨",
+    "loadMore": "더 보기"
   },
   "share": {
     "expired": "이 공유 링크가 만료되었습니다.",

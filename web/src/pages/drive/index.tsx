@@ -92,29 +92,41 @@ export default function DrivePage() {
       .catch(() => {});
   }, []);
 
+  const listArgs = useCallback(
+    (offset: number) => {
+      const base = { sort, order, limit: 100, offset };
+      if (view === "starred") return { ...base, folder: "starred" };
+      if (view === "trash") return { ...base, folder: "trash" };
+      if (view === "search") return { ...base, folder: "search", q: query };
+      return { ...base, parent };
+    },
+    [view, parent, query, sort, order],
+  );
+
   const refresh = useCallback(async () => {
+    if (view === "shared") return; // owned by <SharedView />
     setLoading(true);
     setError(null);
     try {
-      let res: { nodes?: DriveNode[]; total?: number } | null = null;
-      if (view === "files") {
-        res = await drive.list({ parent, sort, order });
-      } else if (view === "starred") {
-        res = await drive.list({ folder: "starred", sort, order });
-      } else if (view === "trash") {
-        res = await drive.list({ folder: "trash", sort, order });
-      } else if (view === "search") {
-        res = await drive.list({ folder: "search", q: query, sort, order });
-      }
-      setNodes(res?.nodes ?? []);
-      setTotal(res?.total ?? 0);
-      // view === "shared" is owned entirely by <SharedView /> (its own fetch).
+      const res = await drive.list(listArgs(0));
+      setNodes(res.nodes ?? []);
+      setTotal(res.total ?? 0);
     } catch (e) {
       setError(errMsg(e));
     } finally {
       setLoading(false);
     }
-  }, [view, parent, query, sort, order]);
+  }, [view, listArgs]);
+
+  const loadMore = useCallback(async () => {
+    try {
+      const res = await drive.list(listArgs(nodes.length));
+      setNodes((prev) => [...prev, ...(res.nodes ?? [])]);
+      setTotal(res.total ?? 0);
+    } catch (e) {
+      setError(errMsg(e));
+    }
+  }, [listArgs, nodes.length]);
 
   useEffect(() => {
     void refresh();
@@ -465,6 +477,14 @@ export default function DrivePage() {
           />
         )}
       </Card>
+
+      {view !== "shared" && !loading && total > nodes.length && (
+        <div className="flex justify-center">
+          <Button variant="outline" size="sm" onClick={loadMore}>
+            {t("drive.loadMore")} ({nodes.length} / {total})
+          </Button>
+        </div>
+      )}
 
       {view === "trash" && nodes.length > 0 && (
         <div className="flex justify-end">

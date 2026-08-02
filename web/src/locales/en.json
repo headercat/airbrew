@@ -629,7 +629,8 @@
     "inTrash": "In trash",
     "colName": "Name",
     "colSize": "Size",
-    "colModified": "Modified"
+    "colModified": "Modified",
+    "loadMore": "Load more"
   },
   "share": {
     "expired": "This share link has expired.",

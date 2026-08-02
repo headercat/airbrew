@@ -67,12 +67,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	mux := server.Build(server.Deps{
 		DB:             database,
 		SessionMax:     cfg.SessionMaxAge,
 		WebFS:          web.DistFS,
 		WebProxyTarget: cfg.WebProxyTarget,
 		Blobs:          blobs,
+		Ctx:            ctx,
 	})
 
 	srv := httpserver.New(httpserver.Deps{
@@ -80,9 +84,6 @@ func main() {
 		Mux:    mux,
 		Logger: logger,
 	})
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	go func() {
 		if err := srv.Start(); err != nil {

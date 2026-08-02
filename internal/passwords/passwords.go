@@ -5,11 +5,17 @@
 // convention as the other feature modules; all other endpoints require an
 // authenticated browser session (enforced by the session middleware in
 // server.go) and carry only ciphertext.
+//
+// On construction (when ctx is non-nil) the module starts a background janitor
+// that purges old tombstones and orphaned attachment blobs; the loop exits when
+// ctx is cancelled.
 package passwords
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/headercat/airbrew/internal/audit"
@@ -28,9 +34,15 @@ type Module struct {
 }
 
 // New builds the passwords Module. blobs backs attachment upload/download.
-func New(db *sql.DB, state *modules.State, auditSvc *audit.Service, blobs blob.Store) *Module {
+func New(ctx context.Context, db *sql.DB, state *modules.State, auditSvc *audit.Service, blobs blob.Store) *Module {
 	repo := vault.NewRepository(db)
 	svc := vault.NewService(repo)
+	// Start the background janitor (tombstone purge + orphan blob sweep). It
+	// self-cancels with ctx; on a nil ctx we skip it (e.g. in tests).
+	if ctx != nil {
+		jan := vault.NewJanitor(repo, blobs, slog.Default())
+		go jan.Start(ctx)
+	}
 	return &Module{
 		svc:   svc,
 		state: state,

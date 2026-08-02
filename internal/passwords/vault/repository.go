@@ -574,6 +574,52 @@ func (r *Repository) DeleteAttachment(ctx context.Context, userID, itemID, attac
 	return nil
 }
 
+// --- janitor ----------------------------------------------------------------
+
+// PurgeOldTombstones hard-deletes folders and items soft-deleted before the
+// cutoff, along with their archived history. This does NOT bump the sync
+// cursor (tombstone purge is invisible to clients — they already saw the
+// tombstone and dropped the row locally). It returns the number of folders and
+// item rows removed.
+func (r *Repository) PurgeOldTombstones(ctx context.Context, olderThan time.Time) (folders, items int64, err error) {
+	// Hard-deleting items cascades to vault_item_revisions and (now empty)
+	// vault_attachments via FK ON DELETE CASCADE.
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM vault_items WHERE deleted_at IS NOT NULL AND deleted_at < ?`, olderThan)
+	if err != nil {
+		return 0, 0, fmt.Errorf("vault: purge item tombstones: %w", err)
+	}
+	items, _ = res.RowsAffected()
+	res, err = r.db.ExecContext(ctx,
+		`DELETE FROM vault_folders WHERE deleted_at IS NOT NULL AND deleted_at < ?`, olderThan)
+	if err != nil {
+		return items, 0, fmt.Errorf("vault: purge folder tombstones: %w", err)
+	}
+	folders, _ = res.RowsAffected()
+	return folders, items, nil
+}
+
+// AllAttachmentBlobPaths returns every blob_path stored in vault_attachments.
+// The janitor diffs this set against the blob store listing to find and delete
+// orphaned blobs (e.g. from a crash between Save and the DB insert, or a failed
+// blob Delete after a row was removed).
+func (r *Repository) AllAttachmentBlobPaths(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT blob_path FROM vault_attachments`)
+	if err != nil {
+		return nil, fmt.Errorf("vault: read attachment blob paths: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func scanAttachment(row scanner) (Attachment, error) {
 	var a Attachment
 	err := row.Scan(

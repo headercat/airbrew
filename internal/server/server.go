@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"io/fs"
 	"net/http"
@@ -30,6 +31,9 @@ type Deps struct {
 	WebFS          fs.FS
 	WebProxyTarget string
 	Blobs          blob.Store
+	// Ctx is the process lifecycle context. Modules use it to start background
+	// loops (e.g. the vault janitor) that should stop on shutdown.
+	Ctx context.Context
 }
 
 // Build returns the root *http.ServeMux wired with every module.
@@ -69,7 +73,7 @@ func Build(d Deps) *http.ServeMux {
 
 	// Password vault. Status is public; the remaining endpoints require a
 	// session, so they are mounted on a sub-mux wrapped in SessionMiddleware.
-	pwMod := passwords.New(d.DB.DB, stubState, adminMod.Audit(), d.Blobs)
+	pwMod := passwords.New(d.Ctx, d.DB.DB, stubState, adminMod.Audit(), d.Blobs)
 	mux.HandleFunc("GET /api/vault/status", pwMod.Status)
 	pwSub := http.NewServeMux()
 	pwMod.RegisterRoutes(pwSub)

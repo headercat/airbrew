@@ -29,6 +29,10 @@ type Store interface {
 
 	// Delete removes the blob. Missing files are not an error.
 	Delete(ctx context.Context, path string) error
+
+	// List returns the relative paths ("namespace/name") of every blob under
+	// the given namespace. Used by janitors to find orphaned blobs.
+	List(ctx context.Context, namespace string) ([]string, error)
 }
 
 // LocalStore writes files under a single root directory.
@@ -100,6 +104,37 @@ func (s *LocalStore) Delete(ctx context.Context, path string) error {
 		return fmt.Errorf("blob: remove %q: %w", clean, err)
 	}
 	return nil
+}
+
+// List returns the relative paths ("namespace/name") of every blob under the
+// given namespace. A missing namespace directory yields an empty slice (no
+// error). It is used by janitors to find orphaned blobs.
+func (s *LocalStore) List(ctx context.Context, namespace string) ([]string, error) {
+	namespace = sanitizeSegment(namespace)
+	if namespace == "" {
+		return nil, errors.New("blob: namespace required")
+	}
+	dir := filepath.Join(s.root, namespace)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("blob: list %q: %w", dir, err)
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		out = append(out, namespace+"/"+e.Name())
+	}
+	return out, nil
 }
 
 // safeJoin prevents path traversal: requires the cleaned joined path to remain

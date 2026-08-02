@@ -97,8 +97,8 @@ type Request struct {
 }
 ```
 
-Drivers wrap `net/http`. SSE parsing for OpenAI/Ollama and NDJSON for
-Anthropic is local to each driver.
+Drivers wrap `net/http`. SSE parsing for OpenAI-compatible and Anthropic
+providers, plus NDJSON parsing for Ollama, is local to each driver.
 
 ## Agent runtime
 
@@ -171,8 +171,11 @@ planned but not yet wired; the registry is ready to host them.
 event: delta
 data: {"content":"Hello"}
 
+event: tool_start
+data: {"id":"...","name":"clock","args":"{}"}
+
 event: tool
-data: {"id":"...","name":"clock","args":{},"result":"..."}
+data: {"id":"...","name":"clock","args":"{}","result":"..."}
 
 event: done
 data: {"message_id":"...","usage":{"prompt_tokens":120,"completion_tokens":8}}
@@ -182,7 +185,7 @@ Errors mid-stream use:
 
 ```
 event: error
-data: {"error":"provider_timeout","description":"..."}
+data: {"code":"provider_upstream","description":"provider returned HTTP 429"}
 ```
 
 ## Token accounting

@@ -196,6 +196,10 @@ func (c *openAIClient) streamSSE(ctx context.Context, body io.Reader, out chan<-
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue // tolerate keep-alive noise
 		}
+		if chunk.Error != nil {
+			out <- Delta{Kind: DeltaError, Err: fmt.Errorf("openai stream error: %s", chunk.Error.Message)}
+			return
+		}
 		if chunk.Usage != nil {
 			out <- Delta{Kind: DeltaDone, Usage: &Usage{
 				PromptTokens:     chunk.Usage.PromptTokens,
@@ -254,6 +258,13 @@ type runningToolCall struct {
 type openAIChunk struct {
 	Choices []openAIChoice `json:"choices"`
 	Usage   *openAIUsage   `json:"usage,omitempty"`
+	Error   *openAIError   `json:"error,omitempty"`
+}
+
+type openAIError struct {
+	Message string `json:"message"`
+	Type    string `json:"type,omitempty"`
+	Code    string `json:"code,omitempty"`
 }
 
 type openAIChoice struct {

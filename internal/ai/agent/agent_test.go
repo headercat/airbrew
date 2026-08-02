@@ -285,6 +285,26 @@ func TestRuntimeProviderError(t *testing.T) {
 	}
 }
 
+func TestRuntimeRunLock(t *testing.T) {
+	rt := &Runtime{}
+	unlock, ok := rt.tryLockRun("u1", "c1")
+	if !ok {
+		t.Fatal("first lock should succeed")
+	}
+	if _, ok := rt.tryLockRun("u1", "c1"); ok {
+		t.Fatal("second lock should fail")
+	}
+	unlockOther, ok := rt.tryLockRun("u1", "c2")
+	if !ok {
+		t.Fatal("different conversation should lock")
+	}
+	unlockOther()
+	unlock()
+	if _, ok := rt.tryLockRun("u1", "c1"); !ok {
+		t.Fatal("lock should succeed after unlock")
+	}
+}
+
 func TestBuildProviderMessagesReplacesStaleSystem(t *testing.T) {
 	hist := []provider.Message{
 		{Role: provider.RoleSystem, Content: "old system"},

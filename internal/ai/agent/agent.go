@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/headercat/airbrew/internal/ai/conv"
 	"github.com/headercat/airbrew/internal/ai/provider"
@@ -51,6 +52,10 @@ type ErrorBody struct {
 	Description string `json:"description"`
 }
 
+// ErrRunInProgress indicates another assistant turn is already running
+// for the same user conversation.
+var ErrRunInProgress = errors.New("agent: conversation run already in progress")
+
 // Spec is the per-conversation snapshot the runtime executes against.
 // The handler builds it from the conversation row.
 type Spec struct {
@@ -64,8 +69,10 @@ type Spec struct {
 
 // Runtime wires together everything Run needs.
 type Runtime struct {
-	conv  *conv.Service
-	tools *ToolRegistry
+	conv       *conv.Service
+	tools      *ToolRegistry
+	runMu      sync.Mutex
+	activeRuns map[string]struct{}
 	// ResolveProvider returns an LLMClient for the active provider. It is
 	// injected so the runtime does not import the provider repository
 	// (and tests can substitute a fake).
@@ -74,7 +81,7 @@ type Runtime struct {
 
 // New returns a Runtime. tools and ResolveProvider are required.
 func New(c *conv.Service, tools *ToolRegistry, resolve func(ctx context.Context) (provider.LLMClient, error)) *Runtime {
-	return &Runtime{conv: c, tools: tools, ResolveProvider: resolve}
+	return &Runtime{conv: c, tools: tools, ResolveProvider: resolve, activeRuns: map[string]struct{}{}}
 }
 
 // AutoTitle runs a one-shot non-streaming turn that produces a short
@@ -147,13 +154,18 @@ func (rt *Runtime) Run(ctx context.Context, in RunInput) <-chan Event {
 	go func() {
 		defer close(out)
 		if err := rt.run(ctx, in, out); err != nil {
-			out <- Event{Kind: EventError, Err: toEventError(err)}
+			_ = sendEvent(ctx, out, Event{Kind: EventError, Err: toEventError(err)})
 		}
 	}()
 	return out
 }
 
 func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error {
+	unlock, ok := rt.tryLockRun(in.UserID, in.ConversationID)
+	if !ok {
+		return ErrRunInProgress
+	}
+	defer unlock()
 	if rt.ResolveProvider == nil {
 		return errors.New("agent: provider resolver not configured")
 	}
@@ -161,7 +173,9 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 	if err != nil {
 		return fmt.Errorf("resolve provider: %w", err)
 	}
-	out <- Event{Kind: EventMetadata, Content: cli.Model()}
+	if !sendEvent(ctx, out, Event{Kind: EventMetadata, Content: cli.Model()}) {
+		return ctx.Err()
+	}
 
 	// 1. Persist the user's prompt first so the conversation reflects the
 	//    request even if the provider call never returns.
@@ -205,7 +219,9 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 			switch d.Kind {
 			case provider.DeltaContent:
 				acc.content.WriteString(d.Content)
-				out <- Event{Kind: EventDelta, Content: d.Content}
+				if !sendEvent(ctx, out, Event{Kind: EventDelta, Content: d.Content}) {
+					return ctx.Err()
+				}
 			case provider.DeltaToolCallStart:
 				acc.startTool(d.Index, d.ToolCallID, d.ToolName)
 			case provider.DeltaToolCallArgs:
@@ -234,12 +250,14 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 			if perr != nil {
 				return fmt.Errorf("append assistant message: %w", perr)
 			}
-			out <- Event{
+			if !sendEvent(ctx, out, Event{
 				Kind: EventDone, MessageID: amsg.ID,
 				Usage: &provider.Usage{
 					PromptTokens:     lastUsage.PromptTokens,
 					CompletionTokens: lastUsage.CompletionTokens,
 				},
+			}) {
+				return ctx.Err()
 			}
 			return nil
 		}
@@ -257,15 +275,19 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 		}
 
 		for _, tc := range persistedToolCalls {
-			out <- Event{
+			if !sendEvent(ctx, out, Event{
 				Kind: EventToolStart, ToolCallID: tc.id, ToolName: tc.name,
 				ToolArgs: tc.args,
+			}) {
+				return ctx.Err()
 			}
 			result, _ := dispatch(ctx, rt.tools, allowedTools, tc.name, tc.args)
 			result = truncateToolResult(result)
-			out <- Event{
+			if !sendEvent(ctx, out, Event{
 				Kind: EventTool, ToolCallID: tc.id, ToolName: tc.name,
 				ToolArgs: tc.args, ToolResult: result,
+			}) {
+				return ctx.Err()
 			}
 			if _, err := rt.conv.AppendToolMessage(ctx, in.UserID, in.ConversationID,
 				tc.id, tc.name, result,
@@ -276,6 +298,33 @@ func (rt *Runtime) run(ctx context.Context, in RunInput, out chan<- Event) error
 	}
 
 	return fmt.Errorf("agent: hit max_turns (%d) without a terminal assistant turn", maxTurns)
+}
+
+func (rt *Runtime) tryLockRun(userID, conversationID string) (func(), bool) {
+	key := userID + "\x00" + conversationID
+	rt.runMu.Lock()
+	defer rt.runMu.Unlock()
+	if rt.activeRuns == nil {
+		rt.activeRuns = map[string]struct{}{}
+	}
+	if _, exists := rt.activeRuns[key]; exists {
+		return nil, false
+	}
+	rt.activeRuns[key] = struct{}{}
+	return func() {
+		rt.runMu.Lock()
+		delete(rt.activeRuns, key)
+		rt.runMu.Unlock()
+	}, true
+}
+
+func sendEvent(ctx context.Context, out chan<- Event, ev Event) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case out <- ev:
+		return true
+	}
 }
 
 func toolAllowList(keys []string) map[string]struct{} {
@@ -475,6 +524,9 @@ func toEventError(err error) *ErrorBody {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return &ErrorBody{Code: "timeout", Description: "request timed out"}
+	}
+	if errors.Is(err, ErrRunInProgress) {
+		return &ErrorBody{Code: "conversation_busy", Description: "conversation already has a running turn"}
 	}
 	// Surface only the top-level message; the wrapped chain may contain
 	// internal paths or DB errors that should not reach the SPA.

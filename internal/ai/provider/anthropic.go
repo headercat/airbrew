@@ -231,8 +231,14 @@ type anthropicEvent struct {
 	Type         string           `json:"type"`
 	Delta        json.RawMessage  `json:"delta,omitempty"`
 	Message      anthropicMsgMeta `json:"message,omitempty"`
+	Error        anthropicErr     `json:"error,omitempty"`
 	Index        int              `json:"index,omitempty"`
 	ContentBlock anthropicBlock   `json:"content_block,omitempty"`
+}
+
+type anthropicErr struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
 }
 
 type anthropicMsgMeta struct {
@@ -296,6 +302,9 @@ func (c *anthropicClient) streamSSE(ctx context.Context, body io.Reader, out cha
 			continue
 		}
 		switch ev.Type {
+		case "error":
+			out <- Delta{Kind: DeltaError, Err: fmt.Errorf("anthropic stream error: %s", ev.Error.Message)}
+			return
 		case "message_start":
 			if ev.Message.Usage.InputTokens > 0 {
 				inputTokens = ev.Message.Usage.InputTokens

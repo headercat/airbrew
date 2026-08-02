@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -78,5 +80,53 @@ func TestOllamaDriverNoKey(t *testing.T) {
 	}
 	if cli.Model() != "x" {
 		t.Fatalf("model: %s", cli.Model())
+	}
+}
+
+func TestOllamaDriverUnexpectedEOF(t *testing.T) {
+	const resp = `{"message":{"role":"assistant","content":"partial"},"done":false}
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+	cli, _ := OllamaDriver{}.Build(Config{Driver: "ollama", BaseURL: srv.URL, Model: "x"})
+	ch := cli.ChatStream(context.Background(), Request{Model: "x"})
+	var hit bool
+	for d := range ch {
+		if d.Kind == DeltaError {
+			hit = true
+			if !errors.Is(d.Err, io.ErrUnexpectedEOF) {
+				t.Fatalf("expected unexpected EOF, got %v", d.Err)
+			}
+		}
+	}
+	if !hit {
+		t.Fatal("expected a DeltaError frame")
+	}
+}
+
+func TestOllamaDriverInBandError(t *testing.T) {
+	const resp = `{"error":"model unavailable"}
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+	cli, _ := OllamaDriver{}.Build(Config{Driver: "ollama", BaseURL: srv.URL, Model: "x"})
+	ch := cli.ChatStream(context.Background(), Request{Model: "x"})
+	var hit bool
+	for d := range ch {
+		if d.Kind == DeltaError {
+			hit = true
+			if !strings.Contains(d.Err.Error(), "model unavailable") {
+				t.Fatalf("expected provider message, got %v", d.Err)
+			}
+		}
+	}
+	if !hit {
+		t.Fatal("expected a DeltaError frame")
 	}
 }

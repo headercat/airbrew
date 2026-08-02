@@ -141,3 +141,30 @@ func TestOpenAIDriverUnexpectedEOF(t *testing.T) {
 		t.Fatal("expected a DeltaError frame")
 	}
 }
+
+func TestOpenAIDriverInBandError(t *testing.T) {
+	const resp = `data: {"error":{"message":"bad request","type":"invalid_request_error"}}
+
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+	cli, _ := OpenAIDriver{}.Build(Config{
+		Driver: "openai", BaseURL: srv.URL, Model: "x", APIKey: "sk-x",
+	})
+	ch := cli.ChatStream(context.Background(), Request{Model: "x"})
+	var hit bool
+	for d := range ch {
+		if d.Kind == DeltaError {
+			hit = true
+			if !strings.Contains(d.Err.Error(), "bad request") {
+				t.Fatalf("expected provider message, got %v", d.Err)
+			}
+		}
+	}
+	if !hit {
+		t.Fatal("expected a DeltaError frame")
+	}
+}

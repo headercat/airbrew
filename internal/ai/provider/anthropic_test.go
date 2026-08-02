@@ -156,3 +156,31 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 		t.Fatal("expected a DeltaError frame")
 	}
 }
+
+func TestAnthropicDriverInBandError(t *testing.T) {
+	const resp = `event: error
+data: {"type":"error","error":{"type":"overloaded_error","message":"server overloaded"}}
+
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+	cli, _ := AnthropicDriver{}.Build(Config{
+		Driver: "anthropic", BaseURL: srv.URL, Model: "x", APIKey: "sk-x",
+	})
+	ch := cli.ChatStream(context.Background(), Request{Model: "x"})
+	var hit bool
+	for d := range ch {
+		if d.Kind == DeltaError {
+			hit = true
+			if !strings.Contains(d.Err.Error(), "server overloaded") {
+				t.Fatalf("expected provider message, got %v", d.Err)
+			}
+		}
+	}
+	if !hit {
+		t.Fatal("expected a DeltaError frame")
+	}
+}

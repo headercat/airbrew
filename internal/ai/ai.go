@@ -86,7 +86,7 @@ func (m *Module) Status(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"module":  "ai",
 		"status":  status,
-		"enabled": boolStr(enabled),
+		"enabled": enabled,
 		"drivers": provider.Drivers(),
 	})
 }
@@ -134,10 +134,3 @@ func (m *Module) AutoTitle(ctx context.Context, userID, conversationID, userMess
 // HeartbeatInterval is the keep-alive period for the SSE stream. Exported
 // so tests can shrink it.
 const HeartbeatInterval = 15 * time.Second
-
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
-}

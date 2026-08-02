@@ -91,7 +91,7 @@ export default function AIPage() {
       .then((d) => {
         if (!alive) return;
         setDetail(d);
-        setMessages(d.messages.map((m) => ({ ...m })));
+        setMessages(normalizeMessages(d.messages));
       })
       .catch((err) => {
         if (alive) setError(fmtErr(err));
@@ -257,13 +257,13 @@ export default function AIPage() {
       refreshConversations();
       // SSE recovery: if the assistant turn never reached "done" (network
       // drop, server restart), re-fetch the conversation so the user
-      // sees the server-side state. The persisted user message + any
-      // partial assistant turn are authoritative server-side.
+      // sees the persisted server-side state. Partial assistant text is
+      // discarded unless the provider completed the turn.
       if (!streamEnded && !ctrl.signal.aborted) {
         try {
           const fresh = await getConversation(detail.id);
           setDetail(fresh);
-          setMessages(fresh.messages.map((m) => ({ ...m })));
+          setMessages(normalizeMessages(fresh.messages));
         } catch {
           /* leave the optimistic state in place */
         }
@@ -277,6 +277,16 @@ export default function AIPage() {
     setMessages((prev) =>
       prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
     );
+    if (detail) {
+      getConversation(detail.id)
+        .then((fresh) => {
+          setDetail(fresh);
+          setMessages(normalizeMessages(fresh.messages));
+        })
+        .catch(() => {
+          /* keep local cancelled state */
+        });
+    }
   }
 
   return (
@@ -526,4 +536,32 @@ function upsertToolNotice(
   if (idx === -1) return [...rows, next];
   rows[idx] = next;
   return rows;
+}
+
+function normalizeMessages(messages: Message[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  const toolByID = new Map<string, Message>();
+  for (const msg of messages) {
+    if (msg.role === "tool" && msg.tool_call_id) {
+      toolByID.set(msg.tool_call_id, msg);
+    }
+  }
+  for (const msg of messages) {
+    if (msg.role === "tool") continue;
+    const toolNotices =
+      msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0
+        ? msg.tool_calls.map((tc) => {
+            const tool = toolByID.get(tc.id);
+            return {
+              id: tc.id,
+              name: tc.name,
+              args: tc.args,
+              result: tool?.content ?? "",
+              pending: !tool,
+            };
+          })
+        : undefined;
+    out.push({ ...msg, toolNotices });
+  }
+  return out;
 }

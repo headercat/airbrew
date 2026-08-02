@@ -90,9 +90,9 @@ type ollamaReq struct {
 }
 
 type ollamaMessage struct {
-	Role      string         `json:"role"`
-	Content   string         `json:"content"`
-	ToolCalls []ollamaTool   `json:"tool_calls,omitempty"`
+	Role      string       `json:"role"`
+	Content   string       `json:"content"`
+	ToolCalls []ollamaTool `json:"tool_calls,omitempty"`
 }
 
 // ollamaTool is overloaded: in the request, it is the schema; in a tool
@@ -124,7 +124,7 @@ func (c *ollamaClient) buildBody(req Request) ([]byte, error) {
 		om := ollamaMessage{Role: string(m.Role), Content: m.Content}
 		for _, tc := range m.ToolCalls {
 			om.ToolCalls = append(om.ToolCalls, ollamaTool{
-				Type: "function",
+				Type:     "function",
 				Function: ollamaFuncSpec{Name: tc.Name, Arguments: tc.Args},
 			})
 		}
@@ -142,17 +142,17 @@ func (c *ollamaClient) buildBody(req Request) ([]byte, error) {
 }
 
 type ollamaChunk struct {
-	Message     ollamaMessage `json:"message"`
-	Done        bool          `json:"done"`
-	PromptEval  int           `json:"prompt_eval_count"`
-	Completion  int           `json:"eval_count"`
+	Message    ollamaMessage `json:"message"`
+	Done       bool          `json:"done"`
+	PromptEval int           `json:"prompt_eval_count"`
+	Completion int           `json:"eval_count"`
+	Error      string        `json:"error,omitempty"`
 }
 
 func (c *ollamaClient) streamNDJSON(ctx context.Context, body io.Reader, out chan<- Delta) {
 	br := bufio.NewReaderSize(body, 16<<10)
 	var (
-		promptTok, completionTok int
-		toolIdx                  int
+		toolIdx int
 	)
 	for {
 		select {
@@ -164,9 +164,7 @@ func (c *ollamaClient) streamNDJSON(ctx context.Context, body io.Reader, out cha
 		line, err := br.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				out <- Delta{Kind: DeltaDone, Usage: &Usage{
-					PromptTokens: promptTok, CompletionTokens: completionTok,
-				}}
+				out <- Delta{Kind: DeltaError, Err: io.ErrUnexpectedEOF}
 				return
 			}
 			out <- Delta{Kind: DeltaError, Err: err}
@@ -180,6 +178,10 @@ func (c *ollamaClient) streamNDJSON(ctx context.Context, body io.Reader, out cha
 		if err := json.Unmarshal([]byte(line), &ch); err != nil {
 			continue
 		}
+		if ch.Error != "" {
+			out <- Delta{Kind: DeltaError, Err: fmt.Errorf("ollama stream error: %s", ch.Error)}
+			return
+		}
 		if ch.Message.Content != "" {
 			out <- Delta{Kind: DeltaContent, Content: ch.Message.Content}
 		}
@@ -187,7 +189,7 @@ func (c *ollamaClient) streamNDJSON(ctx context.Context, body io.Reader, out cha
 			out <- Delta{
 				Kind: DeltaToolCallStart, Index: toolIdx,
 				ToolCallID: fmt.Sprintf("call_%d", toolIdx),
-				ToolName: tc.Function.Name,
+				ToolName:   tc.Function.Name,
 			}
 			out <- Delta{
 				Kind: DeltaToolCallArgs, Index: toolIdx,

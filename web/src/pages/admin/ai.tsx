@@ -13,12 +13,14 @@ import { PageWrapper } from "@/components/page";
 import { SectionHeader, SettingRow } from "./shared";
 import {
   type AdminAIAgent,
+  type AdminAIUsage,
   type AdminAITool,
   type AIProvider,
   type Driver,
   adminCreateAgent,
   adminDeleteAgent,
   adminDeleteProvider,
+  adminGetUsage,
   adminListAgents,
   adminListDrivers,
   adminListProviders,
@@ -38,6 +40,7 @@ export default function AdminAI() {
         descKey="dashboard.modules.ai.description"
       />
       <ProviderSection />
+      <UsageSection />
       <AgentsSection />
     </PageWrapper>
   );
@@ -247,6 +250,70 @@ function ProviderSection() {
                 </div>
               </SettingRow>
             ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---- Usage section ----
+
+function UsageSection() {
+  const { t } = useTranslation();
+  const [usage, setUsage] = useState<AdminAIUsage | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    adminGetUsage({ days: 30 })
+      .then(setUsage)
+      .catch((err) => setError(fmtErr(err)));
+  }, []);
+
+  return (
+    <Card>
+      <CardContent className="space-y-4 p-6">
+        <div className="space-y-0.5">
+          <p className="text-sm font-medium">{t("admin.ai.usageTitle")}</p>
+          <p className="text-xs text-muted-foreground">
+            {t("admin.ai.usageDesc")}
+          </p>
+        </div>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {!usage ? (
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        ) : (
+          <div className="grid gap-3 md:grid-cols-[1fr_2fr]">
+            <div className="rounded-md border border-border p-3">
+              <p className="text-xs text-muted-foreground">
+                {t("admin.ai.usageTitle")}
+              </p>
+              <p className="mt-1 text-2xl font-semibold">
+                {usage.totals.total_tokens.toLocaleString()}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("admin.ai.requestCount")}:{" "}
+                {usage.totals.request_count.toLocaleString()}
+              </p>
+            </div>
+            <div className="rounded-md border border-border">
+              {usage.usage.slice(-7).map((row) => (
+                <SettingRow
+                  key={row.day}
+                  title={row.day}
+                  description={`${row.prompt_tokens.toLocaleString()} in + ${row.completion_tokens.toLocaleString()} out`}
+                >
+                  <Badge variant="secondary" className="text-[10px]">
+                    {row.total_tokens.toLocaleString()}
+                  </Badge>
+                </SettingRow>
+              ))}
+              {usage.usage.length === 0 && (
+                <p className="px-3 py-4 text-xs text-muted-foreground">
+                  {t("admin.ai.usageDesc")}
+                </p>
+              )}
+            </div>
           </div>
         )}
       </CardContent>

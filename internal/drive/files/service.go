@@ -21,34 +21,41 @@ import (
 // Namespace is the blob-store namespace used for drive file bytes.
 const Namespace = "drive"
 
-// Config tunes drive behaviour. Zero values mean "no limit".
+// Config tunes drive behaviour. A value <= 0 means "no limit" for that field.
 type Config struct {
-	// MaxUploadBytes caps a single upload; 0 means unlimited.
+	// MaxUploadBytes caps a single upload; <= 0 means unlimited.
 	MaxUploadBytes int64 `json:"max_upload_bytes"`
-	// QuotaBytes caps a user's total live storage; 0 means unlimited.
+	// QuotaBytes caps a user's total live storage; <= 0 means unlimited.
 	QuotaBytes int64 `json:"quota_bytes"`
 }
 
-// configDefaults applied when a stored config omits a field (0 keeps the
-// default rather than "unlimited").
+// configDefaults applied only when a stored config omits the field entirely.
 const (
 	DefaultMaxUpload int64 = 50 << 20
 	DefaultQuota     int64 = 1 << 30
 )
 
-// ParseConfig decodes a JSON config blob, applying defaults for any zero field.
+// ParseConfig decodes a JSON config blob. Defaults are applied only for fields
+// that are absent from the JSON, so an admin can explicitly set a field to 0
+// (unlimited) and have it persist.
 func ParseConfig(raw string) Config {
 	c := Config{MaxUploadBytes: DefaultMaxUpload, QuotaBytes: DefaultQuota}
-	if strings.TrimSpace(raw) != "" {
-		var in Config
-		if err := json.Unmarshal([]byte(raw), &in); err == nil {
-			if in.MaxUploadBytes != 0 {
-				c.MaxUploadBytes = in.MaxUploadBytes
-			}
-			if in.QuotaBytes != 0 {
-				c.QuotaBytes = in.QuotaBytes
-			}
-		}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return c
+	}
+	var in struct {
+		MaxUploadBytes *int64 `json:"max_upload_bytes"`
+		QuotaBytes     *int64 `json:"quota_bytes"`
+	}
+	if err := json.Unmarshal([]byte(raw), &in); err != nil {
+		return c
+	}
+	if in.MaxUploadBytes != nil {
+		c.MaxUploadBytes = *in.MaxUploadBytes
+	}
+	if in.QuotaBytes != nil {
+		c.QuotaBytes = *in.QuotaBytes
 	}
 	return c
 }

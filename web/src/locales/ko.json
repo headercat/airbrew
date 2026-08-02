@@ -127,188 +127,18 @@
     "unknownDescription": "모듈 \"{{module}}\"이(가) 등록되어 있지 않습니다.",
     "planned": "예정"
   },
-  "passwords": {
-    "setup": {
-      "title": "볼트 설정",
-      "subtitle": "마스터 비밀번호를 설정하세요. 볼트를 암호화하며 서버에 전송되지 않습니다.",
-      "masterPassword": "마스터 비밀번호",
-      "masterPasswordPlaceholder": "최소 8자",
-      "confirm": "마스터 비밀번호 확인",
-      "warning": "복구 방법이 없습니다. 이 비밀번호를 잊으면 볼트를 복호화할 수 없습니다.",
-      "submit": "볼트 만들기",
-      "tooShort": "마스터 비밀번호는 최소 8자여야 합니다.",
-      "mismatch": "비밀번호가 일치하지 않습니다."
-    },
-    "unlock": {
-      "title": "볼트 잠금 해제",
-      "subtitle": "마스터 비밀번호를 입력해 볼트를 복호화하세요.",
-      "masterPassword": "마스터 비밀번호",
-      "submit": "잠금 해제",
-      "wrong": "마스터 비밀번호가 올바르지 않습니다."
-    },
-    "list": {
-      "title": "비밀번호",
-      "description": "{{count}}개 항목",
-      "refresh": "새로고침",
-      "lock": "잠금",
-      "add": "항목 추가",
-      "search": "볼트 검색",
-      "noMatches": "일치하는 항목이 없습니다.",
-      "empty": "볼트가 비어 있습니다."
-    },
-    "types": {
-      "login": "로그인",
-      "secure_note": "보안 메모",
-      "card": "카드",
-      "identity": "신원 정보"
-    },
-    "kinds": {
-      "text": "텍스트",
-      "password": "비밀번호",
-      "totp": "TOTP",
-      "url": "웹사이트",
-      "multiline": "여러 줄"
-    },
-    "view": {
-      "edit": "편집",
-      "fields": "필드",
-      "fieldsDescription": "각 필드의 값을 복사해 사용할 수 있습니다.",
-      "noFields": "이 항목에는 필드가 없습니다.",
-      "totpInvalid": "TOTP 시크릿이 올바르지 않습니다",
-      "totpEmpty": "TOTP 시크릿이 없습니다",
-      "notFound": "항목을 찾을 수 없습니다. 다른 기기에서 삭제되었을 수 있습니다.",
-      "repromptRequired": "이 항목은 민감 필드를 보려면 마스터 비밀번호 재입력이 필요합니다.",
-      "reveal": "표시",
-      "history": "기록",
-      "show": "보기",
-      "hide": "숨기기",
-      "noHistory": "이전 버전이 없습니다.",
-      "restore": "복원",
-      "confirmRestore": "이 버전을 복원하시겠습니까? 현재 버전은 먼저 기록에 저장됩니다."
-    },
-    "attachments": {
-      "title": "첨부 파일",
-      "description": "파일은 업로드 전에 파일별 키로 암호화됩니다.",
-      "empty": "첨부된 파일이 없습니다.",
-      "upload": "파일 업로드",
-      "download": "다운로드",
-      "remove": "제거",
-      "confirmDelete": "이 첨부 파일을 제거하시겠습니까?"
-    },
-    "editor": {
-      "newTitle": "새 항목",
-      "editTitle": "항목 편집",
-      "subtitle": "입력한 항목은 브라우저를 떠나기 전에 암호화됩니다.",
-      "formTitle": "항목 세부 정보",
-      "formDescription": "유형을 선택하고 저장할 필드를 입력하세요.",
-      "cancel": "취소",
-      "type": "유형",
-      "name": "이름",
-      "nameRequired": "이름은 필수입니다.",
-      "username": "사용자 이름",
-      "password": "비밀번호",
-      "toggleVisibility": "표시 / 숨기기",
-      "generate": "생성",
-      "copy": "복사",
-      "uri": "웹사이트 주소",
-      "totp": "TOTP 시크릿",
-      "notes": "메모",
-      "favorite": "즐겨찾기",
-      "reprompt": "마스터 비밀번호 재확인",
-      "save": "저장",
-      "delete": "삭제",
-      "confirmDelete": "이 항목을 삭제하시겠습니까? 되돌릴 수 없습니다.",
-      "notFound": "항목을 찾을 수 없습니다. 다른 기기에서 삭제되었을 수 있습니다.",
-      "conflict": "이 항목이 다른 곳에서 변경되었습니다. 새로고침 후 다시 시도하세요.",
-      "fields": "필드",
-      "addField": "필드 추가",
-      "noFields": "필드가 없습니다. 추가하거나, 위에서 유형을 선택해 프리셋을 불러오세요.",
-      "fieldName": "필드 이름",
-      "fieldValue": "값",
-      "fieldKind": "필드 유형",
-      "removeField": "필드 제거",
-      "typeHint": "유형은 아이콘과 초기 필드 프리셋만 결정합니다.",
-      "confirmReplacePreset": "현재 필드를 이 유형의 프리셋으로 교체하시겠습니까?",
-      "totpHint": "base32 공유 시크릿(또는 otpauth:// URI)을 저장하세요.",
-      "folder": "폴더",
-      "noFolder": "폴더 없음",
-      "resync": "다시 동기화 후 재시도"
-    },
-    "actions": {
-      "title": "보관함 동작",
-      "description": "백업, 복원 또는 마스터 비밀번호를 변경합니다.",
-      "export": "백업 내보내기",
-      "import": "백업 가져오기",
-      "exported": "암호화된 백업을 다운로드했습니다.",
-      "imported": "폴더 {{folders}}개, 항목 {{items}}개를 가져왔습니다.",
-      "newFolder": "새 폴더",
-      "newFolderPlaceholder": "폴더 이름",
-      "add": "추가",
-      "changePassword": "마스터 비밀번호 변경",
-      "currentPassword": "현재 마스터 비밀번호",
-      "newPassword": "새 마스터 비밀번호",
-      "save": "저장",
-      "passwordChanged": "마스터 비밀번호를 변경했습니다."
-    }
-  },
-  "profile": {
-    "title": "프로필",
-    "subtitle": "프로필, 비밀번호 및 사용자 정의 필드를 관리하세요.",
-    "avatar": {
-      "title": "프로필 사진",
-      "description": "PNG, JPEG, WebP 또는 GIF. 최대 4MiB.",
-      "upload": "새 사진 업로드",
-      "uploadFailed": "업로드 실패"
-    },
-    "form": {
-      "title": "프로필",
-      "description": "워크스페이스 전체에 표시되는 공개 정보입니다.",
-      "email": "이메일",
-      "emailNote": "현재 이메일 변경은 지원되지 않습니다.",
-      "displayName": "표시 이름",
-      "descriptionLabel": "소개",
-      "descriptionPlaceholder": "간단한 자기소개",
-      "birthday": "생일",
-      "phone": "전화번호",
-      "phonePlaceholder": "+82 10 1234 5678",
-      "customFields": "사용자 정의 필드",
-      "customFieldsHint": "임의의 키/값 쌍 (최대 50개). 본인만 볼 수 있습니다.",
-      "addField": "필드 추가",
-      "noFields": "사용자 정의 필드가 없습니다. \"필드 추가\"를 눌러 만들어 보세요.",
-      "keyPlaceholder": "키",
-      "valuePlaceholder": "값",
-      "remove": "필드 제거",
-      "saved": "저장됨.",
-      "saveProfile": "프로필 저장"
-    },
-    "password": {
-      "title": "비밀번호",
-      "description": "최소 8자 이상. 다른 기기에서는 다시 로그인해야 합니다.",
-      "current": "현재 비밀번호",
-      "new": "새 비밀번호",
-      "confirm": "새 비밀번호 확인",
-      "submit": "비밀번호 변경",
-      "changed": "비밀번호가 변경되었습니다."
-    }
-  },
-  "header": {
-    "welcome": "환영합니다, {{email}}",
-    "profile": "프로필",
-    "signOut": "로그아웃"
-  },
-  "theme": {
-    "title": "컬러 모드",
-    "light": "밝게",
-    "dark": "어둡게",
-    "system": "시스템"
-  },
-  "language": {
-    "label": "언어"
-  },
-  "notFound": {
-    "title": "404",
-    "description": "찾으시는 페이지가 존재하지 않습니다.",
-    "goHome": "홈으로"
+  "ai": {
+    "newConversation": "새 대화",
+    "untitled": "제목 없음",
+    "noConversations": "아직 대화가 없습니다.",
+    "selectConversation": "대화를 선택하거나 새로 만드세요.",
+    "composerPlaceholder": "메시지를 입력하세요 (Enter: 전송, Shift+Enter: 줄바꿈)",
+    "send": "전송",
+    "stop": "중지",
+    "tools": "도구",
+    "tokens": "토큰: {{prompt}} 입력 + {{completion}} 출력",
+    "streamError": "⚠️ 스트림 오류: {{msg}}",
+    "confirmDelete": "이 대화를 삭제하시겠습니까?"
   },
   "admin": {
     "title": "관리 콘솔",
@@ -524,6 +354,189 @@
       "featureFlags": "기능 플래그"
     }
   },
+  "passwords": {
+    "setup": {
+      "title": "볼트 설정",
+      "subtitle": "마스터 비밀번호를 설정하세요. 볼트를 암호화하며 서버에 전송되지 않습니다.",
+      "masterPassword": "마스터 비밀번호",
+      "masterPasswordPlaceholder": "최소 8자",
+      "confirm": "마스터 비밀번호 확인",
+      "warning": "복구 방법이 없습니다. 이 비밀번호를 잊으면 볼트를 복호화할 수 없습니다.",
+      "submit": "볼트 만들기",
+      "tooShort": "마스터 비밀번호는 최소 8자여야 합니다.",
+      "mismatch": "비밀번호가 일치하지 않습니다."
+    },
+    "unlock": {
+      "title": "볼트 잠금 해제",
+      "subtitle": "마스터 비밀번호를 입력해 볼트를 복호화하세요.",
+      "masterPassword": "마스터 비밀번호",
+      "submit": "잠금 해제",
+      "wrong": "마스터 비밀번호가 올바르지 않습니다."
+    },
+    "list": {
+      "title": "비밀번호",
+      "description": "{{count}}개 항목",
+      "refresh": "새로고침",
+      "lock": "잠금",
+      "add": "항목 추가",
+      "search": "볼트 검색",
+      "noMatches": "일치하는 항목이 없습니다.",
+      "empty": "볼트가 비어 있습니다."
+    },
+    "types": {
+      "login": "로그인",
+      "secure_note": "보안 메모",
+      "card": "카드",
+      "identity": "신원 정보"
+    },
+    "kinds": {
+      "text": "텍스트",
+      "password": "비밀번호",
+      "totp": "TOTP",
+      "url": "웹사이트",
+      "multiline": "여러 줄"
+    },
+    "view": {
+      "edit": "편집",
+      "fields": "필드",
+      "fieldsDescription": "각 필드의 값을 복사해 사용할 수 있습니다.",
+      "noFields": "이 항목에는 필드가 없습니다.",
+      "totpInvalid": "TOTP 시크릿이 올바르지 않습니다",
+      "totpEmpty": "TOTP 시크릿이 없습니다",
+      "notFound": "항목을 찾을 수 없습니다. 다른 기기에서 삭제되었을 수 있습니다.",
+      "repromptRequired": "이 항목은 민감 필드를 보려면 마스터 비밀번호 재입력이 필요합니다.",
+      "reveal": "표시",
+      "history": "기록",
+      "show": "보기",
+      "hide": "숨기기",
+      "noHistory": "이전 버전이 없습니다.",
+      "restore": "복원",
+      "confirmRestore": "이 버전을 복원하시겠습니까? 현재 버전은 먼저 기록에 저장됩니다."
+    },
+    "attachments": {
+      "title": "첨부 파일",
+      "description": "파일은 업로드 전에 파일별 키로 암호화됩니다.",
+      "empty": "첨부된 파일이 없습니다.",
+      "upload": "파일 업로드",
+      "download": "다운로드",
+      "remove": "제거",
+      "confirmDelete": "이 첨부 파일을 제거하시겠습니까?"
+    },
+    "editor": {
+      "newTitle": "새 항목",
+      "editTitle": "항목 편집",
+      "subtitle": "입력한 항목은 브라우저를 떠나기 전에 암호화됩니다.",
+      "formTitle": "항목 세부 정보",
+      "formDescription": "유형을 선택하고 저장할 필드를 입력하세요.",
+      "cancel": "취소",
+      "type": "유형",
+      "name": "이름",
+      "nameRequired": "이름은 필수입니다.",
+      "username": "사용자 이름",
+      "password": "비밀번호",
+      "toggleVisibility": "표시 / 숨기기",
+      "generate": "생성",
+      "copy": "복사",
+      "uri": "웹사이트 주소",
+      "totp": "TOTP 시크릿",
+      "notes": "메모",
+      "favorite": "즐겨찾기",
+      "reprompt": "마스터 비밀번호 재확인",
+      "save": "저장",
+      "delete": "삭제",
+      "confirmDelete": "이 항목을 삭제하시겠습니까? 되돌릴 수 없습니다.",
+      "notFound": "항목을 찾을 수 없습니다. 다른 기기에서 삭제되었을 수 있습니다.",
+      "conflict": "이 항목이 다른 곳에서 변경되었습니다. 새로고침 후 다시 시도하세요.",
+      "fields": "필드",
+      "addField": "필드 추가",
+      "noFields": "필드가 없습니다. 추가하거나, 위에서 유형을 선택해 프리셋을 불러오세요.",
+      "fieldName": "필드 이름",
+      "fieldValue": "값",
+      "fieldKind": "필드 유형",
+      "removeField": "필드 제거",
+      "typeHint": "유형은 아이콘과 초기 필드 프리셋만 결정합니다.",
+      "confirmReplacePreset": "현재 필드를 이 유형의 프리셋으로 교체하시겠습니까?",
+      "totpHint": "base32 공유 시크릿(또는 otpauth:// URI)을 저장하세요.",
+      "folder": "폴더",
+      "noFolder": "폴더 없음",
+      "resync": "다시 동기화 후 재시도"
+    },
+    "actions": {
+      "title": "보관함 동작",
+      "description": "백업, 복원 또는 마스터 비밀번호를 변경합니다.",
+      "export": "백업 내보내기",
+      "import": "백업 가져오기",
+      "exported": "암호화된 백업을 다운로드했습니다.",
+      "imported": "폴더 {{folders}}개, 항목 {{items}}개를 가져왔습니다.",
+      "newFolder": "새 폴더",
+      "newFolderPlaceholder": "폴더 이름",
+      "add": "추가",
+      "changePassword": "마스터 비밀번호 변경",
+      "currentPassword": "현재 마스터 비밀번호",
+      "newPassword": "새 마스터 비밀번호",
+      "save": "저장",
+      "passwordChanged": "마스터 비밀번호를 변경했습니다."
+    }
+  },
+  "profile": {
+    "title": "프로필",
+    "subtitle": "프로필, 비밀번호 및 사용자 정의 필드를 관리하세요.",
+    "avatar": {
+      "title": "프로필 사진",
+      "description": "PNG, JPEG, WebP 또는 GIF. 최대 4MiB.",
+      "upload": "새 사진 업로드",
+      "uploadFailed": "업로드 실패"
+    },
+    "form": {
+      "title": "프로필",
+      "description": "워크스페이스 전체에 표시되는 공개 정보입니다.",
+      "email": "이메일",
+      "emailNote": "현재 이메일 변경은 지원되지 않습니다.",
+      "displayName": "표시 이름",
+      "descriptionLabel": "소개",
+      "descriptionPlaceholder": "간단한 자기소개",
+      "birthday": "생일",
+      "phone": "전화번호",
+      "phonePlaceholder": "+82 10 1234 5678",
+      "customFields": "사용자 정의 필드",
+      "customFieldsHint": "임의의 키/값 쌍 (최대 50개). 본인만 볼 수 있습니다.",
+      "addField": "필드 추가",
+      "noFields": "사용자 정의 필드가 없습니다. \"필드 추가\"를 눌러 만들어 보세요.",
+      "keyPlaceholder": "키",
+      "valuePlaceholder": "값",
+      "remove": "필드 제거",
+      "saved": "저장됨.",
+      "saveProfile": "프로필 저장"
+    },
+    "password": {
+      "title": "비밀번호",
+      "description": "최소 8자 이상. 다른 기기에서는 다시 로그인해야 합니다.",
+      "current": "현재 비밀번호",
+      "new": "새 비밀번호",
+      "confirm": "새 비밀번호 확인",
+      "submit": "비밀번호 변경",
+      "changed": "비밀번호가 변경되었습니다."
+    }
+  },
+  "header": {
+    "welcome": "환영합니다, {{email}}",
+    "profile": "프로필",
+    "signOut": "로그아웃"
+  },
+  "theme": {
+    "title": "컬러 모드",
+    "light": "밝게",
+    "dark": "어둡게",
+    "system": "시스템"
+  },
+  "language": {
+    "label": "언어"
+  },
+  "notFound": {
+    "title": "404",
+    "description": "찾으시는 페이지가 존재하지 않습니다.",
+    "goHome": "홈으로"
+  },
   "drive": {
     "disabled": "드라이브가 비활성화되어 있습니다. 관리자에게 활성화를 요청하세요.",
     "myFiles": "내 파일",
@@ -575,5 +588,15 @@
       "shared": "공유",
       "trash": "휴지통"
     }
+  },
+  "share": {
+    "expired": "이 공유 링크가 만료되었습니다.",
+    "notFound": "공유 링크를 찾을 수 없거나 취소되었습니다.",
+    "passwordRequired": "비밀번호 필요",
+    "enterPassword": "비밀번호 입력",
+    "continue": "계속",
+    "download": "다운로드",
+    "downloadFailed": "다운로드에 실패했습니다.",
+    "file": "파일"
   }
 }

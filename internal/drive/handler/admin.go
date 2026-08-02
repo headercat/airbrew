@@ -52,17 +52,9 @@ func (a *AdminHandler) putConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	c := a.svc.Config()
 	if req.MaxUploadBytes != nil {
-		if *req.MaxUploadBytes < 0 {
-			respondErr(w, http.StatusBadRequest, "invalid_request", "max_upload_bytes must be >= 0")
-			return
-		}
 		c.MaxUploadBytes = *req.MaxUploadBytes
 	}
 	if req.QuotaBytes != nil {
-		if *req.QuotaBytes < 0 {
-			respondErr(w, http.StatusBadRequest, "invalid_request", "quota_bytes must be >= 0")
-			return
-		}
 		c.QuotaBytes = *req.QuotaBytes
 	}
 	if err := a.repo.SetConfig(r.Context(), c); err != nil {

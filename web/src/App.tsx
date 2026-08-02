@@ -12,6 +12,7 @@ import AdminSecurity from "@/pages/admin/security";
 import AdminBranding from "@/pages/admin/branding";
 import AdminOAuth from "@/pages/admin/oauth";
 import AdminSystem from "@/pages/admin/system";
+import AdminAI from "@/pages/admin/ai";
 import DashboardPage from "@/pages/dashboard";
 import DrivePage from "@/pages/drive";
 import DriveSharePage from "@/pages/drive/share";
@@ -23,6 +24,7 @@ import PasswordEditor from "@/pages/passwords/editor";
 import PasswordView from "@/pages/passwords/view";
 import ProfilePage from "@/pages/profile";
 import RegisterPage from "@/pages/register";
+import AIPage from "@/pages/ai";
 import { VaultProvider } from "@/lib/vault/store";
 
 export default function App() {
@@ -70,7 +72,12 @@ export default function App() {
           <Route path="oauth/new" element={<AdminOAuth />} />
           <Route path="oauth/:clientId" element={<AdminOAuth />} />
           <Route path="system" element={<AdminSystem />} />
+          <Route path="ai" element={<AdminAI />} />
         </Route>
+
+        {/* AI module — conversation list + chat surface */}
+        <Route path="/ai" element={<AIPage />} />
+        <Route path="/ai/:id" element={<AIPage />} />
 
         {/* Password vault — shared VaultProvider so unlock state persists
             across the list and editor routes. */}

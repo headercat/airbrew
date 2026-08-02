@@ -11,7 +11,6 @@ export type DriveNode = {
   sha256?: string;
   is_starred: boolean;
   deleted_at?: string;
-  download_url?: string;
   created_at: string;
   updated_at: string;
 };
@@ -121,20 +120,32 @@ export const drive = {
   deleteShare: (id: string) =>
     api.del<{ ok: boolean }>(`/api/drive/shares/${id}`),
 
-  // Public share access (no auth).
-  shareMeta: (token: string, password?: string) => {
-    const q = new URLSearchParams();
-    if (password) q.set("pw", password);
-    const qs = q.toString();
-    return api.get<DriveShareMeta>(
-      `/api/drive/s/${token}${qs ? "?" + qs : ""}`,
-    );
-  },
-  shareDownloadURL: (token: string, password?: string, inline = false) => {
-    const q = new URLSearchParams();
-    if (password) q.set("pw", password);
-    if (inline) q.set("inline", "true");
-    const qs = q.toString();
-    return `/api/drive/s/${token}/download${qs ? "?" + qs : ""}`;
+  // Public share access (no auth). The password is sent via the
+  // X-Share-Password header, never the URL query string, so it does not leak
+  // into browser history, referrers, or server logs.
+  shareMeta: (token: string, password?: string) =>
+    fetch(`/api/drive/s/${token}`, {
+      headers: password ? { "X-Share-Password": password } : {},
+      credentials: "same-origin",
+    }).then(async (res) => {
+      const text = await res.text();
+      const body = text ? JSON.parse(text) : null;
+      if (!res.ok) throw body ?? { error: "http_error", status: res.status };
+      return body as DriveShareMeta;
+    }),
+  // Fetches the shared file with the password header and resolves to an
+  // object URL the caller can hand to an <a download> (revoked after use).
+  shareDownload: async (token: string, password?: string) => {
+    const res = await fetch(`/api/drive/s/${token}/download`, {
+      headers: password ? { "X-Share-Password": password } : {},
+      credentials: "same-origin",
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      const body = text ? JSON.parse(text) : null;
+      throw body ?? { error: "http_error", status: res.status };
+    }
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
   },
 };

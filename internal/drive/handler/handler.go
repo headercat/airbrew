@@ -63,7 +63,6 @@ type nodeResp struct {
 	SHA256      string `json:"sha256,omitempty"`
 	IsStarred   bool   `json:"is_starred"`
 	DeletedAt   string `json:"deleted_at,omitempty"`
-	DownloadURL string `json:"download_url,omitempty"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
@@ -78,9 +77,6 @@ func toNodeResp(n *files.Node) nodeResp {
 	}
 	if n.DeletedAt != nil {
 		out.DeletedAt = n.DeletedAt.UTC().Format(timeRFC3339)
-	}
-	if !n.IsFolder() && n.BlobPath != "" {
-		out.DownloadURL = "/api/files/" + n.BlobPath
 	}
 	return out
 }

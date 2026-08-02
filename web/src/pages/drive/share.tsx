@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Download, File as FileIcon, Loader2, Lock } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -9,12 +10,14 @@ import { isApiError, type ApiError } from "@/lib/api";
 import { drive, type DriveShareMeta } from "@/lib/drive";
 
 export default function DriveSharePage() {
+  const { t } = useTranslation();
   const { token = "" } = useParams();
   const [meta, setMeta] = useState<DriveShareMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [needsPw, setNeedsPw] = useState(false);
   const [pw, setPw] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   const load = (password?: string) => {
     setLoading(true);
@@ -30,9 +33,9 @@ export default function DriveSharePage() {
           setNeedsPw(true);
           setMeta(null);
         } else if (isApiError(e) && (e as ApiError).error === "expired") {
-          setError("This share link has expired.");
+          setError(t("share.expired"));
         } else {
-          setError("Share link not found or has been revoked.");
+          setError(t("share.notFound"));
         }
       })
       .finally(() => setLoading(false));
@@ -42,6 +45,24 @@ export default function DriveSharePage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  const doDownload = async () => {
+    setDownloading(true);
+    try {
+      const url = await drive.shareDownload(token, pw || undefined);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = meta?.name ?? "download";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch {
+      setError(t("share.downloadFailed"));
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   if (loading)
     return (
@@ -62,7 +83,9 @@ export default function DriveSharePage() {
         <Card className="w-full max-w-sm space-y-4 p-6">
           <div className="flex items-center gap-2 text-muted-foreground">
             <Lock className="h-5 w-5" />
-            <span className="text-sm font-medium">Password required</span>
+            <span className="text-sm font-medium">
+              {t("share.passwordRequired")}
+            </span>
           </div>
           <form
             onSubmit={(e) => {
@@ -76,10 +99,10 @@ export default function DriveSharePage() {
               autoFocus
               value={pw}
               onChange={(e) => setPw(e.target.value)}
-              placeholder="Enter password"
+              placeholder={t("share.enterPassword")}
             />
             <Button type="submit" className="w-full">
-              Continue
+              {t("share.continue")}
             </Button>
           </form>
         </Card>
@@ -94,15 +117,18 @@ export default function DriveSharePage() {
         <div>
           <h1 className="truncate text-lg font-semibold">{meta.name}</h1>
           <p className="text-xs text-muted-foreground">
-            {meta.content_type || "file"} · {formatBytes(meta.size_bytes)}
+            {meta.content_type || t("share.file")} ·{" "}
+            {formatBytes(meta.size_bytes)}
           </p>
         </div>
-        <a href={drive.shareDownloadURL(token, pw)}>
-          <Button className="w-full">
+        <Button className="w-full" onClick={doDownload} disabled={downloading}>
+          {downloading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
             <Download className="h-4 w-4" />
-            Download
-          </Button>
-        </a>
+          )}
+          {t("share.download")}
+        </Button>
       </Card>
     </Shell>
   );

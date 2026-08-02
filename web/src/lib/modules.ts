@@ -296,8 +296,11 @@ export const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
     ],
   },
   {
-    labelKey: "admin.groups.developers",
-    items: [{ labelKey: "admin.oauth.title", to: "/admin/oauth", icon: Lock }],
+    labelKey: "dashboard.groups.developers",
+    items: [
+      { labelKey: "admin.oauth.title", to: "/admin/oauth", icon: Lock },
+      { labelKey: "dashboard.modules.ai.label", to: "/admin/ai", icon: Bot },
+    ],
   },
 ];
 

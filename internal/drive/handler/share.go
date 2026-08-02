@@ -25,10 +25,11 @@ type publicShareResp struct {
 }
 
 // getShare returns public metadata for a share so a landing page can render
-// without revealing the file contents.
+// without revealing the file contents. The password is read from the
+// X-Share-Password header (preferred) or the legacy ?pw= query parameter.
 func (h *Handler) getShare(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
-	pw := r.URL.Query().Get("pw")
+	pw := sharePassword(r)
 	n, err := h.svc.OpenShare(r.Context(), token, pw)
 	if err != nil {
 		writeShareErr(w, err)
@@ -42,13 +43,11 @@ func (h *Handler) getShare(w http.ResponseWriter, r *http.Request) {
 }
 
 // downloadShare streams the shared file. For password-protected shares the
-// password is supplied via the "pw" query parameter or X-Share-Password header.
+// password is supplied via the X-Share-Password header (preferred) or the
+// legacy ?pw= query parameter.
 func (h *Handler) downloadShare(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
-	pw := r.URL.Query().Get("pw")
-	if pw == "" {
-		pw = r.Header.Get("X-Share-Password")
-	}
+	pw := sharePassword(r)
 	n, err := h.svc.OpenShare(r.Context(), token, pw)
 	if err != nil {
 		writeShareErr(w, err)
@@ -88,4 +87,13 @@ func writeShareErr(w http.ResponseWriter, err error) {
 	default:
 		respondErr(w, http.StatusInternalServerError, "internal_error", err.Error())
 	}
+}
+
+// sharePassword returns the share password from the X-Share-Password header
+// (preferred) or the legacy ?pw= query parameter.
+func sharePassword(r *http.Request) string {
+	if pw := r.Header.Get("X-Share-Password"); pw != "" {
+		return pw
+	}
+	return r.URL.Query().Get("pw")
 }

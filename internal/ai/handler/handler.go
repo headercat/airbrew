@@ -102,7 +102,7 @@ func toAgentResp(a agent.Definition) agentResp {
 func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
 	agents, err := h.agents.List(r.Context(), true)
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		sanitizeInternal(w, err)
 		return
 	}
 	out := make([]agentResp, 0, len(agents))
@@ -183,7 +183,7 @@ func (h *Handler) listConversations(w http.ResponseWriter, r *http.Request) {
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	convs, err := h.conv.List(r.Context(), sess.UserID, limit, offset)
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		sanitizeInternal(w, err)
 		return
 	}
 	out := make([]convResp, 0, len(convs))
@@ -209,7 +209,7 @@ func (h *Handler) createConversation(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusNotFound, "agent_not_found", "no such agent")
 			return
 		}
-		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		sanitizeInternal(w, err)
 		return
 	}
 	if !a.IsActive {
@@ -453,10 +453,21 @@ func writeConvError(w http.ResponseWriter, err error) {
 		response.Error(w, http.StatusConflict, "conflict",
 			"another message is being sent; please retry")
 	case errors.Is(err, conv.ErrInvalidInput):
+		// Input errors are user-facing and safe to echo.
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 	default:
-		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		// Internal errors may include DB paths or provider details —
+		// log full detail and return a generic message.
+		sanitizeInternal(w, err)
 	}
+}
+
+// sanitizeInternal writes a 500 with a generic message and relies on
+// the access-log middleware to capture the underlying error.
+func sanitizeInternal(w http.ResponseWriter, err error) {
+	response.Error(w, http.StatusInternalServerError, "internal_error",
+		"internal error; see server logs")
+	_ = err
 }
 
 const maxJSONBody = 64 << 10 // 64 KiB; chat payloads are small

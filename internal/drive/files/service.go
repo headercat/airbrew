@@ -213,6 +213,12 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]*Node, error) {
 	return s.repo.ListNodes(ctx, f)
 }
 
+// ListTotal returns the total number of nodes matching the filter (ignoring
+// limit/offset), for pagination.
+func (s *Service) ListTotal(ctx context.Context, f ListFilter) (int, error) {
+	return s.repo.CountNodesFiltered(ctx, f)
+}
+
 // Count returns the number of direct children of parentID.
 func (s *Service) Count(ctx context.Context, userID, parentID string) (int, error) {
 	return s.repo.CountNodes(ctx, userID, parentID)

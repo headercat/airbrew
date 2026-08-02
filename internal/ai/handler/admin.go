@@ -70,7 +70,7 @@ func toProviderResp(p provider.StoredProvider) providerResp {
 func (a *AdminHandler) listProviders(w http.ResponseWriter, r *http.Request) {
 	provs, err := a.prov.List(r.Context())
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		sanitizeInternal(w, err)
 		return
 	}
 	out := make([]providerResp, 0, len(provs))
@@ -167,7 +167,7 @@ func toAdminAgentResp(a agent.Definition) adminAgentResp {
 func (a *AdminHandler) listAgents(w http.ResponseWriter, r *http.Request) {
 	agents, err := a.agents.List(r.Context(), false)
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		sanitizeInternal(w, err)
 		return
 	}
 	out := make([]adminAgentResp, 0, len(agents))
@@ -298,7 +298,7 @@ func writeProviderError(w http.ResponseWriter, err error) {
 	case errors.Is(err, provider.ErrUnsupportedDriver):
 		response.Error(w, http.StatusBadRequest, "unknown_driver", err.Error())
 	default:
-		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		sanitizeInternal(w, err)
 	}
 }
 
@@ -309,6 +309,6 @@ func writeAgentError(w http.ResponseWriter, err error) {
 	case errors.Is(err, agent.ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 	default:
-		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		sanitizeInternal(w, err)
 	}
 }

@@ -50,6 +50,7 @@ export default function DrivePage() {
     maxUpload: number;
   } | null>(null);
   const [nodes, setNodes] = useState<DriveNode[]>([]);
+  const [total, setTotal] = useState(0);
   const [crumbs, setCrumbs] = useState<Crumb[]>([]);
   const [usage, setUsage] = useState<{ used: number; quota: number } | null>(
     null,
@@ -95,24 +96,18 @@ export default function DrivePage() {
     setLoading(true);
     setError(null);
     try {
+      let res: { nodes?: DriveNode[]; total?: number } | null = null;
       if (view === "files") {
-        const res = await drive.list({ parent, sort, order });
-        setNodes(res.nodes ?? []);
+        res = await drive.list({ parent, sort, order });
       } else if (view === "starred") {
-        const res = await drive.list({ folder: "starred", sort, order });
-        setNodes(res.nodes ?? []);
+        res = await drive.list({ folder: "starred", sort, order });
       } else if (view === "trash") {
-        const res = await drive.list({ folder: "trash", sort, order });
-        setNodes(res.nodes ?? []);
+        res = await drive.list({ folder: "trash", sort, order });
       } else if (view === "search") {
-        const res = await drive.list({
-          folder: "search",
-          q: query,
-          sort,
-          order,
-        });
-        setNodes(res.nodes ?? []);
+        res = await drive.list({ folder: "search", q: query, sort, order });
       }
+      setNodes(res?.nodes ?? []);
+      setTotal(res?.total ?? 0);
       // view === "shared" is owned entirely by <SharedView /> (its own fetch).
     } catch (e) {
       setError(errMsg(e));

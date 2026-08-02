@@ -133,17 +133,9 @@ func (r *Repository) GetNodeAny(ctx context.Context, userID, id string) (*Node, 
 
 // ListFilter controls which nodes are returned (declared in files.go).
 
-// ListNodes returns nodes matching the filter, sorted.
-func (r *Repository) ListNodes(ctx context.Context, f ListFilter) ([]*Node, error) {
-	if f.Limit <= 0 || f.Limit > 200 {
-		f.Limit = 100
-	}
-	if f.Offset < 0 {
-		f.Offset = 0
-	}
-	q := "SELECT " + nodeColumns + " FROM drive_nodes WHERE user_id = ?"
-	args := []any{f.UserID}
-
+// applyListFilter appends the filter's WHERE clauses (excluding ORDER/LIMIT) to
+// q and returns the accumulated args. Shared by ListNodes and CountNodes.
+func applyListFilter(q string, f ListFilter, args []any) (string, []any) {
 	switch f.Folder {
 	case "trash":
 		q += " AND deleted_at IS NOT NULL"
@@ -173,6 +165,19 @@ func (r *Repository) ListNodes(ctx context.Context, f ListFilter) ([]*Node, erro
 		q += " AND kind = ?"
 		args = append(args, string(f.Kind))
 	}
+	return q, args
+}
+
+// ListNodes returns nodes matching the filter, sorted.
+func (r *Repository) ListNodes(ctx context.Context, f ListFilter) ([]*Node, error) {
+	if f.Limit <= 0 || f.Limit > 200 {
+		f.Limit = 100
+	}
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	q, args := applyListFilter(
+		"SELECT "+nodeColumns+" FROM drive_nodes WHERE user_id = ?", f, []any{f.UserID})
 	q += " ORDER BY " + sortClause(f.SortBy, f.SortDesc)
 	q += " LIMIT ? OFFSET ?"
 	args = append(args, f.Limit, f.Offset)
@@ -191,6 +196,19 @@ func (r *Repository) ListNodes(ctx context.Context, f ListFilter) ([]*Node, erro
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+// CountNodesFiltered returns the total number of nodes matching the filter
+// (ignoring limit/offset), for pagination.
+func (r *Repository) CountNodesFiltered(ctx context.Context, f ListFilter) (int, error) {
+	q, args := applyListFilter(
+		"SELECT COUNT(*) FROM drive_nodes WHERE user_id = ?", f, []any{f.UserID})
+	var n int
+	if err := r.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
 }
 
 // CountNodes returns the number of live nodes matching a parent.

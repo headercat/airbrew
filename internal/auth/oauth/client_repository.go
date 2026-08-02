@@ -19,12 +19,6 @@ type ClientRepository struct {
 // NewClientRepository returns a repository bound to db.
 func NewClientRepository(db *sql.DB) *ClientRepository { return &ClientRepository{db: db} }
 
-// ErrClientNotFound is returned when no active client matches the lookup.
-var ErrClientNotFound = errors.New("oauth client not found")
-
-// ErrClientIDTaken is returned when a generated or supplied client_id collides.
-var ErrClientIDTaken = errors.New("oauth client_id already exists")
-
 const clientColumns = `id, client_id, name, client_type, COALESCE(client_secret_hash, ''),
 	token_endpoint_auth_method, allowed_scopes, is_first_party, require_consent,
 	is_active, created_at, updated_at`
@@ -154,6 +148,58 @@ func (r *ClientRepository) GetByID(ctx context.Context, id string) (*Client, err
 	return c, nil
 }
 
+// GetByClientID returns one active, non-deleted client by its public OAuth
+// client_id. The authorize / token endpoints resolve clients this way (the
+// protocol never exposes the internal ID).
+func (r *ClientRepository) GetByClientID(ctx context.Context, clientID string) (*Client, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT "+clientColumns+" FROM oauth_clients WHERE client_id = ? AND deleted_at IS NULL", clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, ErrClientNotFound
+	}
+	c, err := scanClient(rows)
+	if err != nil {
+		return nil, err
+	}
+	if rows.Next() {
+		return nil, fmt.Errorf("oauth client: multiple rows for client_id %q", clientID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := r.loadURIs(ctx, c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// UpdateSecret replaces a confidential client's secret hash and bumps
+// updated_at. It is used by ClientService.RotateSecret.
+func (r *ClientRepository) UpdateSecret(ctx context.Context, id, secretHash string) error {
+	now := time.Now().UTC().Truncate(time.Second)
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE oauth_clients
+		   SET client_secret_hash = ?, updated_at = ?
+		 WHERE id = ? AND deleted_at IS NULL
+	`, nullable(secretHash), now, id)
+	if err != nil {
+		return fmt.Errorf("oauth client: update secret: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrClientNotFound
+	}
+	return nil
+}
+
 // Update applies editable fields and replaces redirect URI sets.
 func (r *ClientRepository) Update(ctx context.Context, c *Client) error {
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -204,15 +250,6 @@ func (r *ClientRepository) Delete(ctx context.Context, id string) error {
 		return ErrClientNotFound
 	}
 	return nil
-}
-
-func (r *ClientRepository) queryOne(ctx context.Context, query string, args ...any) (*Client, error) {
-	row := r.db.QueryRowContext(ctx, query, args...)
-	c, err := scanClient(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrClientNotFound
-	}
-	return c, err
 }
 
 func (r *ClientRepository) loadURIs(ctx context.Context, c *Client) error {

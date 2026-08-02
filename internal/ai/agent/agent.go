@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -372,7 +373,18 @@ func (a *assistantAccumulator) appendToolArgs(index int, args string) {
 
 func toEventError(err error) *ErrorBody {
 	if errors.Is(err, provider.ErrUpstream) {
-		return &ErrorBody{Code: "provider_upstream", Description: err.Error()}
+		// upstream errors carry the response body for logging only; the
+		// client just sees the status code so it cannot be used to
+		// exfiltrate provider output (which may echo back part of a key).
+		if u := provider.AsUpstream(err); u != nil {
+			slog.Default().Warn("ai: provider upstream error",
+				"status", u.Status(), "body", u.Body())
+			return &ErrorBody{
+				Code:        "provider_upstream",
+				Description: fmt.Sprintf("provider returned HTTP %d", u.Status()),
+			}
+		}
+		return &ErrorBody{Code: "provider_upstream", Description: "provider error"}
 	}
 	if errors.Is(err, context.Canceled) {
 		return &ErrorBody{Code: "cancelled", Description: "request cancelled"}
@@ -380,7 +392,18 @@ func toEventError(err error) *ErrorBody {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return &ErrorBody{Code: "timeout", Description: "request timed out"}
 	}
-	return &ErrorBody{Code: "internal_error", Description: err.Error()}
+	// Surface only the top-level message; the wrapped chain may contain
+	// internal paths or DB errors that should not reach the SPA.
+	return &ErrorBody{Code: "internal_error", Description: "internal error"}
+}
+
+// upstreamStatus is a tiny helper so callers can read the HTTP status
+// without importing provider. Used in tests.
+func upstreamStatus(err error) (int, bool) {
+	if u := provider.AsUpstream(err); u != nil {
+		return u.Status(), true
+	}
+	return 0, false
 }
 
 // DecodeArgs is a helper for the SPA: it returns a pretty-printed version

@@ -207,7 +207,7 @@ func (c *ollamaClient) streamNDJSON(ctx context.Context, body io.Reader, out cha
 func (c *ollamaClient) httpError(resp *http.Response) error {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-	return fmt.Errorf("%w: ollama http %d: %s", ErrUpstream, resp.StatusCode, string(body))
+	return &upstreamError{status: resp.StatusCode, body: string(body)}
 }
 
 func init() { Register("ollama", OllamaDriver{}) }

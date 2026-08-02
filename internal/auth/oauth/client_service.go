@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"net/url"
@@ -103,6 +104,12 @@ func (s *ClientService) Get(ctx context.Context, id string) (*Client, error) {
 	return s.repo.GetByID(ctx, id)
 }
 
+// GetByClientID resolves one active client by its public OAuth client_id.
+// The authorize and token endpoints use this (never the internal ID).
+func (s *ClientService) GetByClientID(ctx context.Context, clientID string) (*Client, error) {
+	return s.repo.GetByClientID(ctx, clientID)
+}
+
 // Update validates and persists editable client fields.
 func (s *ClientService) Update(ctx context.Context, id string, in ClientUpdate) (*Client, error) {
 	c, err := s.repo.GetByID(ctx, id)
@@ -131,34 +138,121 @@ func (s *ClientService) Delete(ctx context.Context, id string) error {
 	return s.repo.Delete(ctx, id)
 }
 
+// RotateSecret issues a fresh one-time secret for a confidential client,
+// replacing the stored hash. It returns the plaintext secret exactly once.
+// Rotating a public client is an error (ErrPublicClientSecret).
+func (s *ClientService) RotateSecret(ctx context.Context, id string) (string, error) {
+	c, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if c.ClientType != ClientTypeConfidential {
+		return "", ErrPublicClientSecret
+	}
+	secret := randomToken(32)
+	if err := s.repo.UpdateSecret(ctx, id, hashSecret(secret)); err != nil {
+		return "", err
+	}
+	return secret, nil
+}
+
+// VerifyClientSecret authenticates a confidential client for the token
+// endpoint. It resolves the client by client_id and, for confidential clients,
+// checks the presented secret with a constant-time comparison. Unknown
+// client_ids, inactive clients, and bad secrets are all collapsed into
+// ErrInvalidClient so the endpoint cannot be used to enumerate client_ids.
+// Public clients cannot present a secret and yield ErrPublicClientSecret.
+func (s *ClientService) VerifyClientSecret(ctx context.Context, clientID, secret string) (*Client, error) {
+	c, err := s.repo.GetByClientID(ctx, clientID)
+	if err != nil {
+		if errors.Is(err, ErrClientNotFound) {
+			return nil, ErrInvalidClient
+		}
+		return nil, err
+	}
+	if c.ClientType == ClientTypePublic {
+		return nil, ErrPublicClientSecret
+	}
+	if c.ClientSecretHash == "" || !secretMatches(secret, c.ClientSecretHash) {
+		return nil, ErrInvalidClient
+	}
+	return c, nil
+}
+
+// ValidateRedirectURI enforces exact-string matching of the requested
+// redirect_uri against the client's registered set, as required by OAuth 2.1.
+func (s *ClientService) ValidateRedirectURI(c *Client, requested string) error {
+	for _, uri := range c.RedirectURIs {
+		if uri == requested {
+			return nil
+		}
+	}
+	return ErrRedirectURIMismatch
+}
+
+// ValidateScopes checks that every requested scope is permitted for the client
+// (a subset of AllowedScopes) and returns the normalized, deduplicated, sorted
+// scope list to issue. An empty result with no error is valid (the client
+// requested no scopes beyond defaults).
+func (s *ClientService) ValidateScopes(c *Client, requested []string) ([]string, error) {
+	normalized := normalizeScopes(requested)
+	allowed := map[string]struct{}{}
+	for _, sc := range c.AllowedScopes {
+		allowed[sc] = struct{}{}
+	}
+	for _, sc := range normalized {
+		if _, ok := allowed[sc]; !ok {
+			return nil, ErrInvalidScope
+		}
+	}
+	return normalized, nil
+}
+
+// Per-client hygiene caps. They bound the work an admin (or future DCR client)
+// can impose on a single row and keep validation deterministic.
+const (
+	maxRedirectURIs   = 20
+	maxPostLogoutURIs = 20
+	maxAllowedScopes  = 50
+)
+
 func validateClient(c *Client) error {
 	if c.Name == "" {
-		return errors.New("name required")
+		return ErrNameRequired
 	}
 	if len(c.Name) > 100 {
-		return errors.New("name must be 100 characters or fewer")
+		return ErrNameTooLong
 	}
 	if c.ClientType != ClientTypePublic && c.ClientType != ClientTypeConfidential {
-		return errors.New("client_type must be public or confidential")
+		return ErrInvalidClientType
 	}
 	if c.ClientType == ClientTypePublic && c.TokenEndpointAuthMethod != TokenEndpointAuthNone {
-		return errors.New("public clients must use token_endpoint_auth_method none")
+		return ErrPublicClientAuthMethod
 	}
 	if c.ClientType == ClientTypeConfidential && c.TokenEndpointAuthMethod == TokenEndpointAuthNone {
-		return errors.New("confidential clients must use a client secret auth method")
+		return ErrConfidentialAuthMethod
 	}
 	if len(c.RedirectURIs) == 0 {
-		return errors.New("at least one redirect_uri is required")
+		return ErrRedirectURIRequired
+	}
+	if len(c.RedirectURIs) > maxRedirectURIs {
+		return ErrTooManyRedirectURIs
 	}
 	for _, uri := range c.RedirectURIs {
 		if err := validateRedirectURI(uri); err != nil {
 			return err
 		}
 	}
+	if len(c.PostLogoutRedirectURIs) > maxPostLogoutURIs {
+		return ErrTooManyPostLogoutURIs
+	}
 	for _, uri := range c.PostLogoutRedirectURIs {
 		if err := validateRedirectURI(uri); err != nil {
 			return err
 		}
+	}
+	if len(c.AllowedScopes) > maxAllowedScopes {
+		return ErrTooManyScopes
 	}
 	return nil
 }
@@ -166,10 +260,10 @@ func validateClient(c *Client) error {
 func validateRedirectURI(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Host == "" || u.Fragment != "" {
-		return errors.New("redirect URIs must be absolute http(s) URLs without fragments")
+		return ErrInvalidRedirectURI
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return errors.New("redirect URIs must use http or https")
+		return ErrInvalidRedirectURI
 	}
 	return nil
 }
@@ -225,4 +319,11 @@ func randomToken(n int) string {
 func hashSecret(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// secretMatches reports whether the plaintext secret hashes to expectedHash,
+// using a constant-time comparison so that secret verification does not leak
+// timing information about the stored hash.
+func secretMatches(secret, expectedHash string) bool {
+	return subtle.ConstantTimeCompare([]byte(hashSecret(secret)), []byte(expectedHash)) == 1
 }

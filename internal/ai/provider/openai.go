@@ -285,7 +285,7 @@ type openAIUsage struct {
 func (c *openAIClient) httpError(resp *http.Response) error {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-	return fmt.Errorf("%w: openai http %d: %s", ErrUpstream, resp.StatusCode, string(body))
+	return &upstreamError{status: resp.StatusCode, body: string(body)}
 }
 
 // ErrUpstream signals a non-2xx response from the provider. The runtime

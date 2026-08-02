@@ -146,11 +146,12 @@ func (h *Handler) listFiles(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	total, _ := h.svc.ListTotal(r.Context(), f)
 	out := make([]nodeResp, 0, len(nodes))
 	for _, n := range nodes {
 		out = append(out, toNodeResp(n))
 	}
-	jsonResp(w, http.StatusOK, map[string]any{"nodes": out})
+	jsonResp(w, http.StatusOK, map[string]any{"nodes": out, "total": total})
 }
 
 type createFolderReq struct {

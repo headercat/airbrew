@@ -66,7 +66,7 @@ export const drive = {
       if (v !== undefined && v !== "") q.set(k, String(v));
     }
     const qs = q.toString();
-    return api.get<{ nodes: DriveNode[] }>(
+    return api.get<{ nodes: DriveNode[]; total: number }>(
       "/api/drive/files" + (qs ? "?" + qs : ""),
     );
   },

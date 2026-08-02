@@ -309,7 +309,7 @@ func (c *anthropicClient) streamSSE(ctx context.Context, body io.Reader, out cha
 func (c *anthropicClient) httpError(resp *http.Response) error {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-	return fmt.Errorf("%w: anthropic http %d: %s", ErrUpstream, resp.StatusCode, string(body))
+	return &upstreamError{status: resp.StatusCode, body: string(body)}
 }
 
 func init() { Register("anthropic", AnthropicDriver{}) }

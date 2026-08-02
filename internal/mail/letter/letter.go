@@ -259,6 +259,17 @@ type ParsedMessage struct {
 	References []string // normalized RFC5322 References list
 	Text      string
 	HTML      string
+	Attachments []ParsedAttachment
+}
+
+// ParsedAttachment is one decoded MIME part treated as an attachment or inline
+// image, surfaced by Parse.
+type ParsedAttachment struct {
+	Filename    string
+	ContentType string
+	ContentID   string
+	Disposition string // "attachment" (default) or "inline"
+	Data        []byte
 }
 
 // Parse reads a raw RFC822 message and extracts the header fields and the
@@ -287,12 +298,13 @@ func Parse(raw []byte) (*ParsedMessage, error) {
 			out.Date = t.UTC()
 		}
 	}
-	text, html, err := bodies(h, msg.Body)
+	text, html, atts, err := extract(h, msg.Body)
 	if err != nil {
 		return nil, err
 	}
 	out.Text = text
 	out.HTML = html
+	out.Attachments = atts
 	return out, nil
 }
 
@@ -307,79 +319,128 @@ func safeList(s string) []Address {
 // bodies extracts the text/plain and text/html parts, descending one level of
 // multipart (multipart/alternative, multipart/mixed). Good enough for typical
 // inbound mail without a full MIME walker.
-func bodies(h mail.Header, body io.Reader) (text, html string, err error) {
+// extract walks a message body, returning the first text/plain and text/html
+// bodies plus every part that looks like an attachment (Content-Disposition
+// attachment/inline, or a non-text part with a filename). It recurses into
+// nested multipart containers.
+func extract(h mail.Header, body io.Reader) (text, html string, atts []ParsedAttachment, err error) {
 	ct := h.Get("Content-Type")
 	mediatype, params, perr := mime.ParseMediaType(ct)
 	if perr != nil {
 		// No Content-Type or unparseable: treat body as plain text.
 		b, rerr := io.ReadAll(body)
 		if rerr != nil {
-			return "", "", rerr
+			return "", "", nil, rerr
 		}
-		return string(b), "", nil
+		return string(b), "", nil, nil
 	}
-	switch {
-	case strings.HasPrefix(mediatype, "multipart/"):
-		mr := multipart.NewReader(body, params["boundary"])
-		for {
-			part, perr := mr.NextPart()
-			if perr == io.EOF {
-				return text, html, nil
-			}
-			if perr != nil {
-				return text, html, perr
-			}
-			pct := part.Header.Get("Content-Type")
-			pmed, _, _ := mime.ParseMediaType(pct)
-			data, derr := readPart(part, part.Header.Get("Content-Transfer-Encoding"))
-			if derr != nil {
-				continue
-			}
-			switch {
-			case strings.HasPrefix(pmed, "text/plain") && text == "":
-				text = data
-			case strings.HasPrefix(pmed, "text/html") && html == "":
-				html = data
-			case strings.HasPrefix(pmed, "multipart/"):
-				// Nested multipart: recurse via a synthetic header.
-				t, he, _ := bodies(mail.Header{"Content-Type": []string{pct}}, bytes.NewReader([]byte(data)))
-				if t != "" && text == "" {
-					text = t
-				}
-				if he != "" && html == "" {
-					html = he
-				}
-			}
-		}
-	case mediatype == "text/html":
-		data, rerr := readDecoded(body, params)
+	if !strings.HasPrefix(mediatype, "multipart/") {
+		// Leaf at top level: text/plain, text/html, or a single attachment.
+		data, rerr := readDecoded(body)
 		if rerr != nil {
-			return "", "", rerr
+			return "", "", nil, rerr
 		}
-		return "", data, nil
-	default:
-		data, rerr := readDecoded(body, params)
-		if rerr != nil {
-			return "", "", rerr
+		switch {
+		case strings.HasPrefix(mediatype, "text/plain"):
+			return data, "", nil, nil
+		case strings.HasPrefix(mediatype, "text/html"):
+			return "", data, nil, nil
+		default:
+			return "", "", nil, []ParsedAttachment{{
+				Filename:    params["name"],
+				ContentType: mediatype,
+				Data:        []byte(data),
+			}}, nil
 		}
-		return data, "", nil
+	}
+	mr := multipart.NewReader(body, params["boundary"])
+	for {
+		part, perr := mr.NextPart()
+		if perr == io.EOF {
+			return text, html, atts, nil
+		}
+		if perr != nil {
+			return text, html, atts, perr
+		}
+		pct := part.Header.Get("Content-Type")
+		pmed, pparams, _ := mime.ParseMediaType(pct)
+		raw, derr := io.ReadAll(part)
+		if derr != nil {
+			continue
+		}
+		data := decodeCTE(raw, part.Header.Get("Content-Transfer-Encoding"))
+		switch {
+		case strings.HasPrefix(pmed, "multipart/"):
+			// Nested container: recurse over the already-decoded bytes.
+			t, he, sub, _ := extract(
+				mail.Header{"Content-Type": []string{pct}},
+				bytes.NewReader([]byte(data)),
+			)
+			if t != "" && text == "" {
+				text = t
+			}
+			if he != "" && html == "" {
+				html = he
+			}
+			atts = append(atts, sub...)
+		case isAttachment(part.Header, pmed):
+			atts = append(atts, ParsedAttachment{
+				Filename:    filenameOf(part.Header, pparams),
+				ContentType: pmed,
+				ContentID:   strings.Trim(part.Header.Get("Content-ID"), "<> "),
+				Disposition: dispositionOf(part.Header),
+				Data:        []byte(data),
+			})
+		case strings.HasPrefix(pmed, "text/plain") && text == "":
+			text = data
+		case strings.HasPrefix(pmed, "text/html") && html == "":
+			html = data
+		}
 	}
 }
 
-func readDecoded(body io.Reader, params map[string]string) (string, error) {
+// isAttachment reports whether a MIME part should be treated as an attachment:
+// it has Content-Disposition attachment/inline, or a filename parameter, or a
+// Content-ID (inline image), and is not one of the body text types.
+func isAttachment(hdr textproto.MIMEHeader, mediatype string) bool {
+	if strings.HasPrefix(mediatype, "text/plain") || strings.HasPrefix(mediatype, "text/html") {
+		// A text part with a filename is still an attachment (e.g. an attached
+		// .txt) unless it is the body.
+		disp, params, _ := mime.ParseMediaType(hdr.Get("Content-Disposition"))
+		if disp == "attachment" {
+			return true
+		}
+		_, ctParams, _ := mime.ParseMediaType(hdr.Get("Content-Type"))
+		return params["filename"] != "" || ctParams["name"] != ""
+	}
+	return true // any non-text part is an attachment
+}
+
+func filenameOf(hdr textproto.MIMEHeader, ctParams map[string]string) string {
+	_, dparams, _ := mime.ParseMediaType(hdr.Get("Content-Disposition"))
+	if n := decodeHeader(dparams["filename"]); n != "" {
+		return n
+	}
+	if n := decodeHeader(ctParams["name"]); n != "" {
+		return n
+	}
+	return ""
+}
+
+func dispositionOf(hdr textproto.MIMEHeader) string {
+	disp, _, _ := mime.ParseMediaType(hdr.Get("Content-Disposition"))
+	if disp == "inline" {
+		return "inline"
+	}
+	return "attachment"
+}
+
+func readDecoded(body io.Reader) (string, error) {
 	b, err := io.ReadAll(body)
 	if err != nil {
 		return "", err
 	}
 	return string(b), nil
-}
-
-func readPart(part *multipart.Part, cte string) (string, error) {
-	b, err := io.ReadAll(part)
-	if err != nil {
-		return "", err
-	}
-	return decodeCTE(b, cte), nil
 }
 
 // decodeCTE reverses common Content-Transfer-Encodings.

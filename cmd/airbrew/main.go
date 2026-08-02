@@ -73,6 +73,7 @@ func main() {
 	mux := server.Build(server.Deps{
 		DB:             database,
 		SessionMax:     cfg.SessionMaxAge,
+		SessionSecret:  cfg.SessionSecret,
 		WebFS:          web.DistFS,
 		WebProxyTarget: cfg.WebProxyTarget,
 		Blobs:          blobs,

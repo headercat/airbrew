@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -13,6 +14,11 @@ import (
 
 	"github.com/headercat/airbrew/internal/admin"
 	"github.com/headercat/airbrew/internal/ai"
+	aicrypto "github.com/headercat/airbrew/internal/ai/crypto"
+	"github.com/headercat/airbrew/internal/ai/agent"
+	aiprovider "github.com/headercat/airbrew/internal/ai/provider"
+	"github.com/headercat/airbrew/internal/ai/conv"
+	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/auth"
 	"github.com/headercat/airbrew/internal/blob"
 	"github.com/headercat/airbrew/internal/chat"
@@ -30,6 +36,7 @@ import (
 type Deps struct {
 	DB             *db.DB
 	SessionMax     time.Duration
+	SessionSecret  []byte // HMAC secret used to derive the AI at-rest seal
 	WebFS          fs.FS
 	WebProxyTarget string
 	Blobs          blob.Store
@@ -97,8 +104,24 @@ func Build(d Deps) *http.ServeMux {
 
 	contacts.New(stubState).RegisterRoutes(mux)
 	chat.New(stubState).RegisterRoutes(mux)
-	ai.New(stubState).RegisterRoutes(mux)
 	workflow.New(stubState).RegisterRoutes(mux)
+
+	// AI agent module. Status is public; user endpoints require a session,
+	// module-enable gating, and a per-IP rate limit. Admin provider/agent
+	// endpoints live under the RequireAdmin tree alongside the other
+	// per-module admin routes.
+	aiMod := buildAIModule(d, stubState, adminMod.Audit())
+	aiMod.RegisterPublicRoutes(mux)
+	aiSub := http.NewServeMux()
+	aiMod.RegisterUserRoutes(aiSub)
+	aiLimiter := middleware.NewRateLimiter(30, time.Minute)
+	mux.Handle("/api/ai/", authMod.SessionMiddleware(middleware.Chain(aiSub,
+		modules.RequireEnabled(stubState, "ai"),
+		middleware.RateLimit(aiLimiter, middleware.ClientIPKey),
+	)))
+	aiAdminSub := http.NewServeMux()
+	aiMod.RegisterAdminRoutes(aiAdminSub)
+	adminSub.Handle("/api/admin/ai/", admin.RequireAdmin(authMod.UserRepo)(aiAdminSub))
 
 	// Password vault. Status is public; the remaining endpoints require a
 	// session, so they are mounted on a sub-mux wrapped in SessionMiddleware.
@@ -121,6 +144,35 @@ func Build(d Deps) *http.ServeMux {
 	}
 
 	return mux
+}
+
+// buildAIModule wires the AI module's dependencies: an at-rest seal for
+// provider API keys derived from the session secret, the provider
+// repository, the conversation + agent repos, the tool registry (with
+// built-ins), and the runtime with its provider resolver. Seeding of the
+// built-in agents is best-effort and never aborts startup.
+func buildAIModule(d Deps, state *modules.State, auditSvc *audit.Service) *ai.Module {
+	seal, err := aicrypto.New(d.SessionSecret)
+	if err != nil {
+		slog.Default().Error("ai: seal init failed; provider keys stored unencrypted",
+			"error", err)
+		seal = nil
+	}
+	provRepo := aiprovider.NewRepository(d.DB.DB, seal)
+	convRepo := conv.NewRepository(d.DB.DB)
+	convSvc := conv.NewService(convRepo)
+	agentsRepo := agent.NewDefinitionRepo(d.DB.DB)
+	tools := agent.NewToolRegistry()
+	agent.Builtin(tools)
+
+	resolve := func(ctx context.Context) (aiprovider.LLMClient, error) {
+		return provRepo.Resolve(ctx, aiprovider.DirectionChat)
+	}
+	m := ai.New(state, provRepo, convSvc, agentsRepo, tools, resolve, auditSvc)
+	if err := m.Seed(context.Background()); err != nil {
+		slog.Default().Warn("ai: seed built-in agents failed", "error", err)
+	}
+	return m
 }
 
 // filesHandler serves files from a blob.Store at /api/files/<namespace>/<name>.

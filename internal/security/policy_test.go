@@ -84,6 +84,29 @@ func TestCheckLoginRateLimit(t *testing.T) {
 	}
 }
 
+func TestListLoginAttemptsFiltersEmailCaseInsensitiveSubstring(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t, ctx)
+	svc := NewService(db)
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO login_attempts (id, email, success, ip_address, created_at)
+		VALUES
+			('attempt_1', 'Admin@example.com', 1, '203.0.113.10', ?),
+			('attempt_2', 'user@example.com', 0, '203.0.113.11', ?)
+	`, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, total, err := svc.ListLoginAttempts(ctx, LoginHistoryFilter{Email: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(rows) != 1 || rows[0].Email != "Admin@example.com" {
+		t.Fatalf("email filter total=%d rows=%#v", total, rows)
+	}
+}
+
 func TestResolveRequestIPUsesForwardedHeadersOnlyForTrustedProxies(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.RemoteAddr = "198.51.100.10:443"

@@ -119,8 +119,8 @@ func (s *Service) ListLoginAttempts(ctx context.Context, f LoginHistoryFilter) (
 	where := "WHERE 1=1"
 	args := []any{}
 	if f.Email != "" {
-		where += " AND email = ?"
-		args = append(args, f.Email)
+		where += " AND email LIKE ? COLLATE NOCASE"
+		args = append(args, "%"+strings.TrimSpace(f.Email)+"%")
 	}
 	if f.UserID != "" {
 		where += " AND user_id = ?"

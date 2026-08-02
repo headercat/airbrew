@@ -227,12 +227,16 @@ func (r *Repository) GetPasswordHash(ctx context.Context, userID string) (string
 	return hash, nil
 }
 
-// UpdatePassword replaces the stored argon2id hash for the user.
+// UpdatePassword replaces the stored argon2id hash for the user and records the
+// change timestamp in password_changed_at (added by migration 0004) so the
+// password policy max-age check can be evaluated.
 func (r *Repository) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
 	now := time.Now().UTC().Truncate(time.Second)
 	res, err := r.db.ExecContext(ctx, `
-		UPDATE password_credentials SET password_hash = ?, updated_at = ? WHERE user_id = ?
-	`, passwordHash, now, userID)
+		UPDATE password_credentials
+		   SET password_hash = ?, password_changed_at = ?, updated_at = ?
+		 WHERE user_id = ?
+	`, passwordHash, now, now, userID)
 	if err != nil {
 		return fmt.Errorf("user: update password: %w", err)
 	}
@@ -240,6 +244,30 @@ func (r *Repository) UpdatePassword(ctx context.Context, userID, passwordHash st
 		return ErrNotFound
 	}
 	return nil
+}
+
+// PasswordChangedAt returns the timestamp of the last password change, or the
+// credentials' updated_at when the column is unset (e.g. rows created before
+// migration 0004).
+func (r *Repository) PasswordChangedAt(ctx context.Context, userID string) (time.Time, error) {
+	var changed, updated sql.NullTime
+	err := r.db.QueryRowContext(ctx,
+		"SELECT password_changed_at, updated_at FROM password_credentials WHERE user_id = ?",
+		userID,
+	).Scan(&changed, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, ErrNotFound
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	if changed.Valid {
+		return changed.Time, nil
+	}
+	if updated.Valid {
+		return updated.Time, nil
+	}
+	return time.Time{}, nil
 }
 
 // ProfilePatch describes partial updates to a user's profile. nil fields are

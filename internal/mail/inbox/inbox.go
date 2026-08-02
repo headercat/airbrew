@@ -98,14 +98,30 @@ type NewMailboxInput struct {
 // SendInput carries the fields of an outbound message, validated before the
 // active outbound driver is invoked.
 type SendInput struct {
-	MailboxID  string
-	To         []letter.Address
-	Cc         []letter.Address
-	Bcc        []letter.Address
-	ReplyTo    []letter.Address
-	Subject    string
-	Text       string
-	HTML       string
-	InReplyTo  string
-	References []string
+	MailboxID     string
+	To            []letter.Address
+	Cc            []letter.Address
+	Bcc           []letter.Address
+	ReplyTo       []letter.Address
+	Subject       string
+	Text          string
+	HTML          string
+	InReplyTo     string
+	References    []string
+	AttachmentIDs []string // pending attachments uploaded by the composer
+}
+
+// Attachment is one file attached to a message. The binary payload lives in the
+// blob store at BlobPath; this struct is the stored metadata.
+type Attachment struct {
+	ID          string
+	MessageID   string // empty while a pending outbound upload
+	UserID      string
+	BlobPath    string
+	Filename    string
+	ContentType string
+	ContentID   string
+	Inline      bool
+	SizeBytes   int64
+	CreatedAt   time.Time
 }

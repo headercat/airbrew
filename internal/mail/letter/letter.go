@@ -102,7 +102,18 @@ type Outgoing struct {
 	MessageID  string // generated if empty
 	InReplyTo  string
 	References []string
+	Attachments []Attachment
 	Headers    textproto.MIMEHeader // extra headers (attachments, custom)
+}
+
+// Attachment is one file to attach to an outbound message. Data is the raw
+// bytes of the file; BuildRFC822 base64-encodes it into a MIME part.
+type Attachment struct {
+	Filename    string
+	ContentType string
+	ContentID   string // for inline (embedded) images
+	Inline      bool
+	Data        []byte
 }
 
 // Recipients returns To + Cc + Bcc as a flat list (for SMTP envelope).
@@ -161,41 +172,91 @@ func BuildRFC822(o Outgoing) ([]byte, error) {
 
 	hasText := o.Text != ""
 	hasHTML := o.HTML != ""
+
+	// Build the message body entity (its Content-Type + raw bytes), independent
+	// of whether attachments will wrap it in multipart/mixed.
+	bodyCT, bodyBytes := buildBody(o.Text, o.HTML, hasText, hasHTML)
+
+	if len(o.Attachments) == 0 {
+		h.Set("Content-Type", bodyCT)
+		writeHeaders(&buf, h)
+		buf.WriteString("\r\n")
+		buf.Write(bodyBytes)
+		return buf.Bytes(), nil
+	}
+
+	// multipart/mixed: first part is the body, the rest are attachments.
+	mixedBoundary := "airbrew_" + randHex(16)
+	h.Set("Content-Type", "multipart/mixed; boundary=\""+mixedBoundary+"\"")
+	writeHeaders(&buf, h)
+	buf.WriteString("\r\n")
+	mp := multipart.NewWriter(&buf)
+	_ = mp.SetBoundary(mixedBoundary)
+	if part, err := mp.CreatePart(textproto.MIMEHeader{"Content-Type": {bodyCT}}); err == nil {
+		_, _ = part.Write(bodyBytes)
+	}
+	for _, a := range o.Attachments {
+		ct := a.ContentType
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		hdr := textproto.MIMEHeader{
+			"Content-Type":              {fmt.Sprintf("%s; name=%q", ct, a.Filename)},
+			"Content-Transfer-Encoding": {"base64"},
+			"Content-Disposition":       {fmt.Sprintf("attachment; filename=%q", a.Filename)},
+		}
+		if a.Inline || a.ContentID != "" {
+			hdr.Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", a.Filename))
+			if a.ContentID != "" {
+				hdr.Set("Content-ID", "<"+a.ContentID+">")
+			}
+		}
+		part, err := mp.CreatePart(hdr)
+		if err != nil {
+			continue
+		}
+		b64 := base64.StdEncoding.EncodeToString(a.Data)
+		// Wrap at 76 chars per RFC2045.
+		for i := 0; i < len(b64); i += 76 {
+			end := i + 76
+			if end > len(b64) {
+				end = len(b64)
+			}
+			_, _ = part.Write([]byte(b64[i:end] + "\r\n"))
+		}
+	}
+	_ = mp.Close()
+	return buf.Bytes(), nil
+}
+
+// buildBody renders the text/html body entity and returns its Content-Type
+// header value plus raw bytes (no leading headers, just the entity body).
+func buildBody(text, html string, hasText, hasHTML bool) (string, []byte) {
 	switch {
 	case hasText && hasHTML:
 		boundary := "airbrew_" + randHex(16)
-		h.Set("Content-Type", "multipart/alternative; boundary=\""+boundary+"\"")
-		writeHeaders(&buf, h)
-		buf.WriteString("\r\n")
+		var buf bytes.Buffer
 		mp := multipart.NewWriter(&buf)
 		_ = mp.SetBoundary(boundary)
 		if part, err := mp.CreatePart(textproto.MIMEHeader{
 			"Content-Type":              {"text/plain; charset=utf-8"},
 			"Content-Transfer-Encoding": {"8bit"},
 		}); err == nil {
-			_, _ = io.WriteString(part, o.Text)
+			_, _ = io.WriteString(part, text)
 		}
 		if part, err := mp.CreatePart(textproto.MIMEHeader{
 			"Content-Type":              {"text/html; charset=utf-8"},
 			"Content-Transfer-Encoding": {"8bit"},
 		}); err == nil {
-			_, _ = io.WriteString(part, o.HTML)
+			_, _ = io.WriteString(part, html)
 		}
 		_ = mp.Close()
+		return "multipart/alternative; boundary=\"" + boundary + "\"", buf.Bytes()
 	case hasHTML:
-		h.Set("Content-Type", "text/html; charset=utf-8")
-		h.Set("Content-Transfer-Encoding", "8bit")
-		writeHeaders(&buf, h)
-		buf.WriteString("\r\n")
-		buf.WriteString(o.HTML)
+		return "text/html; charset=utf-8", []byte(html)
 	default:
-		h.Set("Content-Type", "text/plain; charset=utf-8")
-		h.Set("Content-Transfer-Encoding", "8bit")
-		writeHeaders(&buf, h)
-		buf.WriteString("\r\n")
-		buf.WriteString(o.Text)
+		return "text/plain; charset=utf-8", []byte(text)
 	}
-	return buf.Bytes(), nil
 }
 
 func writeHeaders(buf *bytes.Buffer, h textproto.MIMEHeader) {
@@ -346,7 +407,7 @@ func extract(h mail.Header, body io.Reader) (text, html string, atts []ParsedAtt
 		case strings.HasPrefix(mediatype, "text/html"):
 			return "", data, nil, nil
 		default:
-			return "", "", nil, []ParsedAttachment{{
+			return "", "", []ParsedAttachment{{
 				Filename:    params["name"],
 				ContentType: mediatype,
 				Data:        []byte(data),

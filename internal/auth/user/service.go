@@ -12,11 +12,24 @@ import (
 
 // Service contains user-facing business logic.
 type Service struct {
-	repo *Repository
+	repo   *Repository
+	policy PasswordPolicyChecker
+}
+
+// PasswordPolicyChecker validates a plaintext password against the workspace
+// policy. When nil (see SetPasswordPolicyChecker), the service falls back to a
+// hard-coded 8-character minimum so the package stays usable in tests and
+// bootstrap without a configured policy.
+type PasswordPolicyChecker interface {
+	ValidatePassword(ctx context.Context, plain string) error
 }
 
 // NewService returns a Service backed by repo.
 func NewService(repo *Repository) *Service { return &Service{repo: repo} }
+
+// SetPasswordPolicyChecker injects the workspace password policy. It is
+// optional; without it the service enforces only the legacy 8-char minimum.
+func (s *Service) SetPasswordPolicyChecker(c PasswordPolicyChecker) { s.policy = c }
 
 // ErrInvalidCredentials is returned by Authenticate / ChangePassword on bad
 // email or password.
@@ -48,8 +61,8 @@ func (s *Service) registerWithRole(ctx context.Context, email, plainPassword, di
 	if email == "" {
 		return nil, errors.New("email required")
 	}
-	if len(plainPassword) < 8 {
-		return nil, errors.New("password must be at least 8 characters")
+	if err := s.checkPasswordPolicy(ctx, plainPassword); err != nil {
+		return nil, err
 	}
 	hash, err := password.Hash(plainPassword)
 	if err != nil {
@@ -155,8 +168,8 @@ func (s *Service) SetAvatarURL(ctx context.Context, userID, avatarURL string) er
 
 // ChangePassword verifies the current password and replaces it with newPassword.
 func (s *Service) ChangePassword(ctx context.Context, userID, currentPassword, newPassword string) error {
-	if len(newPassword) < 8 {
-		return errors.New("new password must be at least 8 characters")
+	if err := s.checkPasswordPolicy(ctx, newPassword); err != nil {
+		return err
 	}
 	u, err := s.repo.GetByID(ctx, userID)
 	if err != nil {
@@ -179,12 +192,24 @@ func (s *Service) ChangePassword(ctx context.Context, userID, currentPassword, n
 // AdminSetPassword replaces a user's password without requiring the current
 // one. Used by the admin "reset password" flow.
 func (s *Service) AdminSetPassword(ctx context.Context, userID, newPassword string) error {
-	if len(newPassword) < 8 {
-		return errors.New("password must be at least 8 characters")
+	if err := s.checkPasswordPolicy(ctx, newPassword); err != nil {
+		return err
 	}
 	hash, err := password.Hash(newPassword)
 	if err != nil {
 		return err
 	}
 	return s.repo.UpdatePassword(ctx, userID, hash)
+}
+
+// checkPasswordPolicy applies the configured policy when present, otherwise
+// falls back to the legacy 8-character minimum.
+func (s *Service) checkPasswordPolicy(ctx context.Context, plain string) error {
+	if s.policy != nil {
+		return s.policy.ValidatePassword(ctx, plain)
+	}
+	if len(plain) < 8 {
+		return errors.New("password must be at least 8 characters")
+	}
+	return nil
 }

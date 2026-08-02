@@ -148,7 +148,7 @@ func (s *Service) SetAvatar(ctx context.Context, userID, id, contentType string,
 	}
 	path, err := s.blobs.Save(ctx, Namespace, contentType, body)
 	if err != nil {
-		return fmt.Errorf("contacts: save avatar: %w", err)
+		return nil, fmt.Errorf("contacts: save avatar: %w", err)
 	}
 	old := c.AvatarPath
 	if err := s.repo.SetAvatar(ctx, userID, id, path); err != nil {

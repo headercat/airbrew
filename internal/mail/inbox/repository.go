@@ -289,6 +289,139 @@ func mailboxFilter(mailboxID string) string {
 	return " AND mailbox_id = ?"
 }
 
+// --- attachments ----------------------------------------------------------
+
+const attachmentColumns = `id, COALESCE(message_id,''), user_id, blob_path,
+	COALESCE(filename,''), COALESCE(content_type,'application/octet-stream'),
+	COALESCE(content_id,''), disposition, size_bytes, created_at`
+
+// CreateAttachment inserts an attachment row. MessageID may be empty for a
+// pending outbound upload.
+func (r *Repository) CreateAttachment(ctx context.Context, a *Attachment) error {
+	now := time.Now().UTC().Truncate(time.Second)
+	a.CreatedAt = now
+	disp := "attachment"
+	if a.Inline {
+		disp = "inline"
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO mail_attachments
+		  (id, message_id, user_id, blob_path, filename, content_type,
+		   content_id, disposition, size_bytes, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		a.ID, nullable(a.MessageID), a.UserID, a.BlobPath, a.Filename, a.ContentType,
+		nullable(a.ContentID), disp, a.SizeBytes, now,
+	)
+	if err != nil {
+		return fmt.Errorf("inbox: insert attachment: %w", err)
+	}
+	return nil
+}
+
+// ListAttachmentsByMessage returns the attachments attached to a message.
+func (r *Repository) ListAttachmentsByMessage(ctx context.Context, userID, messageID string) ([]Attachment, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT "+attachmentColumns+" FROM mail_attachments WHERE user_id = ? AND message_id = ? ORDER BY created_at ASC",
+		userID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAttachments(rows)
+}
+
+// ListByIDs returns the attachments owned by userID matching the given ids,
+// including pending (message_id NULL) rows.
+func (r *Repository) ListByIDs(ctx context.Context, userID string, ids []string) ([]Attachment, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := []any{userID}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT "+attachmentColumns+" FROM mail_attachments WHERE user_id = ? AND id IN ("+placeholders+")",
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAttachments(rows)
+}
+
+// GetAttachment returns one attachment (ownership-scoped).
+func (r *Repository) GetAttachment(ctx context.Context, userID, id string) (Attachment, error) {
+	row := r.db.QueryRowContext(ctx,
+		"SELECT "+attachmentColumns+" FROM mail_attachments WHERE user_id = ? AND id = ?", userID, id)
+	out, err := scanAttachment(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Attachment{}, ErrMessageNotFound
+	}
+	return out, err
+}
+
+// LinkAttachments sets message_id on the given attachment ids (ownership-scoped)
+// so pending uploads become attached to the sent message.
+func (r *Repository) LinkAttachments(ctx context.Context, userID, messageID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := []any{messageID, userID}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	_, err := r.db.ExecContext(ctx,
+		"UPDATE mail_attachments SET message_id = ? WHERE user_id = ? AND id IN ("+placeholders+")",
+		args...)
+	if err != nil {
+		return fmt.Errorf("inbox: link attachments: %w", err)
+	}
+	return nil
+}
+
+// DeleteAttachment removes an attachment row (ownership-scoped).
+func (r *Repository) DeleteAttachment(ctx context.Context, userID, id string) error {
+	res, err := r.db.ExecContext(ctx,
+		"DELETE FROM mail_attachments WHERE user_id = ? AND id = ?", userID, id)
+	if err != nil {
+		return fmt.Errorf("inbox: delete attachment: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrMessageNotFound
+	}
+	return nil
+}
+
+func scanAttachments(rows *sql.Rows) ([]Attachment, error) {
+	var out []Attachment
+	for rows.Next() {
+		a, err := scanAttachment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func scanAttachment(row scanner) (Attachment, error) {
+	var a Attachment
+	var disp string
+	err := row.Scan(&a.ID, &a.MessageID, &a.UserID, &a.BlobPath, &a.Filename,
+		&a.ContentType, &a.ContentID, &disp, &a.SizeBytes, &a.CreatedAt)
+	if err != nil {
+		return Attachment{}, err
+	}
+	a.Inline = disp == "inline"
+	return a, nil
+}
+
 // FlagPatch is a partial update of message flags. nil pointers are untouched.
 type FlagPatch struct {
 	IsRead    *bool

@@ -83,6 +83,11 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("GET /api/admin/branding", m.handler.getBranding)
 	admin.HandleFunc("PUT /api/admin/branding", m.handler.putBranding)
 	admin.HandleFunc("GET /api/admin/system", m.handler.systemInfo)
+	admin.HandleFunc("GET /api/admin/security/password-policy", m.handler.getPasswordPolicy)
+	admin.HandleFunc("PUT /api/admin/security/password-policy", m.handler.putPasswordPolicy)
+	admin.HandleFunc("GET /api/admin/security/ip-allowlist", m.handler.getIPAllowlist)
+	admin.HandleFunc("PUT /api/admin/security/ip-allowlist", m.handler.putIPAllowlist)
+	admin.HandleFunc("GET /api/admin/security/login-history", m.handler.loginHistory)
 
 	mux.Handle("/api/admin/", RequireAdmin(m.userRepo)(admin))
 }

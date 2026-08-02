@@ -110,7 +110,17 @@ func Build(d Deps) *http.ServeMux {
 	driveMod.RegisterAdminRoutes(driveAdminSub)
 	adminSub.Handle("/api/admin/drive/", admin.RequireAdmin(authMod.UserRepo)(driveAdminSub))
 
-	contacts.New(stubState).RegisterRoutes(mux)
+	// Contacts (address book) module. Status is public; contact/group CRUD,
+	// vCard import/export and avatar uploads require a session and
+	// module-enable gating.
+	contactsMod := contacts.New(d.DB.DB, stubState, adminMod.Audit(), d.Blobs)
+	contactsMod.RegisterPublicRoutes(mux)
+	contactsSub := http.NewServeMux()
+	contactsMod.RegisterRoutes(contactsSub)
+	mux.Handle("/api/contacts/", authMod.SessionMiddleware(middleware.Chain(contactsSub,
+		modules.RequireEnabled(stubState, "contacts"),
+	)))
+
 	chat.New(stubState).RegisterRoutes(mux)
 	workflow.New(stubState).RegisterRoutes(mux)
 

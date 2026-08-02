@@ -21,6 +21,7 @@ import (
 	"github.com/headercat/airbrew/internal/auth/user"
 	"github.com/headercat/airbrew/internal/httpserver/response"
 	"github.com/headercat/airbrew/internal/modules"
+	"github.com/headercat/airbrew/internal/security"
 )
 
 // Handler implements the admin HTTP endpoints.
@@ -29,6 +30,7 @@ type Handler struct {
 	state    *modules.State
 	userRepo *user.Repository
 	userSvc  *user.Service
+	security *security.Service
 	oauthSvc *oauth.ClientService
 	audit    *audit.Service
 }

@@ -105,14 +105,14 @@ type contactResp struct {
 
 func toContactResp(c *contact.Contact, groupIDs []string) contactResp {
 	out := contactResp{
-		ID: c.ID,
+		ID:         c.ID,
 		NamePrefix: c.NamePrefix, GivenName: c.GivenName, MiddleName: c.MiddleName,
 		FamilyName: c.FamilyName, NameSuffix: c.NameSuffix, DisplayName: c.DisplayName,
 		Nickname: c.Nickname, Company: c.Company, Title: c.Title, Department: c.Department,
 		Emails: toEmailDTOs(c.Emails), Phones: toPhoneDTOs(c.Phones),
 		Addresses: toAddressDTOs(c.Addresses), Ims: toIMDTOs(c.IMs), Urls: toURLDTOs(c.URLs),
 		Notes: c.Notes, IsFavorite: c.IsFavorite,
-		GroupIDs: groupIDs,
+		GroupIDs:  groupIDs,
 		CreatedAt: c.CreatedAt.UTC().Format(timeRFC3339),
 		UpdatedAt: c.UpdatedAt.UTC().Format(timeRFC3339),
 	}
@@ -260,7 +260,7 @@ type contactReq struct {
 
 func (req contactReq) toInput(userID string) contact.CreateContactInput {
 	return contact.CreateContactInput{
-		UserID: userID,
+		UserID:     userID,
 		NamePrefix: req.NamePrefix, GivenName: req.GivenName, MiddleName: req.MiddleName,
 		FamilyName: req.FamilyName, NameSuffix: req.NameSuffix, DisplayName: req.DisplayName,
 		Nickname: req.Nickname, Company: req.Company, Title: req.Title, Department: req.Department,
@@ -392,24 +392,24 @@ func (h *Handler) replaceContact(w http.ResponseWriter, r *http.Request) {
 }
 
 type patchReq struct {
-	NamePrefix  *string      `json:"name_prefix"`
-	GivenName   *string      `json:"given_name"`
-	MiddleName  *string      `json:"middle_name"`
-	FamilyName  *string      `json:"family_name"`
-	NameSuffix  *string      `json:"name_suffix"`
-	DisplayName *string      `json:"display_name"`
-	Nickname    *string      `json:"nickname"`
-	Company     *string      `json:"company"`
-	Title       *string      `json:"title"`
-	Department  *string      `json:"department"`
-	Emails      *[]emailDTO  `json:"emails"`
-	Phones      *[]phoneDTO  `json:"phones"`
+	NamePrefix  *string       `json:"name_prefix"`
+	GivenName   *string       `json:"given_name"`
+	MiddleName  *string       `json:"middle_name"`
+	FamilyName  *string       `json:"family_name"`
+	NameSuffix  *string       `json:"name_suffix"`
+	DisplayName *string       `json:"display_name"`
+	Nickname    *string       `json:"nickname"`
+	Company     *string       `json:"company"`
+	Title       *string       `json:"title"`
+	Department  *string       `json:"department"`
+	Emails      *[]emailDTO   `json:"emails"`
+	Phones      *[]phoneDTO   `json:"phones"`
 	Addresses   *[]addressDTO `json:"addresses"`
-	Ims         *[]imDTO     `json:"ims"`
-	Urls        *[]urlDTO    `json:"urls"`
-	Birthday    *string      `json:"birthday"`
-	Notes       *string      `json:"notes"`
-	IsFavorite  *bool        `json:"is_favorite"`
+	Ims         *[]imDTO      `json:"ims"`
+	Urls        *[]urlDTO     `json:"urls"`
+	Birthday    *string       `json:"birthday"`
+	Notes       *string       `json:"notes"`
+	IsFavorite  *bool         `json:"is_favorite"`
 }
 
 func (h *Handler) patchContact(w http.ResponseWriter, r *http.Request) {
@@ -713,7 +713,7 @@ func (h *Handler) importVCards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created := 0
-	var first contact.Contact
+	var firstID string
 	for _, in := range inputs {
 		in.UserID = sess.UserID
 		c, err := h.svc.Create(r.Context(), in)
@@ -721,22 +721,20 @@ func (h *Handler) importVCards(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if created == 0 {
-			first = *c
+			firstID = c.ID
 		}
 		created++
 	}
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "contacts.import", ActorUserID: sess.UserID,
-		TargetType: "contact", TargetID: first.ID,
+		TargetType: "contact", TargetID: firstID,
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{"count": created},
 	})
 	jsonResp(w, http.StatusCreated, map[string]any{
-		importedKey: created,
+		"imported": created,
 	})
 }
-
-const importedKey = "imported"
 
 func (h *Handler) exportVCards(w http.ResponseWriter, r *http.Request) {
 	sess, ok := requireSession(w, r)
@@ -760,7 +758,7 @@ func (h *Handler) exportVCards(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "contacts.export", ActorUserID: sess.UserID,
 		TargetType: "contact",
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+		IPAddress:  clientIP(r), UserAgent: r.UserAgent(),
 		Metadata: map[string]any{"count": len(contacts)},
 	})
 }

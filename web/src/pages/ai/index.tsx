@@ -138,14 +138,14 @@ export default function AIPage() {
 
     // Optimistic user message.
     const userMsg: ChatMessage = {
-      id: `tmp-${Date.now()}`,
+      id: `tmp-${Math.random().toString(36).slice(2)}`,
       conversation_id: detail.id,
       role: "user",
       content: text,
       seq: (messages.at(-1)?.seq ?? 0) + 1,
       created_at: new Date().toISOString(),
     };
-    const assistantId = `tmp-asst-${Date.now()}`;
+    const assistantId = `tmp-asst-${Math.random().toString(36).slice(2)}`;
     const assistantMsg: ChatMessage = {
       id: assistantId,
       conversation_id: detail.id,
@@ -160,6 +160,7 @@ export default function AIPage() {
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    let streamEnded = false;
 
     try {
       await streamChat({
@@ -190,6 +191,7 @@ export default function AIPage() {
                 break;
               case "done":
                 cur.streaming = false;
+                streamEnded = true;
                 if (ev.message_id) cur.id = ev.message_id;
                 if (ev.usage) {
                   cur.prompt_tokens = ev.usage.prompt_tokens;
@@ -244,6 +246,19 @@ export default function AIPage() {
       setBusy(false);
       abortRef.current = null;
       refreshConversations();
+      // SSE recovery: if the assistant turn never reached "done" (network
+      // drop, server restart), re-fetch the conversation so the user
+      // sees the server-side state. The persisted user message + any
+      // partial assistant turn are authoritative server-side.
+      if (!streamEnded && !ctrl.signal.aborted) {
+        try {
+          const fresh = await getConversation(detail.id);
+          setDetail(fresh);
+          setMessages(fresh.messages.map((m) => ({ ...m })));
+        } catch {
+          /* leave the optimistic state in place */
+        }
+      }
     }
   }
 

@@ -15,7 +15,7 @@ embeds its React SPA, so deployment is one file + one SQLite database.
 | Drive      | Stub                                   |
 | Contacts   | Stub                                   |
 | Chat       | Stub                                   |
-| AI         | Stub                                   |
+| AI         | Provider abstraction + streaming chat  |
 | Workflow   | Stub                                   |
 
 See `docs/auth.md` for the milestone roadmap.

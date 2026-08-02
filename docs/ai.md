@@ -13,6 +13,9 @@ Server-Sent-Events chat surface that the SPA streams token-by-token.
 | 2     | Tool calling, agent definitions, system prompts                |
 | 3     | Per-agent tool selection, token accounting, audit hardening    |
 
+All three phases are implemented; remaining work is captured under
+"Future" below.
+
 ## Design constraints
 
 - **Standard library first**. The only added dependency is the existing
@@ -122,13 +125,9 @@ Initial set:
 | ----------- | ------------------------------------------------- |
 | `clock`     | Reports the current server time. Safe, no PII.    |
 | `echo`      | Test tool returning its input; used in CI.        |
-| `vault.search` | Searches the user's vault by name (decrypts    |
-|             | client-side via a sandboxed vault key the agent   |
-|             | holds in memory for the duration of one turn).    |
 
-`vault.search` is the only tool that touches another module; it is gated
-behind a feature flag (`ai.tools.vault`) and disabled by default. Tools
-that ship disabled are still listed so admins can opt in.
+Future module-integration tools (`vault.search`, `mail.draft`) are
+planned but not yet wired; the registry is ready to host them.
 
 ## HTTP surface
 
@@ -140,8 +139,8 @@ that ship disabled are still listed so admins can opt in.
 | GET    | `/api/ai/conversations`                      | List conversations             |
 | POST   | `/api/ai/conversations`                      | Create conversation            |
 | GET    | `/api/ai/conversations/{id}`                 | Get one + messages             |
+| PATCH  | `/api/ai/conversations/{id}`                 | Rename (title)                 |
 | DELETE | `/api/ai/conversations/{id}`                 | Soft-delete                    |
-| POST   | `/api/ai/conversations/{id}/messages`        | Non-streaming fallback send    |
 | POST   | `/api/ai/conversations/{id}/stream`          | SSE streaming send             |
 | GET    | `/api/ai/agents`                             | Available agents (no secrets)  |
 
@@ -156,6 +155,8 @@ that ship disabled are still listed so admins can opt in.
 | POST   | `/api/admin/ai/agents`                              | Create agent def           |
 | PUT    | `/api/admin/ai/agents/{id}`                         | Update agent def           |
 | DELETE | `/api/admin/ai/agents/{id}`                         | Remove agent def           |
+| GET    | `/api/admin/ai/drivers`                             | Driver introspection        |
+| GET    | `/api/admin/ai/usage?days=30&user=<id>`             | Daily token rollup          |
 
 ## SSE protocol
 
@@ -183,16 +184,52 @@ Each provider response carries a usage block. We persist `prompt_tokens`
 and `completion_tokens` on the assistant row and accumulate a per-user
 `ai_usage_daily` rollup (one row per user per UTC day) so the admin
 panel can show burn-down charts without scanning the messages table.
+`GET /api/admin/ai/usage` returns the rollup plus totals.
+
+## History replay
+
+The runtime replays at most the last `MaxHistoryMessages` (50) messages
+per turn, dropping any leading orphan tool row, so long conversations
+do not blow up prompt cost. `revision` on `ai_conversations` is bumped
+on every append so a multi-tab SPA can poll for changes and resync.
+
+## Title auto-generation
+
+On the first turn of an untitled conversation the stream handler fires
+a background `AutoTitle` turn — a low-token, single-shot completion
+that summarises the user's first message into a 3-6 word title. The
+result is persisted via `SetTitle` and emitted alongside the `done`
+event so the SPA updates both the chat header and the sidebar
+atomically. Manual rename via `PATCH /api/ai/conversations/{id}`
+overrides the auto-generated title.
+
+## SSE recovery
+
+The user message is persisted before the upstream call begins, so a
+network drop mid-stream never loses the prompt. If the SPA receives
+no `done` event (connection reset, server restart), it automatically
+re-fetches the conversation so the server-side state — partial
+assistant turn included — replaces the optimistic bubble.
 
 ## Security
 
-- API keys are encrypted at rest with AES-256-GCM keyed by the session
-  HMAC secret. The cipher key is derived once at startup.
-- Provider egress is restricted by a per-request timeout (default 120s)
-  enforced in the runtime, on top of the user's request ctx.
+- API keys are encrypted at rest with AES-256-GCM keyed by a key
+  derived (SHA-256) from `AIRBREW_SESSION_SECRET`. If the seal cannot
+  be initialised at startup the module logs an error and refuses to
+  store API keys; there is no plaintext fallback.
+- Provider egress is restricted by a per-driver HTTP timeout
+  (default 120s chat / 300s Ollama) enforced via a dedicated
+  `*http.Client` per build — no shared `http.DefaultClient`.
 - All inputs are length-capped (system prompt 8 KiB, message 32 KiB,
-  conversation history 50 messages) to bound DB row size and prompt cost.
+  conversation history 50 messages, tools 32) to bound DB row size and
+  prompt cost.
+- Errors are sanitised at the HTTP boundary: 500 responses return a
+  generic message; the underlying error stays in server logs. Upstream
+  provider response bodies are logged via slog and never forwarded to
+  the SPA (some providers echo back masked key fragments in error
+  bodies).
 - Audit events: `ai.conversation_created`, `ai.message_sent`,
-  `ai.agent_created`, `ai.provider_upserted`, `ai.provider_deleted`.
+  `ai.conversation_deleted`, `ai.agent_created`, `ai.agent_updated`,
+  `ai.agent_deleted`, `ai.provider_upserted`, `ai.provider_deleted`.
 - The module is `RequireEnabled`-gated like passwords/mail.
 - A per-IP rate limiter caps chat requests (default 30/min).

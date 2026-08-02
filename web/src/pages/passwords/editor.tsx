@@ -37,6 +37,7 @@ import { generatePassword } from "@/lib/vault/crypto";
 import {
   newField,
   PRESETS,
+  WrongMasterPassword,
   useVault,
   type DraftItem,
   type Field,
@@ -60,8 +61,16 @@ export default function PasswordEditor() {
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
   const navigate = useNavigate();
-  const { status, items, folders, createItem, updateItem, deleteItem, refresh } =
-    useVault();
+  const {
+    status,
+    items,
+    folders,
+    createItem,
+    updateItem,
+    deleteItem,
+    refresh,
+    verifyMasterPassword,
+  } = useVault();
 
   const existing = items.find((it) => it.id === id);
 
@@ -76,6 +85,7 @@ export default function PasswordEditor() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<VaultItem | null>(null);
+  const [repromptVerified, setRepromptVerified] = useState(false);
 
   // Hydrate form when editing.
   useEffect(() => {
@@ -108,6 +118,19 @@ export default function PasswordEditor() {
           </CardContent>
         </Card>
       </PageWrapper>
+    );
+  }
+
+  if (isEdit && existing?.reprompt && !repromptVerified) {
+    return (
+      <RepromptEditorGate
+        onCancel={() => navigate(`/passwords/${existing.id}`)}
+        onVerify={async (password) => {
+          const ok = await verifyMasterPassword(password);
+          if (!ok) throw new WrongMasterPassword();
+          setRepromptVerified(true);
+        }}
+      />
     );
   }
 
@@ -263,9 +286,7 @@ export default function PasswordEditor() {
                 onChange={(e) => setFolderId(e.target.value)}
                 className={selectClass}
               >
-                <option value="">
-                  {t("passwords.editor.noFolder")}
-                </option>
+                <option value="">{t("passwords.editor.noFolder")}</option>
                 {folders.map((f) => (
                   <option key={f.id} value={f.id}>
                     {f.name}
@@ -396,6 +417,86 @@ export default function PasswordEditor() {
       </Card>
 
       {isEdit && existing && <AttachmentsCard itemId={existing.id} editable />}
+    </PageWrapper>
+  );
+}
+
+function RepromptEditorGate({
+  onCancel,
+  onVerify,
+}: {
+  onCancel: () => void;
+  onVerify: (password: string) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [pw, setPw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await onVerify(pw);
+    } catch (err) {
+      setError(
+        err instanceof WrongMasterPassword
+          ? t("passwords.unlock.wrong")
+          : err instanceof Error
+            ? err.message
+            : String(err),
+      );
+    } finally {
+      setBusy(false);
+      setPw("");
+    }
+  }
+
+  return (
+    <PageWrapper>
+      <Card className="mx-auto max-w-md">
+        <CardHeader>
+          <CardTitle className="text-base">
+            {t("passwords.editor.repromptEditTitle")}
+          </CardTitle>
+          <CardDescription>
+            {t("passwords.editor.repromptEditDescription")}
+          </CardDescription>
+        </CardHeader>
+        <form onSubmit={submit}>
+          <CardContent className="space-y-3">
+            <div className="grid gap-2">
+              <Label htmlFor="edit-reprompt">
+                {t("passwords.unlock.masterPassword")}
+              </Label>
+              <Input
+                id="edit-reprompt"
+                type="password"
+                autoComplete="current-password"
+                autoFocus
+                value={pw}
+                onChange={(e) => setPw(e.target.value)}
+              />
+            </div>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+          </CardContent>
+          <CardFooter className="justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={onCancel}
+              disabled={busy}
+            >
+              {t("passwords.editor.cancel")}
+            </Button>
+            <Button type="submit" disabled={busy || !pw}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              {t("passwords.view.reveal")}
+            </Button>
+          </CardFooter>
+        </form>
+      </Card>
     </PageWrapper>
   );
 }

@@ -470,7 +470,8 @@
       "add": "Add item",
       "search": "Search vault",
       "noMatches": "No matching items.",
-      "empty": "Your vault is empty."
+      "empty": "Your vault is empty.",
+      "protected": "Protected item"
     },
     "types": {
       "login": "Login",
@@ -549,7 +550,9 @@
       "totpHint": "Store the base32 shared secret (or an otpauth:// URI).",
       "folder": "Folder",
       "noFolder": "No folder",
-      "resync": "Re-sync and retry"
+      "resync": "Re-sync and retry",
+      "repromptEditTitle": "Edit protected item",
+      "repromptEditDescription": "Re-enter your master password before editing this item."
     },
     "actions": {
       "title": "Vault actions",

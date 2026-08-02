@@ -213,6 +213,7 @@ function itemIcon(type: DecryptedItem["type"]) {
 // itemSubtitle returns the first displayable field value (text or url) so the
 // list row previews something useful; falls back to the type label.
 function itemSubtitle(it: DecryptedItem, t: TFunction): string {
+  if (it.reprompt) return t("passwords.list.protected");
   const first = it.fields.find(
     (f) => (f.kind === "text" || f.kind === "url") && f.value,
   );
@@ -231,6 +232,9 @@ function VaultListView() {
     if (!q) return items;
     return items.filter((it) => {
       if (it.name.toLowerCase().includes(q)) return true;
+      if (it.reprompt) {
+        return it.fields.some((f) => f.name.toLowerCase().includes(q));
+      }
       return it.fields.some(
         (f) =>
           f.name.toLowerCase().includes(q) || f.value.toLowerCase().includes(q),

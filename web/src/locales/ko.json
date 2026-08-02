@@ -470,7 +470,8 @@
       "add": "항목 추가",
       "search": "볼트 검색",
       "noMatches": "일치하는 항목이 없습니다.",
-      "empty": "볼트가 비어 있습니다."
+      "empty": "볼트가 비어 있습니다.",
+      "protected": "보호된 항목"
     },
     "types": {
       "login": "로그인",
@@ -549,7 +550,9 @@
       "totpHint": "base32 공유 시크릿(또는 otpauth:// URI)을 저장하세요.",
       "folder": "폴더",
       "noFolder": "폴더 없음",
-      "resync": "다시 동기화 후 재시도"
+      "resync": "다시 동기화 후 재시도",
+      "repromptEditTitle": "보호된 항목 편집",
+      "repromptEditDescription": "이 항목을 편집하려면 마스터 비밀번호를 다시 입력하세요."
     },
     "actions": {
       "title": "보관함 동작",

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
+  FileEdit,
+  Forward,
   Inbox,
   Loader2,
   MailPlus,
@@ -25,16 +27,18 @@ import {
   formatAddress,
   mail,
   parseAddressList,
+  type FolderCounts,
   type MailAttachment,
   type Mailbox,
   type MailMessage,
 } from "@/lib/mail";
+import { sanitizeMailHtml } from "@/lib/sanitize-mail-html";
 import { cn } from "@/lib/utils";
 
 const folders = [
   { id: "inbox", label: "받은편지함", icon: Inbox },
   { id: "sent", label: "보낸메일", icon: Send },
-  { id: "draft", label: "임시보관", icon: Inbox },
+  { id: "draft", label: "임시보관", icon: FileEdit },
   { id: "unread", label: "읽지 않음", icon: Inbox },
   { id: "starred", label: "중요", icon: Star },
 ] as const;
@@ -48,6 +52,7 @@ type ComposeState = {
   inReplyTo: string;
   references: string[];
   attachments: MailAttachment[];
+  draftId: string;
 };
 
 const emptyCompose: ComposeState = {
@@ -59,6 +64,7 @@ const emptyCompose: ComposeState = {
   inReplyTo: "",
   references: [],
   attachments: [],
+  draftId: "",
 };
 
 export default function MailPage() {
@@ -66,11 +72,13 @@ export default function MailPage() {
   const folder = normalizeFolder(params.get("box"));
   const messageID = params.get("message") ?? "";
   const mailboxID = params.get("mailbox") ?? "";
+  const searchQuery = params.get("q") ?? "";
 
   const [status, setStatus] = useState<{ enabled: boolean } | null>(null);
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
   const [messages, setMessages] = useState<MailMessage[]>([]);
   const [selected, setSelected] = useState<MailMessage | null>(null);
+  const [counts, setCounts] = useState<FolderCounts | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +87,7 @@ export default function MailPage() {
   const [mailboxOpen, setMailboxOpen] = useState(false);
   const [newAddress, setNewAddress] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
+  const [searchInput, setSearchInput] = useState(searchQuery);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const activeMailbox =
@@ -96,13 +105,23 @@ export default function MailPage() {
     setMailboxes(res.mailboxes ?? []);
   }, []);
 
+  const refreshCounts = useCallback(async () => {
+    try {
+      const c = await mail.counts(activeMailbox?.id);
+      setCounts(c);
+    } catch {
+      setCounts(null);
+    }
+  }, [activeMailbox?.id]);
+
   const refreshMessages = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await mail.messages({
-        folder,
+        folder: folder === "inbox" ? undefined : folder,
         mailbox: activeMailbox?.id,
+        q: searchQuery || undefined,
         limit: 100,
       });
       setMessages(res.messages ?? []);
@@ -111,7 +130,7 @@ export default function MailPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeMailbox?.id, folder]);
+  }, [activeMailbox?.id, folder, searchQuery]);
 
   useEffect(() => {
     void refreshMailboxes().catch((e) => setError(errorText(e)));
@@ -120,6 +139,14 @@ export default function MailPage() {
   useEffect(() => {
     void refreshMessages();
   }, [refreshMessages]);
+
+  useEffect(() => {
+    void refreshCounts();
+  }, [refreshCounts, refreshMessages]);
+
+  useEffect(() => {
+    setSearchInput(searchQuery);
+  }, [searchQuery]);
 
   useEffect(() => {
     if (!messageID) {
@@ -140,11 +167,31 @@ export default function MailPage() {
     };
   }, [messageID]);
 
-  const unreadCount = useMemo(
-    () =>
-      messages.filter((m) => !m.is_read && m.direction === "inbound").length,
-    [messages],
-  );
+  const folderBadge = (id: string): number => {
+    if (!counts) return 0;
+    switch (id) {
+      case "inbox":
+        return counts.inbox;
+      case "sent":
+        return counts.sent;
+      case "draft":
+        return counts.draft;
+      case "unread":
+        return counts.unread;
+      case "starred":
+        return counts.starred;
+      default:
+        return 0;
+    }
+  };
+
+  const submitSearch = (value: string) => {
+    const next = new URLSearchParams(params);
+    if (value.trim()) next.set("q", value.trim());
+    else next.delete("q");
+    next.delete("message");
+    setParams(next, { replace: false });
+  };
 
   const openMessage = async (m: MailMessage) => {
     const next = new URLSearchParams(params);
@@ -158,6 +205,7 @@ export default function MailPage() {
           item.id === m.id ? { ...item, is_read: true } : item,
         ),
       );
+      void refreshCounts();
     }
   };
 
@@ -166,6 +214,7 @@ export default function MailPage() {
     if (nextFolder === "inbox") next.delete("box");
     else next.set("box", nextFolder);
     next.delete("message");
+    next.delete("q");
     setParams(next, { replace: false });
   };
 
@@ -187,6 +236,7 @@ export default function MailPage() {
     if (selected?.id === m.id) {
       setSelected({ ...selected, is_starred: !selected.is_starred });
     }
+    void refreshCounts();
   };
 
   const removeMessage = async (m: MailMessage) => {
@@ -194,6 +244,7 @@ export default function MailPage() {
     await mail.deleteMessage(m.id);
     setMessages((prev) => prev.filter((item) => item.id !== m.id));
     if (selected?.id === m.id) setSelected(null);
+    void refreshCounts();
   };
 
   const replyTo = (m: MailMessage) => {
@@ -210,6 +261,32 @@ export default function MailPage() {
       text: `\n\nOn ${formatDate(m.created_at)}, ${formatAddress(m.from)} wrote:\n${quote(m.body_text)}`,
       inReplyTo: m.message_id,
       references: [...(m.references ?? []), m.message_id].filter(Boolean),
+    });
+    setComposeOpen(true);
+  };
+
+  const forwardTo = (m: MailMessage) => {
+    const fwd = `\n\n--- 원본 메일 ---\nFrom: ${formatAddress(m.from)}\nSubject: ${m.subject}\n\n${m.body_text}`;
+    setCompose({
+      ...emptyCompose,
+      subject: m.subject.toLowerCase().startsWith("fwd:")
+        ? m.subject
+        : `Fwd: ${m.subject}`,
+      text: fwd,
+    });
+    setComposeOpen(true);
+  };
+
+  const editDraft = (m: MailMessage) => {
+    setCompose({
+      ...emptyCompose,
+      draftId: m.id,
+      to: m.to.map(formatAddress).join(", "),
+      subject: m.subject,
+      text: m.body_text,
+      inReplyTo: m.in_reply_to,
+      references: m.references ?? [],
+      attachments: m.attachments ?? [],
     });
     setComposeOpen(true);
   };
@@ -243,7 +320,46 @@ export default function MailPage() {
     }));
   };
 
+  const composeInput = () => ({
+    mailbox_id: activeMailbox?.id ?? "",
+    to: parseAddressList(compose.to),
+    cc: parseAddressList(compose.cc),
+    bcc: parseAddressList(compose.bcc),
+    subject: compose.subject,
+    text: compose.text,
+    in_reply_to: compose.inReplyTo,
+    references: compose.references,
+    attachment_ids: compose.attachments.map((a) => a.id),
+  });
+
   const sendMessage = async () => {
+    if (!activeMailbox) {
+      setError("먼저 메일함을 만들어야 합니다.");
+      return;
+    }
+    if (!compose.to.trim()) {
+      setError("받는 사람을 입력하세요.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      if (compose.draftId) {
+        await mail.updateDraft(compose.draftId, { ...composeInput(), send: true });
+      } else {
+        await mail.send(composeInput());
+      }
+      setCompose(emptyCompose);
+      setComposeOpen(false);
+      await Promise.all([refreshMessages(), refreshCounts()]);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveDraft = async () => {
     if (!activeMailbox) {
       setError("먼저 메일함을 만들어야 합니다.");
       return;
@@ -251,20 +367,30 @@ export default function MailPage() {
     setBusy(true);
     setError(null);
     try {
-      await mail.send({
-        mailbox_id: activeMailbox.id,
-        to: parseAddressList(compose.to),
-        cc: parseAddressList(compose.cc),
-        bcc: parseAddressList(compose.bcc),
-        subject: compose.subject,
-        text: compose.text,
-        in_reply_to: compose.inReplyTo,
-        references: compose.references,
-        attachment_ids: compose.attachments.map((a) => a.id),
-      });
+      const saved = compose.draftId
+        ? await mail.updateDraft(compose.draftId, composeInput())
+        : await mail.saveDraft(composeInput());
+      setCompose((prev) => ({ ...prev, draftId: saved.id }));
+      await Promise.all([refreshMessages(), refreshCounts()]);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const discardDraft = async () => {
+    if (!compose.draftId) {
       setCompose(emptyCompose);
       setComposeOpen(false);
-      await refreshMessages();
+      return;
+    }
+    setBusy(true);
+    try {
+      await mail.deleteDraft(compose.draftId);
+      setCompose(emptyCompose);
+      setComposeOpen(false);
+      await Promise.all([refreshMessages(), refreshCounts()]);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -315,6 +441,20 @@ export default function MailPage() {
         }
         actions={
           <div className="flex items-center gap-2">
+            <form
+              className="hidden sm:block"
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitSearch(searchInput);
+              }}
+            >
+              <Input
+                placeholder="메일 검색"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                className="h-9 w-56"
+              />
+            </form>
             <Button
               variant="outline"
               size="sm"
@@ -323,7 +463,13 @@ export default function MailPage() {
               <RefreshCcw className="mr-2 h-4 w-4" />
               새로고침
             </Button>
-            <Button size="sm" onClick={() => setComposeOpen(true)}>
+            <Button
+              size="sm"
+              onClick={() => {
+                setCompose(emptyCompose);
+                setComposeOpen(true);
+              }}
+            >
               <MailPlus className="mr-2 h-4 w-4" />
               작성
             </Button>
@@ -343,6 +489,7 @@ export default function MailPage() {
             {folders.map((f) => {
               const Icon = f.icon;
               const active = folder === f.id;
+              const badge = folderBadge(f.id);
               return (
                 <button
                   key={f.id}
@@ -356,9 +503,10 @@ export default function MailPage() {
                 >
                   <Icon className="h-4 w-4" />
                   <span className="min-w-0 flex-1 truncate">{f.label}</span>
-                  {f.id === "inbox" && unreadCount > 0 && (
-                    <Badge variant="secondary">{unreadCount}</Badge>
-                  )}
+                  {badge > 0 &&
+                    (f.id === "unread" || f.id === "draft") && (
+                      <Badge variant="secondary">{badge}</Badge>
+                    )}
                 </button>
               );
             })}
@@ -399,6 +547,20 @@ export default function MailPage() {
         </aside>
 
         <section className="border-r">
+          {searchQuery && (
+            <div className="flex items-center justify-between border-b px-3 py-2 text-xs">
+              <span className="truncate text-muted-foreground">
+                검색: {searchQuery}
+              </span>
+              <button
+                className="text-muted-foreground hover:text-foreground"
+                onClick={() => submitSearch("")}
+                aria-label="검색 해제"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
           {loading ? (
             <div className="flex h-full items-center justify-center text-muted-foreground">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -432,6 +594,9 @@ export default function MailPage() {
                         ? m.to.map(formatAddress).join(", ")
                         : formatAddress(m.from)}
                     </span>
+                    {m.is_draft && (
+                      <Badge variant="outline">임시</Badge>
+                    )}
                     {m.is_starred && (
                       <Star className="h-3.5 w-3.5 fill-current text-primary" />
                     )}
@@ -456,6 +621,8 @@ export default function MailPage() {
             <MessageView
               message={selected}
               onReply={replyTo}
+              onForward={forwardTo}
+              onEditDraft={editDraft}
               onToggleStar={toggleStar}
               onDelete={removeMessage}
             />
@@ -470,7 +637,7 @@ export default function MailPage() {
       <Modal
         open={composeOpen}
         onClose={() => setComposeOpen(false)}
-        title="메일 작성"
+        title={compose.draftId ? "임시 메일 편집" : "메일 작성"}
         className="max-w-2xl"
       >
         <div className="space-y-3">
@@ -510,6 +677,9 @@ export default function MailPage() {
                 <div key={a.id} className="flex items-center gap-2 text-xs">
                   <Paperclip className="h-3.5 w-3.5" />
                   <span className="min-w-0 flex-1 truncate">{a.filename}</span>
+                  <span className="text-muted-foreground">
+                    {formatSize(a.size_bytes)}
+                  </span>
                   <button
                     className="rounded p-1 text-muted-foreground hover:bg-accent"
                     onClick={() => void discardAttachment(a.id)}
@@ -538,14 +708,33 @@ export default function MailPage() {
               <Upload className="mr-2 h-4 w-4" />
               첨부
             </Button>
-            <Button onClick={() => void sendMessage()} disabled={busy}>
-              {busy ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="mr-2 h-4 w-4" />
-              )}
-              보내기
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void discardDraft()}
+                disabled={busy}
+              >
+                {compose.draftId ? "취소" : "닫기"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void saveDraft()}
+                disabled={busy}
+              >
+                <FileEdit className="mr-2 h-4 w-4" />
+                임시 저장
+              </Button>
+              <Button onClick={() => void sendMessage()} disabled={busy}>
+                {busy ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="mr-2 h-4 w-4" />
+                )}
+                보내기
+              </Button>
+            </div>
           </div>
         </div>
       </Modal>
@@ -581,14 +770,22 @@ export default function MailPage() {
 function MessageView({
   message,
   onReply,
+  onForward,
+  onEditDraft,
   onToggleStar,
   onDelete,
 }: {
   message: MailMessage;
   onReply: (m: MailMessage) => void;
+  onForward: (m: MailMessage) => void;
+  onEditDraft: (m: MailMessage) => void;
   onToggleStar: (m: MailMessage) => void;
   onDelete: (m: MailMessage) => void;
 }) {
+  const sanitizedHTML = useMemo(
+    () => (message.body_html ? sanitizeMailHtml(message.body_html) : ""),
+    [message.body_html],
+  );
   return (
     <article className="flex h-full min-w-0 flex-col">
       <header className="border-b p-4">
@@ -609,9 +806,32 @@ function MessageView({
             </p>
           </div>
           <div className="flex shrink-0 gap-1">
-            <Button variant="ghost" size="sm" onClick={() => onReply(message)}>
-              <Reply className="h-4 w-4" />
-            </Button>
+            {message.is_draft ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onEditDraft(message)}
+              >
+                <FileEdit className="h-4 w-4" />
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onReply(message)}
+                >
+                  <Reply className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onForward(message)}
+                >
+                  <Forward className="h-4 w-4" />
+                </Button>
+              </>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -635,11 +855,11 @@ function MessageView({
         </div>
       </header>
       <div className="flex-1 overflow-auto p-5">
-        {message.body_html ? (
+        {sanitizedHTML ? (
           <iframe
             title="Mail body"
             sandbox=""
-            srcDoc={message.body_html}
+            srcDoc={sanitizedHTML}
             className="h-full min-h-[360px] w-full rounded-md border bg-white"
           />
         ) : (
@@ -659,6 +879,9 @@ function MessageView({
                 >
                   <Paperclip className="h-4 w-4 shrink-0" />
                   <span className="truncate">{a.filename || "attachment"}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {formatSize(a.size_bytes)}
+                  </span>
                 </a>
               ))}
             </div>
@@ -687,6 +910,13 @@ function formatDate(value?: string) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function formatSize(bytes: number) {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function stripHTML(html: string) {

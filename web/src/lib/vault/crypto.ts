@@ -12,6 +12,7 @@
 //   vault key  --AES-GCM--> encrypts item name/data/notes
 
 import { argon2id } from "hash-wasm";
+import { WORDLIST } from "@/lib/vault/wordlist";
 
 export type KdfParams = {
   memoryKiB: number;
@@ -100,7 +101,12 @@ export async function deriveMasterKey(
     const saltCopy = new Uint8Array(salt);
     return new Promise<Uint8Array>((resolve, reject) => {
       const onMessage = (e: MessageEvent) => {
-        const msg = e.data as { id: number; ok: boolean; hex?: string; error?: string };
+        const msg = e.data as {
+          id: number;
+          ok: boolean;
+          hex?: string;
+          error?: string;
+        };
         if (msg.id !== id) return;
         worker.removeEventListener("message", onMessage);
         if (msg.ok && msg.hex) resolve(hexToBytes(msg.hex));
@@ -167,11 +173,14 @@ const SETS = {
   symbols: "!@#$%^&*-_=+?",
 };
 
-export function generatePassword(len = 20, alphabet = PASSWORD_ALPHABET): string {
+export function generatePassword(
+  len = 20,
+  alphabet = PASSWORD_ALPHABET,
+): string {
   const max = Math.floor(0xffffffff / alphabet.length) * alphabet.length;
   const buf32 = new Uint32Array(len);
   let out = "";
-  for (let i = 0; i < len; ) {
+  for (let i = 0; i < len;) {
     crypto.getRandomValues(buf32);
     for (let j = 0; j < buf32.length && i < len; j++) {
       const r = buf32[j];
@@ -187,7 +196,9 @@ export function generatePassword(len = 20, alphabet = PASSWORD_ALPHABET): string
 // generatePasswordFromOptions builds a password from the requested character
 // classes. At least one class must be enabled; if none are selected, the
 // default mixed alphabet is used.
-export function generatePasswordFromOptions(opts: PasswordOptions = {}): string {
+export function generatePasswordFromOptions(
+  opts: PasswordOptions = {},
+): string {
   const {
     length = 20,
     upper = true,
@@ -210,40 +221,21 @@ export function generatePasswordFromOptions(opts: PasswordOptions = {}): string 
   return generatePassword(length, alphabet);
 }
 
-// A compact word list of short, memorable, unambiguous English nouns for the
-// passphrase generator. 128 entries gives ~7 bits per word, so a 5-word
-// passphrase is ~35 bits and a 7-word passphrase is ~49 bits — comparable to a
-// randomly generated 8–12 character password while being far easier to type
-// and remember.
-const WORDLIST = [
-  "apple", "river", "stone", "cloud", "torch", "frost", "ocean", "maple",
-  "pearl", "cedar", "valley", "willow", "amber", "basil", "candle", "drift",
-  "ember", "falcon", "garnet", "harbor", "iguana", "jasper", "kettle", "lagoon",
-  "marble", "ninja", "orchid", "paddle", "quartz", "raven", "saddle", "thistle",
-  "umber", "viper", "walnut", "yacht", "zebra", "anchor", "boulder", "compass",
-  "dolphin", "eagle", "feather", "garden", "hammer", "island", "jungle", "knuckle",
-  "lantern", "meadow", "needle", "onion", "pebble", "quill", "ribbon", "shadow",
-  "tunnel", "utopia", "violin", "whisker", "yellow", "arrow", "beacon", "cliff",
-  "denim", "echo", "fern", "ginger", "helmet", "ivory", "jacket", "kingdom",
-  "lemon", "magnet", "north", "office", "pillow", "queen", "rocket", "salmon",
-  "temple", "unicorn", "vortex", "window", "xenon", "yodel", "zephyr", "almond",
-  "bravo", "cocoa", "delta", "elm", "fable", "globe", "haven", "index",
-  "jolly", "kayak", "liver", "mango", "novel", "oasis", "plum", "quiz",
-  "rustic", "spark", "trail", "ultra", "vault", "wheat", "yarn", "zinc",
-  "aster", "breeze", "coral", "daisy", "field", "grove", "heart", "ivory",
-  "jewel", "karma", "lily", "mint", "nest", "oat", "palm", "quest",
-];
+
+// generatePassphrase uses WORDLIST from lib/vault/wordlist.ts.
 
 // generatePassphrase builds a memorable word-based passphrase. Words are joined
 // by separator (default "-") and, when includeNumber is set, a random digit is
 // appended to one of the words for extra entropy. Capitalize upper-cases the
 // first letter of each word.
-export function generatePassphrase(opts: {
-  words?: number;
-  separator?: string;
-  capitalize?: boolean;
-  includeNumber?: boolean;
-} = {}): string {
+export function generatePassphrase(
+  opts: {
+    words?: number;
+    separator?: string;
+    capitalize?: boolean;
+    includeNumber?: boolean;
+  } = {},
+): string {
   const {
     words = 5,
     separator = "-",
@@ -253,7 +245,7 @@ export function generatePassphrase(opts: {
   const max = Math.floor(0xffffffff / WORDLIST.length) * WORDLIST.length;
   const buf32 = new Uint32Array(words);
   const picked: string[] = [];
-  for (let i = 0; i < words; ) {
+  for (let i = 0; i < words;) {
     crypto.getRandomValues(buf32);
     for (let j = 0; j < buf32.length && i < words; j++) {
       const r = buf32[j];
@@ -347,11 +339,7 @@ export async function encryptBytes(
 ): Promise<Cipher> {
   const cryptoKey = await importAesKey(key);
   const nonce = randomBytes(12);
-  const ct = await crypto.subtle.encrypt(
-    gcm(nonce, aad),
-    cryptoKey,
-    buf(data),
-  );
+  const ct = await crypto.subtle.encrypt(gcm(nonce, aad), cryptoKey, buf(data));
   return { cipher: bytesToB64(new Uint8Array(ct)), nonce: bytesToB64(nonce) };
 }
 
@@ -380,11 +368,7 @@ export async function seal(
 ): Promise<Uint8Array> {
   const cryptoKey = await importAesKey(key);
   const nonce = randomBytes(12);
-  const ct = await crypto.subtle.encrypt(
-    gcm(nonce, aad),
-    cryptoKey,
-    buf(data),
-  );
+  const ct = await crypto.subtle.encrypt(gcm(nonce, aad), cryptoKey, buf(data));
   const cipherBytes = new Uint8Array(ct);
   const out = new Uint8Array(12 + cipherBytes.length);
   out.set(nonce, 0);

@@ -195,7 +195,7 @@ CREATE TABLE vault_attachments (
 - A cold sync (`since=0`) returns the entire encrypted vault; this is how a new
   device boots.
 
-## Endpoint inventory (target)
+## Endpoint inventory
 
 ```
 POST   /api/vault/setup                      setup envelope (first time)
@@ -213,12 +213,22 @@ PUT    /api/vault/folders/:id
 DELETE /api/vault/folders/:id
 
 GET    /api/vault/items/:id/revisions        history
+POST   /api/vault/items/:id/revisions/:rid/restore
+
+GET    /api/vault/items/:id/attachments      list
 POST   /api/vault/items/:id/attachments      upload encrypted blob
 GET    /api/vault/items/:id/attachments/:aid download
 DELETE /api/vault/items/:id/attachments/:aid
 
-GET    /api/vault/export                     encrypted export bundle (items + attachments)
+GET    /api/vault/export                     encrypted export bundle
 POST   /api/vault/import                     restore after client-side re-encryption
+
+GET    /api/vault/trash                      list soft-deleted items + folders
+POST   /api/vault/trash/empty                permanently delete everything trashed
+POST   /api/vault/items/:id/restore          undelete a tombstoned item
+POST   /api/vault/folders/:id/restore        undelete a tombstoned folder
+DELETE /api/vault/items/:id/purge            permanently delete one trashed item
+DELETE /api/vault/folders/:id/purge          permanently delete one trashed folder
 ```
 
 Export bundles include the source key envelope plus encrypted folders, items,
@@ -267,6 +277,13 @@ Catalog entry to add to `internal/modules/modules.go`:
 | 7  | Item history (revisions)                                 |
 | 8  | Encrypted export/import                                  |
 | 9  | Auto-lock timers + clipboard clear; audit events         |
+| 10 | Crypto v3 record-level AAD + client-supplied IDs         |
+| 11 | Trash (recycle bin): list / restore / purge / empty      |
+| 12 | Vault list filtering + sorting                           |
+| 13 | CSV import (Bitwarden / Chrome / Firefox / 1Password)    |
+| 14 | Passphrase generator + configurable password generator   |
+| 15 | TOTP otpauth:// URI parameters (period/digits/algorithm) |
+| 16 | Password health report (weak / reused / old)             |
 
 ## Decisions still open
 

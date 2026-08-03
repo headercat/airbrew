@@ -17,6 +17,7 @@ embeds its React SPA, so deployment is one file + one SQLite database.
 | Chat       | Stub                                   |
 | AI         | Provider abstraction + streaming chat  |
 | Workflow   | Stub                                   |
+| Passwords  | Zero-knowledge vault (Milestone 16)    |
 
 See `docs/auth.md` for the milestone roadmap.
 

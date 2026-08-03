@@ -432,6 +432,18 @@ export default function MailPage() {
     setError(null);
     try {
       const sent = await mail.retryMessage(m.id);
+      if (sent?.is_outbox) {
+        // Server returned HTTP 202: driver failed again, row still in
+        // outbox. Surface the failure so the user does not think the
+        // retry silently succeeded.
+        setError("재전송에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+        setMessages((prev) =>
+          prev.map((item) => (item.id === m.id ? sent : item)),
+        );
+        if (selected?.id === m.id) setSelected(sent);
+        void refreshCounts();
+        return;
+      }
       setMessages((prev) =>
         prev.map((item) => (item.id === m.id ? sent : item)),
       );

@@ -301,9 +301,10 @@ func (s *Service) Send(ctx context.Context, userID string, in SendInput, sender 
 	now := time.Now().UTC().Truncate(time.Second)
 	msg.SentAt = &now
 	msg.IsOutbox = false
-	if err := s.repo.MarkSent(ctx, userID, msg.ID, now); err != nil {
-		return nil, err
-	}
+	// MarkSent is best-effort: the driver has already accepted the message.
+	// A transient DB error or a concurrent retry that already flipped the
+	// row must not turn this into a retry that produces a duplicate.
+	_ = s.repo.MarkSent(ctx, userID, msg.ID, now)
 	return msg, nil
 }
 
@@ -565,9 +566,10 @@ func (s *Service) SendDraft(ctx context.Context, userID, draftID string, sender 
 	now := time.Now().UTC().Truncate(time.Second)
 	draft.SentAt = &now
 	draft.IsOutbox = false
-	if err := s.repo.MarkSent(ctx, userID, draft.ID, now); err != nil {
-		return nil, err
-	}
+	// MarkSent is best-effort: the driver has already accepted the message.
+	// A transient DB error or a concurrent retry that already flipped the
+	// row must not turn this into a retry that produces a duplicate.
+	_ = s.repo.MarkSent(ctx, userID, draft.ID, now)
 	return draft, nil
 }
 
@@ -643,9 +645,10 @@ func (s *Service) RetrySend(ctx context.Context, userID, id string, sender Outbo
 	now := time.Now().UTC().Truncate(time.Second)
 	msg.SentAt = &now
 	msg.IsOutbox = false
-	if err := s.repo.MarkSent(ctx, userID, msg.ID, now); err != nil {
-		return nil, err
-	}
+	// MarkSent is best-effort: the driver has already accepted the message.
+	// A transient DB error or a concurrent retry that already flipped the
+	// row must not turn this into a retry that produces a duplicate.
+	_ = s.repo.MarkSent(ctx, userID, msg.ID, now)
 	return msg, nil
 }
 

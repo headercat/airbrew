@@ -496,21 +496,21 @@ type FlagPatch struct {
 }
 
 // MarkSent flips is_outbox off and stamps sent_at, called by Send after a
-// successful delivery. The row must already exist (pre-written with
-// is_outbox=1) so a crash or DB outage between send and persist does not
-// lose the message.
+// successful delivery. The WHERE clause requires is_outbox=1 so two
+// concurrent retries cannot both claim the transition; the loser's
+// RowsAffected is 0 and the call returns nil (the message is already
+// delivered, no duplicate should be produced). Errors from this call should
+// be treated as best-effort by the caller — the driver has already accepted
+// the message.
 func (r *Repository) MarkSent(ctx context.Context, userID, id string, sentAt time.Time) error {
 	now := time.Now().UTC().Truncate(time.Second)
-	res, err := r.db.ExecContext(ctx, `
+	_, err := r.db.ExecContext(ctx, `
 		UPDATE mail_messages SET is_outbox = 0, sent_at = ?, updated_at = ?
-		WHERE id = ? AND user_id = ?`,
+		WHERE id = ? AND user_id = ? AND is_outbox = 1`,
 		sentAt, now, id, userID,
 	)
 	if err != nil {
 		return fmt.Errorf("inbox: mark sent: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrMessageNotFound
 	}
 	return nil
 }

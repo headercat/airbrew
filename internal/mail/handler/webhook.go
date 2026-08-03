@@ -56,9 +56,16 @@ func (h *WebhookHandler) receive(w http.ResponseWriter, r *http.Request) {
 	if recipient == "" {
 		recipient = r.URL.Query().Get("mailbox")
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 25<<20)) // 25 MiB cap
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 25<<20+1)) // 25 MiB cap
 	if err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid_request", "could not read body")
+		return
+	}
+	if int64(len(raw)) > 25<<20 {
+		// Oversized payload. Without this check, LimitReader silently
+		// truncates a 30 MiB message to exactly 25 MiB and letter.Parse
+		// stores a partial MIME tree.
+		respondErr(w, http.StatusRequestEntityTooLarge, "payload_too_large", "message exceeds 25 MiB cap")
 		return
 	}
 	msg, err := h.inbox.Ingest(r.Context(), recipient, raw, time.Now().UTC())

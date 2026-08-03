@@ -3,6 +3,7 @@ package inbox_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -202,6 +203,14 @@ type stubSender struct{}
 func (stubSender) Name() string                                      { return "stub" }
 func (stubSender) Send(ctx context.Context, o letter.Outgoing) error { return nil }
 
+// failingSender records the call and always returns an error.
+type failingSender struct{ name string }
+
+func (f failingSender) Name() string { return f.name }
+func (failingSender) Send(ctx context.Context, o letter.Outgoing) error {
+	return errors.New("smtp: 553 mailbox not found")
+}
+
 type captureSender struct {
 	raw []byte
 }
@@ -214,6 +223,38 @@ func (s *captureSender) Send(ctx context.Context, o letter.Outgoing) error {
 	}
 	s.raw = raw
 	return nil
+}
+
+// TestSendPersistsOutboxOnFailure verifies that Send writes the message row
+// BEFORE invoking the driver, so a delivery failure still leaves a visible
+// outbox row the user (and a future retry sweeper) can act on.
+func TestSendPersistsOutboxOnFailure(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mb := mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	msg, err := s.Send(ctx, uid, inbox.SendInput{
+		MailboxID: mb.ID,
+		To:        []letter.Address{{Address: "bob@ext.com"}},
+		Subject:   "doomed",
+		Text:      "body",
+	}, failingSender{name: "fail"})
+	if err == nil {
+		t.Fatal("expected send error, got nil")
+	}
+	if msg == nil || !msg.IsOutbox {
+		t.Fatalf("returned msg = %+v, want an outbox row", msg)
+	}
+	stored, err := s.GetMessage(ctx, uid, msg.ID)
+	if err != nil {
+		t.Fatalf("GetMessage: %v", err)
+	}
+	if !stored.IsOutbox {
+		t.Fatalf("stored message should still be in outbox after failure")
+	}
+	if stored.SentAt != nil {
+		t.Fatalf("stored message should not have sent_at")
+	}
 }
 
 // TestSearch verifies the q= filter matches subject, from and body and that

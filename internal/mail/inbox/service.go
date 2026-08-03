@@ -201,7 +201,10 @@ func firstID(refs []string) string {
 }
 
 // Send validates an outgoing message, hands it to sender, then stores it.
-// If sender is nil and no driver is configured, it returns ErrNoOutbound.
+// The message row is persisted with is_outbox=1 BEFORE the driver is called
+// so a crash or DB outage after a successful SMTP/HTTP send still leaves a
+// record in the user's mailbox; on success MarkSent flips is_outbox off. If
+// sender is nil and no driver is configured, it returns ErrNoOutbound.
 func (s *Service) Send(ctx context.Context, userID string, in SendInput, sender OutboundSender) (*Message, error) {
 	if len(in.To) == 0 {
 		return nil, fmt.Errorf("%w: at least one recipient required", ErrInvalidInput)
@@ -245,9 +248,7 @@ func (s *Service) Send(ctx context.Context, userID string, in SendInput, sender 
 		return nil, err
 	}
 	out.MessageID = messageIDFromRaw(raw)
-	if err := sender.Send(ctx, out); err != nil {
-		return nil, fmt.Errorf("inbox: send via %s: %w", sender.Name(), err)
-	}
+
 	var rawPath string
 	if s.blobs != nil {
 		p, err := s.blobs.Save(ctx, "mail-raw", "message/rfc822", strings.NewReader(string(raw)))
@@ -256,7 +257,6 @@ func (s *Service) Send(ctx context.Context, userID string, in SendInput, sender 
 		}
 		rawPath = p
 	}
-	now := time.Now().UTC().Truncate(time.Second)
 	msg := &Message{
 		ID: nextID(), MailboxID: mb.ID, UserID: userID,
 		MessageID: out.MessageID, InReplyTo: in.InReplyTo, References: in.References,
@@ -266,8 +266,8 @@ func (s *Service) Send(ctx context.Context, userID string, in SendInput, sender 
 		Direction: DirectionOutbound,
 		RawPath:   rawPath, BodyText: in.Text, BodyHTML: in.HTML,
 		SizeBytes: int64(len(raw)),
+		IsOutbox:  true,
 	}
-	msg.SentAt = &now
 	if err := s.repo.CreateMessage(ctx, msg); err != nil {
 		if s.blobs != nil && rawPath != "" {
 			_ = s.blobs.Delete(ctx, rawPath)
@@ -275,6 +275,18 @@ func (s *Service) Send(ctx context.Context, userID string, in SendInput, sender 
 		return nil, err
 	}
 	if err := s.repo.LinkAttachments(ctx, userID, msg.ID, in.AttachmentIDs); err != nil {
+		return nil, err
+	}
+	// Hand the message to the driver. On failure, leave the row in the
+	// outbox (is_outbox=1) so it is still visible to the user and a future
+	// sweeper can retry it; surface the error so the caller can react.
+	if err := sender.Send(ctx, out); err != nil {
+		return msg, fmt.Errorf("inbox: send via %s: %w", sender.Name(), err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	msg.SentAt = &now
+	msg.IsOutbox = false
+	if err := s.repo.MarkSent(ctx, userID, msg.ID, now); err != nil {
 		return nil, err
 	}
 	return msg, nil

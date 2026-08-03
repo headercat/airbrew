@@ -351,6 +351,11 @@ func (h *Handler) retryMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// A manual retry is a user-initiated restart of the backoff schedule:
+	// clear the attempt counter first so a row that previously hit the
+	// sweeper's attempt cap gets a fresh set of automatic retries after this
+	// attempt, regardless of its outcome.
+	_ = h.inbox.ResetOutboxAttempts(r.Context(), r.PathValue("id"))
 	msg, err := h.inbox.RetrySend(r.Context(), sess.UserID, r.PathValue("id"), sender)
 	if err != nil {
 		if msg != nil && msg.IsOutbox {

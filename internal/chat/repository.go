@@ -530,6 +530,12 @@ func (r *Repository) DeleteMessage(ctx context.Context, userID, roomID, messageI
 		}
 		return nil, ErrNotFound
 	}
+	// Keep the sidebar ordering / last-activity fresh on delete (Send and Edit
+	// already touch chat_rooms.updated_at).
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE chat_rooms SET updated_at = ? WHERE id = ?`, now, roomID); err != nil {
+		return nil, fmt.Errorf("chat: touch room on delete: %w", err)
+	}
 	return r.RoomUserIDs(ctx, roomID)
 }
 

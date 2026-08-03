@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/headercat/airbrew/internal/workflow/defn"
 	wfexec "github.com/headercat/airbrew/internal/workflow/exec"
@@ -269,16 +270,16 @@ func (h *Handler) runWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	rn, err := h.engine.Execute(r.Context(), wfexec.Request{Workflow: item, Trigger: run.RunByManual, Input: req.Input})
+	// Run asynchronously so a long graph (logic.delay, slow HTTP) is not
+	// aborted when the user closes the tab / the browser times out the
+	// request. The run row is created synchronously and returned as 202; the
+	// SPA can poll the runs view to watch it complete.
+	rn, err := h.engine.ExecuteAsync(r.Context(), wfexec.Request{Workflow: item, Trigger: run.RunByManual, Input: req.Input})
 	if err != nil && rn == nil {
 		writeErr(w, err)
 		return
 	}
-	status := http.StatusOK
-	if err != nil {
-		status = http.StatusAccepted
-	}
-	jsonResp(w, status, toRunResp(rn))
+	jsonResp(w, http.StatusAccepted, toRunResp(rn))
 }
 
 func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request) {
@@ -371,7 +372,13 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 		"remote_addr": clientIP(r),
 	}
 	if len(body) > 64*1024 {
-		input["body"] = string(body[:64*1024])
+		// Trim on a UTF-8 boundary so a multi-byte sequence is not split,
+		// which would otherwise produce invalid UTF-8 in $json.body.
+		cut := 64 * 1024
+		for cut > 0 && !utf8.Valid(body[:cut]) {
+			cut--
+		}
+		input["body"] = string(body[:cut])
 		input["body_truncated"] = true
 	}
 	var parsed any

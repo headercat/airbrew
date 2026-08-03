@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -478,6 +479,11 @@ func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	url := "/api/files/" + storedPath
+	// Best-effort: delete the previous avatar blob so uploads do not leak
+	// orphaned files in the avatars/ namespace on every change.
+	if old := h.currentUserAvatarPath(r.Context(), sess.UserID); old != "" && old != storedPath {
+		_ = h.blobs.Delete(r.Context(), old)
+	}
 	if err := h.userSvc.SetAvatarURL(r.Context(), sess.UserID, url); err != nil {
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -515,6 +521,21 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, value string, maxAge i
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   maxAge,
 	})
+}
+
+// currentUserAvatarPath returns the stored blob path (e.g. "avatars/<name>")
+// for the user's current avatar, or "" if they have none. Used to delete the
+// previous blob when a new avatar is uploaded.
+func (h *Handler) currentUserAvatarPath(ctx context.Context, userID string) string {
+	u, err := h.users.GetByID(ctx, userID)
+	if err != nil || u == nil || u.AvatarURL == "" {
+		return ""
+	}
+	const prefix = "/api/files/"
+	if strings.HasPrefix(u.AvatarURL, prefix) {
+		return strings.TrimPrefix(u.AvatarURL, prefix)
+	}
+	return ""
 }
 
 func clientIP(r *http.Request) string {

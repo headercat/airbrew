@@ -29,6 +29,7 @@ import (
 	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/blob"
 	"github.com/headercat/airbrew/internal/db"
+	"github.com/headercat/airbrew/internal/logging"
 	"github.com/headercat/airbrew/internal/mail/handler"
 	"github.com/headercat/airbrew/internal/mail/inbound"
 	"github.com/headercat/airbrew/internal/mail/inbox"
@@ -113,8 +114,8 @@ func (m *Module) RegisterAdminRoutes(mux *http.ServeMux) {
 // with the given lifecycle context. Both return immediately and run in
 // goroutines that exit when ctx is cancelled.
 func (m *Module) Start(ctx context.Context) {
-	go m.coord.Run(ctx)
-	go m.runOutboxSweeper(ctx)
+	logging.Go("mail.coordinator", func() { m.coord.Run(ctx) })
+	logging.Go("mail.outboxSweeper", func() { m.runOutboxSweeper(ctx) })
 }
 
 // runOutboxSweeper periodically retries messages stuck in the outbox
@@ -152,10 +153,15 @@ func (m *Module) sweepOutbox(ctx context.Context, log *slog.Logger) {
 	}
 	sender, err := outbound.Resolve(ctx, m.prov)
 	if err != nil {
+		log.Warn("mail: outbox sweep aborted; failed to resolve provider", "error", err)
+		return
+	}
+	if sender == nil {
 		// No active outbound provider configured. Leave the rows in the outbox
-		// (the user still sees them) and log so an operator notices; otherwise
-		// a missing provider silently strands every send.
-		log.Warn("mail: outbox sweep skipped; no active outbound provider", "error", err)
+		// (the user still sees them) WITHOUT burning an attempt — otherwise
+		// every due row hits the attempt cap during the "no provider" window
+		// and gets permanently excluded by ListOutboxDue.
+		log.Warn("mail: outbox sweep skipped; no active outbound provider")
 		return
 	}
 	for _, item := range due {

@@ -419,7 +419,6 @@ function RunsView() {
   const [openRun, setOpenRun] = useState<WorkflowRun | null>(null);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
       setRuns(await workflow.listRuns({ limit: 50 }));
@@ -431,6 +430,9 @@ function RunsView() {
   }, []);
 
   useEffect(() => {
+    // Only show the spinner on the initial mount; background poll ticks must
+    // not flip the list to a spinner every 3s.
+    setLoading(true);
     void refresh();
   }, [refresh]);
 

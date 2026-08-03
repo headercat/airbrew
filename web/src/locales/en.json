@@ -133,6 +133,7 @@
     "searchUsers": "Search users",
     "create": "Create",
     "rename": "Rename",
+    "edit": "Edit",
     "leave": "Leave",
     "confirmLeave": "Leave this conversation?",
     "confirmDelete": "Delete this message?",

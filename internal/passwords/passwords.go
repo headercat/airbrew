@@ -21,6 +21,7 @@ import (
 	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/blob"
 	"github.com/headercat/airbrew/internal/modules"
+	"github.com/headercat/airbrew/internal/logging"
 	"github.com/headercat/airbrew/internal/passwords/handler"
 	"github.com/headercat/airbrew/internal/passwords/vault"
 )
@@ -41,7 +42,7 @@ func New(ctx context.Context, db *sql.DB, state *modules.State, auditSvc *audit.
 	// self-cancels with ctx; on a nil ctx we skip it (e.g. in tests).
 	if ctx != nil {
 		jan := vault.NewJanitor(repo, blobs, slog.Default())
-		go jan.Start(ctx)
+		logging.Go("passwords.janitor", func() { jan.Start(ctx) })
 	}
 	return &Module{
 		svc:   svc,

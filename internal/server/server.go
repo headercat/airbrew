@@ -152,7 +152,12 @@ func Build(d Deps) *http.ServeMux {
 	workflowHookSub := http.NewServeMux()
 	workflowMod.RegisterWebhookRoute(workflowHookSub)
 	hookLimiter := middleware.NewRateLimiter(60, time.Minute)
-	mux.Handle("/api/workflow/hooks/", middleware.RateLimit(hookLimiter, middleware.ClientIPKey)(workflowHookSub))
+	// Webhook triggers are unauthenticated but still honor module-disable so an
+	// admin taking workflow offline stops external triggers from firing runs.
+	mux.Handle("/api/workflow/hooks/", middleware.Chain(workflowHookSub,
+		modules.RequireEnabled(stubState, "workflow"),
+		middleware.RateLimit(hookLimiter, middleware.ClientIPKey),
+	))
 	workflowSub := http.NewServeMux()
 	workflowMod.RegisterRoutes(workflowSub)
 	mux.Handle("/api/workflow/", authMod.SessionMiddleware(middleware.Chain(workflowSub,

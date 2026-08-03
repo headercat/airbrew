@@ -276,6 +276,7 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	const replayMax = 2000
 	replayed := 0
 	cursor := sinceSeq
+	lastHasMore := false
 	for replayed < replayMax {
 		page, nextCursor, hasMore, err := h.svc.ReplayMissed(r.Context(), userID, cursor, 200)
 		if err != nil {
@@ -288,11 +289,16 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 		}
 		cursor = nextCursor
 		replayed += len(page)
+		lastHasMore = hasMore
 		if !hasMore {
 			break
 		}
 	}
-	writeSSE(w, "ready", map[string]any{"ok": true, "seq": cursor, "has_more": replayed >= replayMax})
+	// Only ask the client to re-page when the loop stopped at the cap AND the
+	// last page itself signalled more rows remained; otherwise an exact-fit
+	// backlog would trigger a needless empty reconnect.
+	more := replayed >= replayMax && lastHasMore
+	writeSSE(w, "ready", map[string]any{"ok": true, "seq": cursor, "has_more": more})
 	flusher.Flush()
 
 	tick := time.NewTicker(25 * time.Second)

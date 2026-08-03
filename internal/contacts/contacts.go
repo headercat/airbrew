@@ -25,6 +25,7 @@ import (
 	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/blob"
 	"github.com/headercat/airbrew/internal/contacts/contact"
+	"github.com/headercat/airbrew/internal/logging"
 	"github.com/headercat/airbrew/internal/contacts/handler"
 	"github.com/headercat/airbrew/internal/modules"
 )
@@ -44,7 +45,8 @@ func New(ctx context.Context, db *sql.DB, state *modules.State, auditSvc *audit.
 	repo := contact.NewRepository(db)
 	svc := contact.NewService(repo, blobs)
 	if ctx != nil {
-		go contact.NewJanitor(repo, blobs, slog.Default()).Start(ctx)
+		jan := contact.NewJanitor(repo, blobs, slog.Default())
+		logging.Go("contacts.janitor", func() { jan.Start(ctx) })
 	} else {
 		slog.WarnContext(context.Background(),
 			"contacts: lifecycle context is nil; avatar janitor will not run")

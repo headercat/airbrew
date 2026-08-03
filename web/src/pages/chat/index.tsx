@@ -294,6 +294,20 @@ export default function ChatPage() {
     }
   }
 
+  async function editMessage(messageID: string, body: string) {
+    if (!activeRoom) return;
+    try {
+      await chat.editMessage(activeRoom.id, messageID, body);
+      // The SSE message.updated event reconciles local state; optimistically
+      // update too so the UI feels immediate.
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageID ? { ...m, body } : m)),
+      );
+    } catch (e) {
+      setError(errMsg(e));
+    }
+  }
+
   async function loadEarlier() {
     if (!activeID || messages.length === 0) return;
     // Capture the room + oldest seq so a room switch or new (older-defining)
@@ -461,6 +475,7 @@ export default function ChatPage() {
                       message={msg}
                       mine={msg.sender_id === user?.id}
                       onDelete={() => void deleteMessage(msg)}
+                      onEdit={(body) => editMessage(msg.id, body)}
                     />
                   ))
                 )}
@@ -601,12 +616,62 @@ function MessageBubble({
   message,
   mine,
   onDelete,
+  onEdit,
 }: {
   message: DraftMessage;
   mine: boolean;
   onDelete: () => void;
+  onEdit: (body: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.body);
+  const [busy, setBusy] = useState(false);
+
+  if (editing) {
+    return (
+      <div className={cn("flex gap-2", mine && "justify-end")}>
+        <div className="max-w-[78%] space-y-1">
+          <Textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            className="min-h-[60px] text-sm"
+            autoFocus
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setDraft(message.body);
+                setEditing(false);
+              }}
+              disabled={busy}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              size="sm"
+              disabled={busy || !draft.trim() || draft.trim() === message.body}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await onEdit(draft.trim());
+                  setEditing(false);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+              {t("workflow.save")}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={cn("group flex gap-2", mine && "justify-end")}>
       {!mine && <UserAvatar user={message.sender} />}
@@ -641,13 +706,22 @@ function MessageBubble({
             <CheckCheck className="h-3 w-3" />
           )}
           {mine && !message.pending && !message.failed && (
-            <button
-              onClick={onDelete}
-              title={t("chat.delete")}
-              className="ml-1 opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
+            <>
+              <button
+                onClick={() => setEditing(true)}
+                title={t("chat.edit")}
+                className="ml-1 opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+              >
+                <Edit3 className="h-3 w-3" />
+              </button>
+              <button
+                onClick={onDelete}
+                title={t("chat.delete")}
+                className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </>
           )}
         </div>
       </div>

@@ -25,6 +25,7 @@ import (
 	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/blob"
 	"github.com/headercat/airbrew/internal/drive/files"
+	"github.com/headercat/airbrew/internal/logging"
 	"github.com/headercat/airbrew/internal/drive/handler"
 	"github.com/headercat/airbrew/internal/modules"
 )
@@ -46,7 +47,7 @@ func New(ctx context.Context, db *sql.DB, state *modules.State, auditSvc *audit.
 	svc := files.NewService(repo, blobs, repo.GetConfig(context.Background()))
 	if ctx != nil {
 		jan := files.NewJanitor(repo, blobs, slog.Default())
-		go jan.Start(ctx)
+		logging.Go("drive.janitor", func() { jan.Start(ctx) })
 	} else {
 		slog.WarnContext(context.Background(),
 			"drive: lifecycle context is nil; background janitor will not run")

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -287,6 +288,13 @@ func (e *Engine) executeNode(ctx context.Context, userID string, st *runState, n
 	}
 	ferr := e.svc.Repo().FinishStep(context.Background(), step.ID, status, mustJSON(out), errMsg, time.Since(start).Milliseconds())
 	if err != nil {
+		// Surface a FinishStep failure even when the node itself failed,
+		// otherwise a DB hiccup here would leave the step row stuck in
+		// "running" with no log trail.
+		if ferr != nil {
+			slog.WarnContext(ctx, "workflow: finish step failed",
+				"run_id", st.runID, "node_id", n.ID, "error", ferr)
+		}
 		return nil, "", err
 	}
 	if ferr != nil {

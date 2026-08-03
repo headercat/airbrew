@@ -17,6 +17,7 @@ export type Envelope = {
   protected_vault_nonce: string;
   crypto_version?: number;
   version: number;
+  created_at: string;
   updated_at: string;
 };
 

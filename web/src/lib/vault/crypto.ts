@@ -142,6 +142,15 @@ export async function deriveMasterKey(
         };
         const timer = window.setTimeout(() => {
           cleanup();
+          // Terminate the stuck worker so it stops burning CPU on a derivation
+          // whose result we will discard, then clear the singleton so the next
+          // call re-creates it.
+          try {
+            worker.terminate();
+          } catch {
+            /* already gone */
+          }
+          kdfWorker = null;
           reject(new Error("kdf worker timed out"));
         }, kdfTimeout);
         worker.addEventListener("message", onMessage);

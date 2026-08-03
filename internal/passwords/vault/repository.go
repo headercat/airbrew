@@ -1042,7 +1042,7 @@ func (r *Repository) PurgeOldItemRevisions(ctx context.Context, olderThan time.T
 	// Cap per-item: for items that still have more than keepPerItem snapshots,
 	// drop the oldest beyond the cap. SQLite supports ROW_NUMBER() in
 	// subqueries since 3.25; modernc.org/sqlite ships a recent build.
-	_, err = r.db.ExecContext(ctx, `
+	res2, err := r.db.ExecContext(ctx, `
 		DELETE FROM vault_item_revisions WHERE id IN (
 			SELECT id FROM (
 				SELECT id,
@@ -1055,8 +1055,8 @@ func (r *Repository) PurgeOldItemRevisions(ctx context.Context, olderThan time.T
 	if err != nil {
 		return deleted, fmt.Errorf("vault: cap item revisions: %w", err)
 	}
-	n, _ := res.RowsAffected()
-	return deleted + n, nil
+	n2, _ := res2.RowsAffected()
+	return deleted + n2, nil
 }
 
 // --- trash (recycle bin) ---------------------------------------------------

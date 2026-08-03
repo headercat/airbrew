@@ -35,6 +35,7 @@ import {
 import {
   getVaultCache,
   putVaultCache,
+  clearVaultCache,
   userIdForEnvelope,
 } from "@/lib/vault/cache";
 import { readVaultSecuritySettings } from "@/lib/vault/security";
@@ -854,6 +855,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         envelopeRef.current = {
           ...env,
           version: 1,
+          created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
         cacheUserIdRef.current = userIdForEnvelope(salt);
@@ -1521,8 +1523,18 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       });
       // Refresh the cached envelope so the version advances locally.
       envelopeRef.current = await VApi.getKeys();
+      // The cache key is derived from the envelope salt, which changes on
+      // rotation. Clear the stale blob so IndexedDB does not grow unbounded
+      // across successive master-password changes.
+      const oldCacheUserId = cacheUserIdRef.current;
       cacheUserIdRef.current = userIdForEnvelope(envelopeRef.current.kdf_salt);
       persistCiphertextCache();
+      if (
+        oldCacheUserId &&
+        oldCacheUserId !== cacheUserIdRef.current
+      ) {
+        void clearVaultCache(oldCacheUserId);
+      }
     },
     [persistCiphertextCache, verifyMasterPassword],
   );

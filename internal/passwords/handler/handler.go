@@ -109,6 +109,7 @@ type envelopeResp struct {
 	ProtectedVaultNonce string `json:"protected_vault_nonce"`
 	CryptoVersion       int    `json:"crypto_version"`
 	Version             int64  `json:"version"`
+	CreatedAt           string `json:"created_at"`
 	UpdatedAt           string `json:"updated_at"`
 }
 
@@ -120,6 +121,7 @@ func toEnvelopeResp(env vault.KeyEnvelope) envelopeResp {
 		ProtectedVaultKey: env.ProtectedVaultKey, ProtectedVaultNonce: env.ProtectedVaultNonce,
 		CryptoVersion: env.CryptoVersion,
 		Version:       env.Version,
+		CreatedAt:     env.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:     env.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
@@ -1178,8 +1180,17 @@ func (h *Handler) favicon(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusNotFound, "not_found", "icon not found")
 		return
 	}
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-	// Favicons rarely change; let the browser cache for a day.
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	// Only forward image content types so a compromised upstream cannot serve
+	// HTML/script through this same-origin endpoint.
+	ct := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "image/") {
+		response.Error(w, http.StatusNotFound, "not_found", "icon not found")
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	// "private" so shared/intermediate caches do not record which domains a
+	// user looked up; nosniff so browsers do not sniff a different type.
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = io.Copy(w, resp.Body)
 }

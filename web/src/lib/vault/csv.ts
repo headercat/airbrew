@@ -28,8 +28,9 @@ export function parseCSV(text: string): string[][] {
   let row: string[] = [];
   let field = "";
   let inQuotes = false;
-  // Normalise CRLF to LF so we only handle one newline style below.
-  const input = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  // Strip a UTF-8 BOM if present (common on Windows exports) and normalise
+  // CRLF to LF so we only handle one newline style below.
+  const input = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   for (let i = 0; i < input.length; i++) {
     const ch = input[i];
     if (inQuotes) {

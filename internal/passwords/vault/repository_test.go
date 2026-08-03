@@ -759,3 +759,55 @@ func TestEmptyTrashPurgesAllTombstones(t *testing.T) {
 		t.Fatalf("trashed folders after empty = %d, want 0", len(folders))
 	}
 }
+
+func TestPurgeOldItemRevisionsAgeAndCap(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	it, _ := repo.CreateItem(ctx, "u1", itemInputFixture())
+
+	// Produce 5 snapshots by repeatedly updating the item.
+	cur := it
+	for i := 0; i < 5; i++ {
+		upd, err := repo.UpdateItem(ctx, "u1", it.ID, ItemInput{
+			Type: ItemLogin,
+			NameCipher: cipherFixture(24, byte(50+i)),
+			NameNonce:  nonceFixture(byte(60 + i)),
+			DataCipher: cipherFixture(32, byte(70+i)),
+			DataNonce:  nonceFixture(byte(80 + i)),
+		}, cur.Revision)
+		if err != nil {
+			t.Fatalf("update %d: %v", i, err)
+		}
+		cur = upd
+	}
+	revs, err := repo.ListItemRevisions(ctx, "u1", it.ID)
+	if err != nil {
+		t.Fatalf("list revisions: %v", err)
+	}
+	if len(revs) != 5 {
+		t.Fatalf("expected 5 archived revisions, got %d", len(revs))
+	}
+
+	// Cap at 2 per item. Use a past age cutoff so the age pass is a no-op
+	// and only the cap pass deletes (3 snapshots).
+	n, err := repo.PurgeOldItemRevisions(ctx, time.Now().Add(-365*24*time.Hour), 2)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("purged = %d, want 3", n)
+	}
+	revs, _ = repo.ListItemRevisions(ctx, "u1", it.ID)
+	if len(revs) != 2 {
+		t.Fatalf("after cap: %d revisions, want 2", len(revs))
+	}
+
+	// Age purge with a future cutoff deletes the remaining 2.
+	n2, err := repo.PurgeOldItemRevisions(ctx, time.Now().Add(365*24*time.Hour), 2)
+	if err != nil {
+		t.Fatalf("age purge: %v", err)
+	}
+	if n2 != 2 {
+		t.Fatalf("age purge deleted %d, want 2", n2)
+	}
+}

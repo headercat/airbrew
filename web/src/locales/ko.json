@@ -551,7 +551,13 @@
       "search": "볼트 검색",
       "noMatches": "일치하는 항목이 없습니다.",
       "empty": "볼트가 비어 있습니다.",
-      "protected": "보호된 항목"
+      "protected": "보호된 항목",
+      "all": "전체",
+      "favorites": "즐겨찾기",
+      "sort": "정렬",
+      "sortName": "이름",
+      "sortUpdated": "최근 수정",
+      "clearFilters": "필터 초기화"
     },
     "types": {
       "login": "로그인",

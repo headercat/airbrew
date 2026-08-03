@@ -551,7 +551,13 @@
       "search": "Search vault",
       "noMatches": "No matching items.",
       "empty": "Your vault is empty.",
-      "protected": "Protected item"
+      "protected": "Protected item",
+      "all": "All",
+      "favorites": "Favorites",
+      "sort": "Sort",
+      "sortName": "Name",
+      "sortUpdated": "Last updated",
+      "clearFilters": "Clear filters"
     },
     "types": {
       "login": "Login",

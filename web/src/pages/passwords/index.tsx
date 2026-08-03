@@ -2,7 +2,7 @@
 // store: loading → setup (first run) → unlock (locked) → list (unlocked).
 // The editor lives on its own routes (/passwords/new, /passwords/:id).
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   CreditCard,
@@ -20,7 +20,6 @@ import {
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -226,12 +225,19 @@ function VaultListView() {
   const { t } = useTranslation();
   const { items, folders, busy, lock, refresh } = useVault();
   const [query, setQuery] = useState("");
+  const [folderFilter, setFolderFilter] = useState<string>("");
+  const [typeFilter, setTypeFilter] = useState<string>("");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [sortBy, setSortBy] = useState<"name" | "updated">("name");
   const navigate = useNavigate();
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((it) => {
+    const out = items.filter((it) => {
+      if (folderFilter && it.folderId !== folderFilter) return false;
+      if (typeFilter && it.type !== typeFilter) return false;
+      if (favoritesOnly && !it.favorite) return false;
+      if (!q) return true;
       if (it.name.toLowerCase().includes(q)) return true;
       if (it.reprompt) return false;
       return it.fields.some(
@@ -239,7 +245,22 @@ function VaultListView() {
           f.name.toLowerCase().includes(q) || f.value.toLowerCase().includes(q),
       );
     });
-  }, [items, query]);
+    if (sortBy === "updated") {
+      return [...out].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    }
+    return out;
+  }, [items, query, folderFilter, typeFilter, favoritesOnly, sortBy]);
+
+  const types = useMemo(() => {
+    const seen = new Set(items.map((it) => it.type));
+    return ["login", "card", "identity", "secure_note"].filter((ty) =>
+      seen.has(ty as DecryptedItem["type"]),
+    );
+  }, [items]);
+
+  const hasFilters = Boolean(
+    folderFilter || typeFilter || favoritesOnly || query,
+  );
 
   return (
     <PageWrapper>
@@ -278,24 +299,84 @@ function VaultListView() {
         }
       />
 
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          className="pl-9"
-          placeholder={t("passwords.list.search")}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="pl-9"
+            placeholder={t("passwords.list.search")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <select
+          aria-label={t("passwords.list.sort")}
+          className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as "name" | "updated")}
+        >
+          <option value="name">{t("passwords.list.sortName")}</option>
+          <option value="updated">{t("passwords.list.sortUpdated")}</option>
+        </select>
       </div>
 
-      {folders.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+      {/* filter chips: folder + favorites + type */}
+      {(folders.length > 0 || types.length > 0) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <FilterChip
+            active={!folderFilter && !favoritesOnly}
+            onClick={() => {
+              setFolderFilter("");
+              setFavoritesOnly(false);
+            }}
+          >
+            {t("passwords.list.all")}
+          </FilterChip>
+          <FilterChip
+            active={favoritesOnly}
+            onClick={() => setFavoritesOnly((v) => !v)}
+          >
+            <Star className="h-3 w-3" />
+            {t("passwords.list.favorites")}
+          </FilterChip>
           {folders.map((f) => (
-            <Badge key={f.id} variant="secondary" className="gap-1">
+            <FilterChip
+              key={f.id}
+              active={folderFilter === f.id}
+              onClick={() =>
+                setFolderFilter((cur) => (cur === f.id ? "" : f.id))
+              }
+            >
               <KeyRound className="h-3 w-3" />
               {f.name}
-            </Badge>
+            </FilterChip>
           ))}
+          {types.map((ty) => (
+            <FilterChip
+              key={ty}
+              active={typeFilter === ty}
+              onClick={() =>
+                setTypeFilter((cur) => (cur === ty ? "" : ty))
+              }
+            >
+              {t(`passwords.types.${ty}`)}
+            </FilterChip>
+          ))}
+          {hasFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => {
+                setFolderFilter("");
+                setTypeFilter("");
+                setFavoritesOnly(false);
+                setQuery("");
+              }}
+            >
+              {t("passwords.list.clearFilters")}
+            </Button>
+          )}
         </div>
       )}
 
@@ -306,11 +387,13 @@ function VaultListView() {
           <CardContent className="flex flex-col items-center justify-center gap-2 py-12 text-center">
             <KeyRound className="h-6 w-6 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              {query
+              {hasFilters
                 ? t("passwords.list.noMatches")
-                : t("passwords.list.empty")}
+                : query
+                  ? t("passwords.list.noMatches")
+                  : t("passwords.list.empty")}
             </p>
-            {!query && (
+            {!hasFilters && !query && (
               <Button
                 variant="outline"
                 size="sm"
@@ -350,5 +433,32 @@ function VaultListView() {
         </div>
       )}
     </PageWrapper>
+  );
+}
+
+// FilterChip is a compact toggle used for folder/type/favorites filters.
+// Active state uses the secondary surface so it reads as "pressed".
+function FilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors " +
+        (active
+          ? "border-primary bg-primary/10 text-primary"
+          : "border-border bg-background text-muted-foreground hover:bg-accent/50")
+      }
+    >
+      {children}
+    </button>
   );
 }

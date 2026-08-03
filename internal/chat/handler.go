@@ -264,18 +264,20 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	ch, cancel := h.svc.Subscribe(userID)
 	defer cancel()
 
-	// Clamp negatives so a malformed cursor does not replay the entire
-	// history on every reconnect.
-	sinceSeq, _ := strconv.ParseInt(r.URL.Query().Get("since_seq"), 10, 64)
-	if sinceSeq < 0 {
-		sinceSeq = 0
+	// Clamp/parse the created_at cursor (RFC3339). The cursor is created_at-
+	// based, not seq (seq is per-room and would lose low-activity rooms).
+	var since time.Time
+	if raw := r.URL.Query().Get("since_cursor"); raw != "" {
+		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+			since = parsed.UTC()
+		}
 	}
 	// Replay missed message.created frames in bounded pages. Stop at a hard
 	// cap so a huge backlog cannot stall the connection forever; if more
 	// remains, hasMore is signalled so the client re-pages.
 	const replayMax = 2000
 	replayed := 0
-	cursor := sinceSeq
+	cursor := since
 	lastHasMore := false
 	for replayed < replayMax {
 		page, nextCursor, hasMore, err := h.svc.ReplayMissed(r.Context(), userID, cursor, 200)
@@ -298,7 +300,11 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	// last page itself signalled more rows remained; otherwise an exact-fit
 	// backlog would trigger a needless empty reconnect.
 	more := replayed >= replayMax && lastHasMore
-	writeSSE(w, "ready", map[string]any{"ok": true, "seq": cursor, "has_more": more})
+	writeSSE(w, "ready", map[string]any{
+		"ok":       true,
+		"cursor":   cursor.UTC().Format(time.RFC3339),
+		"has_more": more,
+	})
 	flusher.Flush()
 
 	tick := time.NewTicker(25 * time.Second)

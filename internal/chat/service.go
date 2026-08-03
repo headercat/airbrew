@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"strings"
+	"time"
 )
 
 type Service struct {
@@ -118,27 +119,28 @@ func (s *Service) Subscribe(userID string) (<-chan Event, func()) {
 }
 
 // ReplayMissed returns up to limit message.created events the user missed
-// since sinceSeq (across all their rooms), plus the cursor the client should
-// store as its new high-water mark. The cursor is the seq of the last replayed
-// message (or the input sinceSeq when nothing was missed) — NOT the global max
-// — so if the backlog exceeds the cap the unreplayed tail is fetched on the
-// next reconnect instead of being silently skipped. hasMore is true when more
-// rows remain beyond what was returned.
-func (s *Service) ReplayMissed(ctx context.Context, userID string, sinceSeq int64, limit int) (msgs []Message, cursor int64, hasMore bool, err error) {
+// after sinceTime (across all their rooms), plus the cursor the client should
+// store as its new high-water mark. The cursor is the created_at of the last
+// replayed message (or the input sinceTime when nothing was missed). The
+// cursor is created_at-based — NOT seq — because seq is only unique within a
+// single room, so a global seq cursor would silently lose rows from a
+// low-activity room. hasMore is true when more rows remain beyond what was
+// returned.
+func (s *Service) ReplayMissed(ctx context.Context, userID string, since time.Time, limit int) (msgs []Message, cursor time.Time, hasMore bool, err error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	page, err := s.repo.ListMessagesSinceAcrossRooms(ctx, userID, sinceSeq, limit+1)
+	page, err := s.repo.ListMessagesSinceAcrossRooms(ctx, userID, since, limit+1)
 	if err != nil {
-		return nil, sinceSeq, false, err
+		return nil, since, false, err
 	}
 	if len(page) > limit {
 		hasMore = true
 		page = page[:limit]
 	}
-	cursor = sinceSeq
+	cursor = since
 	if len(page) > 0 {
-		cursor = page[len(page)-1].Seq
+		cursor = page[len(page)-1].CreatedAt.UTC()
 	}
 	return page, cursor, hasMore, nil
 }

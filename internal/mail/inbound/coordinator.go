@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/headercat/airbrew/internal/logging"
 	"github.com/headercat/airbrew/internal/mail/provider"
 )
 
@@ -84,7 +85,7 @@ func (c *Coordinator) sync(ctx context.Context) {
 	c.cancel = cancel
 	c.mu.Unlock()
 	c.log.Info("mail: starting inbound poller", "driver", p.Driver, "interval", poller.Interval())
-	go c.loop(pollCtx, poller)
+	logging.Go("mail.inboundPoller:"+p.Driver, func() { c.loop(pollCtx, poller) })
 }
 
 func (c *Coordinator) loop(ctx context.Context, p Poller) {

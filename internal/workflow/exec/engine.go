@@ -193,6 +193,17 @@ func (e *Engine) ExecuteAsync(ctx context.Context, req Request) (*run.Run, error
 // HTTP request) and persists the final status. It must not reference the
 // caller's ctx: webhook senders disconnect the moment they receive 202.
 func (e *Engine) runDetached(wf *run.Workflow, input map[string]any, rn *run.Run, timeout time.Duration) {
+	// Recover from a panic so the run row is never left stuck in "running"
+	// until the next process restart; ReapStaleRunning would only catch it
+	// on the next startup, leaving the SPA's auto-poll spinning in the
+	// meantime.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.ErrorContext(context.Background(), "workflow: run panicked",
+				"run_id", rn.ID, "workflow_id", wf.ID, "panic", r)
+			_ = e.svc.Repo().FinishRun(context.Background(), rn.ID, run.RunFailed, fmt.Sprintf("panic: %v", r))
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	state := &runState{

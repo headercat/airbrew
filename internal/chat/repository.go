@@ -321,11 +321,15 @@ func (r *Repository) ListMessages(ctx context.Context, userID, roomID string, be
 	return out, nil
 }
 
-// ListMessagesSinceAcrossRooms returns up to limit non-deleted messages with
-// seq > sinceSeq across every room the user participates in, ordered by seq.
-// It backs the SSE reconnect replay so a dropped event (subscriber buffer
-// full) or a transient disconnect does not permanently lose a message.
-func (r *Repository) ListMessagesSinceAcrossRooms(ctx context.Context, userID string, sinceSeq int64, limit int) ([]Message, error) {
+// ListMessagesSinceAcrossRooms returns up to limit non-deleted messages
+// created AFTER sinceTime across every room the user participates in, ordered
+// by (created_at, id). It backs the SSE reconnect replay.
+//
+// NOTE: the cursor MUST be created_at-based, not chat_messages.seq. seq is
+// only unique within a room (UNIQUE(room_id, seq)), so a global seq cursor
+// would silently lose rows from a low-activity room whose seq space sits
+// below a busy room's high-water mark.
+func (r *Repository) ListMessagesSinceAcrossRooms(ctx context.Context, userID string, since time.Time, limit int) ([]Message, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
@@ -334,10 +338,10 @@ func (r *Repository) ListMessagesSinceAcrossRooms(ctx context.Context, userID st
 		  ON p.room_id = cm.room_id AND p.user_id = ?
 		WHERE p.user_id = ?
 		  AND cm.deleted_at IS NULL
-		  AND cm.seq > ?
-		ORDER BY cm.seq ASC
+		  AND cm.created_at > ?
+		ORDER BY cm.created_at ASC, cm.id ASC
 		LIMIT ?`,
-		userID, userID, sinceSeq, limit,
+		userID, userID, since.UTC().Truncate(time.Second), limit+1,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("chat: replay messages since: %w", err)
@@ -354,25 +358,26 @@ func (r *Repository) ListMessagesSinceAcrossRooms(ctx context.Context, userID st
 	return out, rows.Err()
 }
 
-// MaxSeqAcrossRooms returns the highest chat_messages.seq the user can see, or
-// 0 when they have none. Used to seed the SSE replay cursor.
-func (r *Repository) MaxSeqAcrossRooms(ctx context.Context, userID string) (int64, error) {
-	var seq sql.NullInt64
+// MaxCreatedAtAcrossRooms returns the latest created_at the user can see, or
+// the zero time when they have no messages. Used to seed the SSE replay
+// cursor (created_at-based, since seq is only unique per room).
+func (r *Repository) MaxCreatedAtAcrossRooms(ctx context.Context, userID string) (time.Time, error) {
+	var t sql.NullTime
 	err := r.db.QueryRowContext(ctx, `
-		SELECT MAX(cm.seq)
+		SELECT MAX(cm.created_at)
 		FROM chat_messages cm
 		JOIN chat_room_participants p
 		  ON p.room_id = cm.room_id AND p.user_id = ?
 		WHERE p.user_id = ? AND cm.deleted_at IS NULL`,
 		userID, userID,
-	).Scan(&seq)
+	).Scan(&t)
 	if err != nil {
-		return 0, err
+		return time.Time{}, err
 	}
-	if !seq.Valid {
-		return 0, nil
+	if !t.Valid {
+		return time.Time{}, nil
 	}
-	return seq.Int64, nil
+	return t.Time.UTC(), nil
 }
 
 // maxMessageBody is the byte cap enforced on both send and edit so an edited

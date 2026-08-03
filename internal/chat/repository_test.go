@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/headercat/airbrew/internal/db"
 )
@@ -118,6 +119,49 @@ func TestGroupRenameRequiresOwner(t *testing.T) {
 // TestEditDeleteMessageAuthzAndCap verifies only the sender can edit/delete
 // their own message, the body cap applies to edits, and delete excludes the
 // row from GetMessage.
+// TestReplayAcrossRoomsUsesCreatedAt guards against the per-room seq bug:
+// seq is only unique within a room, so the replay cursor must be created_at.
+// Two rooms each get a seq=1 message; replay from the zero time must return
+// both, not skip one whose seq collides with the other.
+func TestReplayAcrossRoomsUsesCreatedAt(t *testing.T) {
+	repo, users := testRepo(t)
+	ctx := context.Background()
+	roomA, _, err := repo.CreateOrGetDirect(ctx, users[0], users[1])
+	if err != nil {
+		t.Fatalf("CreateOrGetDirect A: %v", err)
+	}
+	roomB, _, err := repo.CreateOrGetDirect(ctx, users[0], users[2])
+	if err != nil {
+		t.Fatalf("CreateOrGetDirect B: %v", err)
+	}
+	if _, _, err := repo.AppendMessage(ctx, users[0], roomA.ID, "A1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repo.AppendMessage(ctx, users[0], roomB.ID, "B1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repo.AppendMessage(ctx, users[0], roomA.ID, "A2"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.ListMessagesSinceAcrossRooms(ctx, users[0], time.Unix(0, 0).UTC(), 100)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	// Expect all three messages, despite roomA and roomB sharing seq=1.
+	if len(got) != 3 {
+		t.Fatalf("replay returned %d messages, want 3 (per-room seq must not lose rows): %+v", len(got), got)
+	}
+	// Ordering is created_at ASC; tiebreak id ASC. Both seq=1 rows must appear.
+	seqs := map[string][]int64{}
+	for _, m := range got {
+		seqs[m.RoomID] = append(seqs[m.RoomID], m.Seq)
+	}
+	if len(seqs[roomA.ID]) != 2 || len(seqs[roomB.ID]) != 1 {
+		t.Fatalf("per-room replay counts wrong: %+v", seqs)
+	}
+}
+
 func TestEditDeleteMessageAuthzAndCap(t *testing.T) {
 	repo, users := testRepo(t)
 	ctx := context.Background()

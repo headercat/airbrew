@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/headercat/airbrew/internal/id"
 	"github.com/headercat/airbrew/internal/workflow/defn"
@@ -665,9 +666,15 @@ func capJSON(s string) string {
 	if len(s) <= maxJSONLen {
 		return s
 	}
+	// Trim on a UTF-8 boundary so the preview does not split a multi-byte
+	// sequence (which would render as U+FFFD in the SPA).
+	cut := maxJSONLen
+	for cut > 0 && !utf8.ValidString(s[:cut]) {
+		cut--
+	}
 	b, _ := json.Marshal(map[string]any{
 		"_truncated": true,
-		"preview":    s[:maxJSONLen],
+		"preview":    s[:cut],
 	})
 	return string(b)
 }

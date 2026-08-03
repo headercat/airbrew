@@ -105,17 +105,18 @@ export const chat = {
 export function openChatEvents(
   onEvent: (event: ChatEvent) => void,
   opts?: {
-    getSinceSeq?: () => number;
-    onReady?: (seq: number, hasMore: boolean) => void;
+    getSinceCursor?: () => string;
+    onReady?: (cursor: string, hasMore: boolean) => void;
   },
 ) {
   // The browser EventSource reuses the same URL on its built-in reconnect, so
-  // we cannot update the `since_seq` replay cursor dynamically that way. Close
-  // on error and reopen with the latest cursor so the server replays any
-  // message.created frames missed while disconnected (or while the hub dropped
-  // a frame because the subscriber fell behind).
-  const factory = (sinceSeq: number) => {
-    const qs = sinceSeq > 0 ? `?since_seq=${sinceSeq}` : "";
+  // we cannot update the replay cursor dynamically that way. Close on error
+  // and reopen with the latest cursor so the server replays any message.created
+  // frames missed while disconnected (or while the hub dropped a frame because
+  // the subscriber fell behind). The cursor is created_at-based (seq is only
+  // unique per room, so a seq cursor would lose low-activity rooms).
+  const factory = (cursor: string) => {
+    const qs = cursor ? `?since_cursor=${encodeURIComponent(cursor)}` : "";
     return new EventSource(`/api/chat/events${qs}`);
   };
   const types = [
@@ -131,10 +132,10 @@ export function openChatEvents(
       try {
         const data = JSON.parse((ev as MessageEvent).data) as {
           ok: boolean;
-          seq?: number;
+          cursor?: string;
           has_more?: boolean;
         };
-        if (data.seq) opts?.onReady?.(data.seq, data.has_more ?? false);
+        if (data.cursor) opts?.onReady?.(data.cursor, data.has_more ?? false);
       } catch {
         /* ignore malformed ready frame */
       }
@@ -149,11 +150,11 @@ export function openChatEvents(
       });
     }
   };
-  let es = factory(opts?.getSinceSeq?.() ?? 0);
+  let es = factory(opts?.getSinceCursor?.() ?? "");
   const reconnect = () => {
     es.close();
     window.setTimeout(() => {
-      es = factory(opts?.getSinceSeq?.() ?? 0);
+      es = factory(opts?.getSinceCursor?.() ?? "");
       bind(es);
       es.onerror = () => reconnect();
     }, 1500);
@@ -163,11 +164,11 @@ export function openChatEvents(
   // dropping the unreplayed tail.
   const upstreamReady = opts?.onReady;
   if (upstreamReady) {
-    opts.onReady = (seq, hasMore) => {
-      upstreamReady(seq, hasMore);
+    opts.onReady = (cursor, hasMore) => {
+      upstreamReady(cursor, hasMore);
       if (hasMore) {
         es.close();
-        es = factory(opts.getSinceSeq?.() ?? 0);
+        es = factory(opts.getSinceCursor?.() ?? "");
         bind(es);
         es.onerror = () => reconnect();
       }

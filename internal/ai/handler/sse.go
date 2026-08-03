@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/headercat/airbrew/internal/logging"
 )
 
 // SSEWriter wraps an http.ResponseWriter with a manual flusher. SSE is
@@ -85,7 +87,7 @@ func (s *SSEWriter) Heartbeat(interval time.Duration) (stop func(), errs <-chan 
 	t := time.NewTicker(interval)
 	done := make(chan struct{})
 	errCh := make(chan error, 1)
-	go func() {
+	logging.Go("ai.sseHeartbeat", func() {
 		defer close(errCh)
 		for {
 			select {
@@ -103,6 +105,6 @@ func (s *SSEWriter) Heartbeat(interval time.Duration) (stop func(), errs <-chan 
 				}
 			}
 		}
-	}()
+	})
 	return func() { close(done) }, errCh
 }

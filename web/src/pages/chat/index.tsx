@@ -51,6 +51,11 @@ export default function ChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const activeRoom = rooms.find((r) => r.id === activeID) ?? null;
+  // Mirror activeID into a ref so callbacks that capture it at call time
+  // (loadEarlier, deleteMessage) can detect a room switch that happened
+  // during their await.
+  const activeIDRef = useRef("");
+  activeIDRef.current = activeID;
   const visibleRooms = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return rooms;
@@ -79,40 +84,51 @@ export default function ChatPage() {
     }
   }, []);
 
-  const lastSeqRef = useRef(0);
+  const lastCursorRef = useRef("");
   // applyEvent closes over live state (activeID, user, ...); route it through a
   // ref so the SSE subscription effect can depend on [] and is not torn down
   // and re-opened on every locale change (which would gap the stream and burst
   // the replay).
   const applyEventRef = useRef<(ev: ChatEvent) => void>(() => {});
-  // loadRooms is called on reconnect to refresh room state (a replay only
-  // re-emits message.created, not room.read/room.updated); route via a ref so
-  // the subscription effect stays stable.
+  // loadRooms / loadActiveMessages are called on reconnect to refresh state
+  // (a replay only re-emits message.created, not room.read/room.updated or
+  // edits/deletes); route via refs so the subscription effect stays stable.
   const reloadRoomsRef = useRef<() => Promise<void>>(async () => {});
+  const reloadActiveMessagesRef = useRef<() => void>(() => {});
   useEffect(() => {
     void loadRooms();
   }, [loadRooms]);
 
   useEffect(() => {
-    const hadSeqBefore = lastSeqRef.current;
+    const hadCursorBefore = lastCursorRef.current;
     const stream = openChatEvents(
       (ev) => {
-        if (ev.type === "message.created") {
-          // Track the high-water seq so an SSE reconnect can ask the server
-          // to replay any message.created frames missed while disconnected.
-          lastSeqRef.current = Math.max(lastSeqRef.current, ev.message.seq);
+        // Advance the created_at cursor as live frames arrive so the next
+        // reconnect only replays messages newer than what we have seen.
+        if (
+          (ev.type === "message.created" || ev.type === "message.updated") &&
+          ev.message?.created_at
+        ) {
+          const cur = lastCursorRef.current;
+          if (!cur || ev.message.created_at > cur) {
+            lastCursorRef.current = ev.message.created_at;
+          }
         }
         applyEventRef.current(ev);
       },
       {
-        getSinceSeq: () => lastSeqRef.current,
-        onReady: (seq) => {
-          if (seq) lastSeqRef.current = Math.max(lastSeqRef.current, seq);
+        getSinceCursor: () => lastCursorRef.current,
+        onReady: (cursor) => {
+          lastCursorRef.current = cursor;
           setError(null);
           // If this ready follows a non-trivial cursor the client was offline
-          // or the hub dropped frames; room metadata (unread badges, titles,
-          // last_read_seq) may have drifted, so re-fetch the room list.
-          if (hadSeqBefore > 0) void reloadRoomsRef.current();
+          // or the hub dropped frames; room metadata and the active room's
+          // messages (including edits/deletes that replay does NOT re-emit)
+          // may have drifted, so re-fetch both.
+          if (hadCursorBefore) {
+            void reloadRoomsRef.current();
+            reloadActiveMessagesRef.current();
+          }
         },
       },
     );
@@ -220,6 +236,15 @@ export default function ChatPage() {
   // latest applyEvent without re-subscribing.
   applyEventRef.current = applyEvent;
   reloadRoomsRef.current = loadRooms;
+  reloadActiveMessagesRef.current = () => {
+    // Re-fetch the active room's messages to reconcile edits/deletes that the
+    // SSE replay (message.created only) does not re-emit. No-op when no room
+    // is open.
+    if (!activeID) return;
+    void chat.listMessages(activeID).then((msgs) => {
+      setMessages(msgs);
+    });
+  };;
 ;
 
   async function sendMessage() {
@@ -319,7 +344,7 @@ export default function ChatPage() {
     try {
       const earlier = await chat.listMessages(room, beforeSeq);
       setMessages((prev) => {
-        if (room !== activeID) return prev; // user switched rooms; drop stale
+        if (room !== activeIDRef.current) return prev; // user switched rooms
         return [...earlier, ...prev.filter((m) => m.seq >= beforeSeq)];
       });
     } catch (e) {

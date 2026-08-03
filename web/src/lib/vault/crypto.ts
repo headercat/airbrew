@@ -147,6 +147,26 @@ export function generateSalt(): string {
 const PASSWORD_ALPHABET =
   "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*";
 
+// Ambiguous characters that look alike and are usually omitted from
+// user-friendly generated passwords.
+const AMBIGUOUS = new Set("Il1O0oB8G6S5Z2");
+
+export type PasswordOptions = {
+  length?: number;
+  upper?: boolean;
+  lower?: boolean;
+  digits?: boolean;
+  symbols?: boolean;
+  avoidAmbiguous?: boolean;
+};
+
+const SETS = {
+  upper: "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+  lower: "abcdefghijklmnopqrstuvwxyz",
+  digits: "0123456789",
+  symbols: "!@#$%^&*-_=+?",
+};
+
 export function generatePassword(len = 20, alphabet = PASSWORD_ALPHABET): string {
   const max = Math.floor(0xffffffff / alphabet.length) * alphabet.length;
   const buf32 = new Uint32Array(len);
@@ -162,6 +182,105 @@ export function generatePassword(len = 20, alphabet = PASSWORD_ALPHABET): string
     }
   }
   return out;
+}
+
+// generatePasswordFromOptions builds a password from the requested character
+// classes. At least one class must be enabled; if none are selected, the
+// default mixed alphabet is used.
+export function generatePasswordFromOptions(opts: PasswordOptions = {}): string {
+  const {
+    length = 20,
+    upper = true,
+    lower = true,
+    digits = true,
+    symbols = true,
+    avoidAmbiguous = false,
+  } = opts;
+  let alphabet = "";
+  if (upper) alphabet += SETS.upper;
+  if (lower) alphabet += SETS.lower;
+  if (digits) alphabet += SETS.digits;
+  if (symbols) alphabet += SETS.symbols;
+  if (alphabet.length === 0) alphabet = PASSWORD_ALPHABET;
+  if (avoidAmbiguous) {
+    alphabet = Array.from(alphabet)
+      .filter((c) => !AMBIGUOUS.has(c))
+      .join("");
+  }
+  return generatePassword(length, alphabet);
+}
+
+// A compact word list of short, memorable, unambiguous English nouns for the
+// passphrase generator. 128 entries gives ~7 bits per word, so a 5-word
+// passphrase is ~35 bits and a 7-word passphrase is ~49 bits — comparable to a
+// randomly generated 8–12 character password while being far easier to type
+// and remember.
+const WORDLIST = [
+  "apple", "river", "stone", "cloud", "torch", "frost", "ocean", "maple",
+  "pearl", "cedar", "valley", "willow", "amber", "basil", "candle", "drift",
+  "ember", "falcon", "garnet", "harbor", "iguana", "jasper", "kettle", "lagoon",
+  "marble", "ninja", "orchid", "paddle", "quartz", "raven", "saddle", "thistle",
+  "umber", "viper", "walnut", "yacht", "zebra", "anchor", "boulder", "compass",
+  "dolphin", "eagle", "feather", "garden", "hammer", "island", "jungle", "knuckle",
+  "lantern", "meadow", "needle", "onion", "pebble", "quill", "ribbon", "shadow",
+  "tunnel", "utopia", "violin", "whisker", "yellow", "arrow", "beacon", "cliff",
+  "denim", "echo", "fern", "ginger", "helmet", "ivory", "jacket", "kingdom",
+  "lemon", "magnet", "north", "office", "pillow", "queen", "rocket", "salmon",
+  "temple", "unicorn", "vortex", "window", "xenon", "yodel", "zephyr", "almond",
+  "bravo", "cocoa", "delta", "elm", "fable", "globe", "haven", "index",
+  "jolly", "kayak", "liver", "mango", "novel", "oasis", "plum", "quiz",
+  "rustic", "spark", "trail", "ultra", "vault", "wheat", "yarn", "zinc",
+  "aster", "breeze", "coral", "daisy", "field", "grove", "heart", "ivory",
+  "jewel", "karma", "lily", "mint", "nest", "oat", "palm", "quest",
+];
+
+// generatePassphrase builds a memorable word-based passphrase. Words are joined
+// by separator (default "-") and, when includeNumber is set, a random digit is
+// appended to one of the words for extra entropy. Capitalize upper-cases the
+// first letter of each word.
+export function generatePassphrase(opts: {
+  words?: number;
+  separator?: string;
+  capitalize?: boolean;
+  includeNumber?: boolean;
+} = {}): string {
+  const {
+    words = 5,
+    separator = "-",
+    capitalize = false,
+    includeNumber = true,
+  } = opts;
+  const max = Math.floor(0xffffffff / WORDLIST.length) * WORDLIST.length;
+  const buf32 = new Uint32Array(words);
+  const picked: string[] = [];
+  for (let i = 0; i < words; ) {
+    crypto.getRandomValues(buf32);
+    for (let j = 0; j < buf32.length && i < words; j++) {
+      const r = buf32[j];
+      if (r < max) {
+        let w = WORDLIST[r % WORDLIST.length];
+        if (capitalize) w = w[0].toUpperCase() + w.slice(1);
+        picked.push(w);
+        i++;
+      }
+    }
+  }
+  if (includeNumber) {
+    const idx = secureInt(picked.length);
+    picked[idx] += String(secureInt(10));
+  }
+  return picked.join(separator);
+}
+
+function secureInt(maxExclusive: number): number {
+  if (maxExclusive <= 0) return 0;
+  const mask = maxExclusive - 1;
+  const buf = new Uint32Array(1);
+  for (;;) {
+    crypto.getRandomValues(buf);
+    const v = buf[0] & mask;
+    if (v < maxExclusive) return v;
+  }
 }
 
 // ---- AES-256-GCM via WebCrypto ----

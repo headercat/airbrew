@@ -33,7 +33,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader, PageWrapper } from "@/components/page";
 import { isApiError } from "@/lib/api";
 import { isConflict } from "@/lib/vault/api";
-import { generatePassword } from "@/lib/vault/crypto";
 import {
   newField,
   PRESETS,
@@ -46,6 +45,7 @@ import {
 } from "@/lib/vault/store";
 import type { VaultItem, VaultItemType } from "@/lib/vault/api";
 import { AttachmentsCard } from "./attachments";
+import { PasswordGeneratorDialog } from "./generator";
 
 const TYPES: VaultItemType[] = ["login", "secure_note", "card", "identity"];
 const KINDS: FieldKind[] = ["text", "password", "totp", "url", "multiline"];
@@ -522,6 +522,7 @@ function FieldEditor({
 }) {
   const { t } = useTranslation();
   const [reveal, setReveal] = useState(false);
+  const [genOpen, setGenOpen] = useState(false);
 
   return (
     <div className="grid gap-2 rounded-md border bg-muted/20 p-3">
@@ -595,7 +596,7 @@ function FieldEditor({
               type="button"
               variant="outline"
               size="icon"
-              onClick={() => onChange({ value: generatePassword() })}
+              onClick={() => setGenOpen(true)}
               title={t("passwords.editor.generate")}
             >
               <RefreshCw className="h-4 w-4" />
@@ -609,6 +610,12 @@ function FieldEditor({
           {t("passwords.editor.totpHint")}
         </p>
       )}
+
+      <PasswordGeneratorDialog
+        open={genOpen}
+        onClose={() => setGenOpen(false)}
+        onApply={(value) => onChange({ value })}
+      />
     </div>
   );
 }

@@ -1022,6 +1022,43 @@ func (r *Repository) PurgeOldTombstones(ctx context.Context, olderThan time.Time
 	return folders, items, nil
 }
 
+// PurgeOldItemRevisions deletes per-item history snapshots older than the
+// cutoff so an actively edited vault does not accumulate unbounded revisions.
+// The per-item cap is applied on top of the age cutoff so a very old but
+// frequently edited item still keeps its most recent snapshots. Returns the
+// number of rows deleted.
+func (r *Repository) PurgeOldItemRevisions(ctx context.Context, olderThan time.Time, keepPerItem int) (int64, error) {
+	// Delete by age first — covers items that have been deleted (whose rows
+	// cascade) and standalone old snapshots.
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM vault_item_revisions WHERE created_at < ?`, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("vault: purge old item revisions: %w", err)
+	}
+	deleted, _ := res.RowsAffected()
+	if keepPerItem <= 0 {
+		return deleted, nil
+	}
+	// Cap per-item: for items that still have more than keepPerItem snapshots,
+	// drop the oldest beyond the cap. SQLite supports ROW_NUMBER() in
+	// subqueries since 3.25; modernc.org/sqlite ships a recent build.
+	_, err = r.db.ExecContext(ctx, `
+		DELETE FROM vault_item_revisions WHERE id IN (
+			SELECT id FROM (
+				SELECT id,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY item_id ORDER BY created_at DESC
+				       ) AS rn
+				FROM vault_item_revisions
+			) WHERE rn > ?
+		)`, keepPerItem)
+	if err != nil {
+		return deleted, fmt.Errorf("vault: cap item revisions: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return deleted + n, nil
+}
+
 // --- trash (recycle bin) ---------------------------------------------------
 //
 // Soft-deleted rows (tombstones) are kept for tombstoneTTL so the client can

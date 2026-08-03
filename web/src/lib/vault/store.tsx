@@ -266,7 +266,8 @@ async function decryptStringCompat(
   try {
     return await decryptString(key, cipher, nonce, aad);
   } catch {
-    if (!isLegacyCrypto(cryptoVersion)) throw new Error("AAD verification failed");
+    if (!isLegacyCrypto(cryptoVersion))
+      throw new Error("AAD verification failed");
     return decryptString(key, cipher, nonce);
   }
 }
@@ -281,7 +282,8 @@ async function decryptBytesCompat(
   try {
     return await decryptBytes(key, cipher, nonce, aad);
   } catch {
-    if (!isLegacyCrypto(cryptoVersion)) throw new Error("AAD verification failed");
+    if (!isLegacyCrypto(cryptoVersion))
+      throw new Error("AAD verification failed");
     return decryptBytes(key, cipher, nonce);
   }
 }
@@ -295,7 +297,8 @@ async function openCompat(
   try {
     return await open(key, sealed, aad);
   } catch {
-    if (!isLegacyCrypto(cryptoVersion)) throw new Error("AAD verification failed");
+    if (!isLegacyCrypto(cryptoVersion))
+      throw new Error("AAD verification failed");
     return open(key, sealed);
   }
 }
@@ -380,6 +383,28 @@ async function decryptItem(
   };
 }
 
+// undecryptableItem is the placeholder shown when a single ciphertext row
+// cannot be decrypted (corrupted data, migration mismatch, tampering). It
+// keeps the metadata visible so the user sees the row exists but is not
+// readable, without aborting the rest of the sync.
+const DECRYPT_FAILED_NAME = "•••";
+
+function undecryptableItem(raw: VaultItem): DecryptedItem {
+  return {
+    id: raw.id,
+    type: raw.type,
+    folderId: raw.folder_id,
+    name: DECRYPT_FAILED_NAME,
+    notes: "",
+    fields: [],
+    favorite: false,
+    reprompt: false,
+    revision: raw.revision,
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
+  };
+}
+
 // DraftItem is what the editor produces; encryptItemInput turns it into the
 // ciphertext payload the server stores.
 export type DraftItem = {
@@ -397,7 +422,11 @@ export async function encryptItemInput(
   draft: DraftItem,
   itemId: string,
 ): Promise<ItemInput> {
-  const name = await encryptString(key, draft.name, itemAAD(itemId, "name", CURRENT_CRYPTO_VERSION));
+  const name = await encryptString(
+    key,
+    draft.name,
+    itemAAD(itemId, "name", CURRENT_CRYPTO_VERSION),
+  );
   const data: ItemData = { fields: draft.fields };
   const dataEnc = await encryptString(
     key,
@@ -572,15 +601,18 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   // cacheUserIdRef holds the IndexedDB cache key derived from the envelope salt.
   const cacheUserIdRef = useRef<string>("");
 
-  const persistCiphertextCache = useCallback((nextCursor = cursorRef.current) => {
-    if (!cacheUserIdRef.current) return;
-    void putVaultCache({
-      userId: cacheUserIdRef.current,
-      cursor: nextCursor,
-      folders: Array.from(rawFoldersRef.current.values()),
-      items: Array.from(rawItemsRef.current.values()),
-    });
-  }, []);
+  const persistCiphertextCache = useCallback(
+    (nextCursor = cursorRef.current) => {
+      if (!cacheUserIdRef.current) return;
+      void putVaultCache({
+        userId: cacheUserIdRef.current,
+        cursor: nextCursor,
+        folders: Array.from(rawFoldersRef.current.values()),
+        items: Array.from(rawItemsRef.current.values()),
+      });
+    },
+    [],
+  );
 
   const migrateLegacyCiphertextRows = useCallback(async () => {
     const key = keyRef.current;
@@ -589,7 +621,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       (f) => !f.deleted_at && isLegacyCrypto(f.crypto_version),
     );
     const legacyItems = Array.from(rawItemsRef.current.values()).filter(
-      (it) => !it.deleted_at && !it.reprompt && isLegacyCrypto(it.crypto_version),
+      (it) =>
+        !it.deleted_at && !it.reprompt && isLegacyCrypto(it.crypto_version),
     );
     if (!legacyFolders.length && !legacyItems.length) return;
     legacyMigrationRunningRef.current = true;
@@ -623,15 +656,19 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       for (const it of legacyItems) {
         try {
           const dec = await decryptItem(key, it, { includeSensitive: true });
-          const input = await encryptItemInput(key, {
-            type: dec.type,
-            folderId: dec.folderId,
-            name: dec.name,
-            notes: dec.notes,
-            fields: dec.fields,
-            favorite: dec.favorite,
-            reprompt: dec.reprompt,
-          }, it.id);
+          const input = await encryptItemInput(
+            key,
+            {
+              type: dec.type,
+              folderId: dec.folderId,
+              name: dec.name,
+              notes: dec.notes,
+              fields: dec.fields,
+              favorite: dec.favorite,
+              reprompt: dec.reprompt,
+            },
+            it.id,
+          );
           input.if_revision = it.revision;
           const raw = await VApi.updateItem(it.id, input);
           rawItemsRef.current.set(raw.id, raw);
@@ -663,7 +700,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           byId.delete(raw.id);
           rawItemsRef.current.delete(raw.id);
         } else {
-          byId.set(raw.id, await decryptItem(key, raw));
+          // A corrupted/corrupted ciphertext (migration gone wrong, server
+          // bug, tampering) must NOT abort the whole sync: one bad row would
+          // otherwise lock the user out of the entire vault. Drop in a
+          // placeholder so the row is visible and the rest still decrypts.
+          try {
+            byId.set(raw.id, await decryptItem(key, raw));
+          } catch {
+            byId.set(raw.id, undecryptableItem(raw));
+          }
           rawItemsRef.current.set(raw.id, raw);
         }
       }
@@ -707,7 +752,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     // (and survive being offline). Ciphertext only — the key is memory-only.
     persistCiphertextCache(since);
     void migrateLegacyCiphertextRows();
-  }, [commitItems, commitCursor, migrateLegacyCiphertextRows, persistCiphertextCache]);
+  }, [
+    commitItems,
+    commitCursor,
+    migrateLegacyCiphertextRows,
+    persistCiphertextCache,
+  ]);
 
   // hydrateFromCache decrypts the IndexedDB ciphertext cache (if any) into the
   // decrypted cache so the UI can render before the network sync completes.
@@ -721,7 +771,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     const folderMap = new Map(foldersRef.current.map((f) => [f.id, f]));
     const byId = new Map(itemsRef.current.map((it) => [it.id, it]));
     for (const raw of cached.items as VApi.VaultItem[]) {
-      byId.set(raw.id, await decryptItem(key, raw));
+      try {
+        byId.set(raw.id, await decryptItem(key, raw));
+      } catch {
+        byId.set(raw.id, undecryptableItem(raw));
+      }
       rawItemsRef.current.set(raw.id, raw);
     }
     for (const f of cached.folders as VApi.VaultFolder[]) {
@@ -1125,15 +1179,19 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const dec = await decryptItem(key, raw, { includeSensitive: true });
       if (isLegacyCrypto(raw.crypto_version)) {
         try {
-          const input = await encryptItemInput(key, {
-            type: dec.type,
-            folderId: dec.folderId,
-            name: dec.name,
-            notes: dec.notes,
-            fields: dec.fields,
-            favorite: dec.favorite,
-            reprompt: dec.reprompt,
-          }, raw.id);
+          const input = await encryptItemInput(
+            key,
+            {
+              type: dec.type,
+              folderId: dec.folderId,
+              name: dec.name,
+              notes: dec.notes,
+              fields: dec.fields,
+              favorite: dec.favorite,
+              reprompt: dec.reprompt,
+            },
+            raw.id,
+          );
           input.if_revision = raw.revision;
           const migrated = await VApi.updateItem(raw.id, input);
           rawItemsRef.current.set(migrated.id, migrated);
@@ -1260,7 +1318,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           items.push({
             id: destItemId,
             type: it.type,
-            folder_id: it.folder_id ? (folderIdMap.get(it.folder_id) ?? "") : "",
+            folder_id: it.folder_id
+              ? (folderIdMap.get(it.folder_id) ?? "")
+              : "",
             name_cipher: nameEnc.cipher,
             name_nonce: nameEnc.nonce,
             data_cipher: dataEnc.cipher,
@@ -1646,7 +1706,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const total = items.length;
       for (const csv of items) {
         const fields = [];
-        if (csv.username) fields.push(newField("text", "Username", csv.username));
+        if (csv.username)
+          fields.push(newField("text", "Username", csv.username));
         if (csv.password)
           fields.push(newField("password", "Password", csv.password));
         if (csv.url) fields.push(newField("url", "Website", csv.url));

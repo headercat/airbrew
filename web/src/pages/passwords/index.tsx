@@ -5,8 +5,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  CreditCard,
-  Globe,
   KeyRound,
   Loader2,
   Lock,
@@ -14,8 +12,6 @@ import {
   RefreshCw,
   Search,
   Star,
-  StickyNote,
-  UserRound,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -40,6 +36,7 @@ import { evaluateMasterPassword } from "@/lib/vault/security";
 import { VaultActions } from "./actions";
 import { PasswordStrengthHint } from "./password-strength";
 import { TrashButton } from "./trash";
+import { itemIcon } from "./icons";
 
 export default function PasswordsPage() {
   const { status, error } = useVault();
@@ -197,19 +194,6 @@ function UnlockView() {
 
 // ---- unlocked list ----
 
-function itemIcon(type: DecryptedItem["type"]) {
-  switch (type) {
-    case "login":
-      return Globe;
-    case "card":
-      return CreditCard;
-    case "identity":
-      return UserRound;
-    default:
-      return StickyNote;
-  }
-}
-
 // itemSubtitle returns the first displayable field value (text or url) so the
 // list row previews something useful; falls back to the type label.
 function itemSubtitle(it: DecryptedItem, t: TFunction): string {
@@ -239,6 +223,7 @@ function VaultListView() {
       if (favoritesOnly && !it.favorite) return false;
       if (!q) return true;
       if (it.name.toLowerCase().includes(q)) return true;
+      if (it.notes.toLowerCase().includes(q)) return true;
       if (it.reprompt) return false;
       return it.fields.some(
         (f) =>
@@ -355,9 +340,7 @@ function VaultListView() {
             <FilterChip
               key={ty}
               active={typeFilter === ty}
-              onClick={() =>
-                setTypeFilter((cur) => (cur === ty ? "" : ty))
-              }
+              onClick={() => setTypeFilter((cur) => (cur === ty ? "" : ty))}
             >
               {t(`passwords.types.${ty}`)}
             </FilterChip>

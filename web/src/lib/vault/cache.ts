@@ -49,13 +49,19 @@ export function userIdForEnvelope(saltB64: string): string {
   return saltB64.replace(/[^A-Za-z0-9]/g, "").slice(0, 24) || "default";
 }
 
-export async function putVaultCache(c: Omit<VaultCache, "version" | "updatedAt">): Promise<void> {
+export async function putVaultCache(
+  c: Omit<VaultCache, "version" | "updatedAt">,
+): Promise<void> {
   try {
     const db = await openDB();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, "readwrite");
       tx.objectStore(STORE).put(
-        { ...c, version: CACHE_VERSION, updatedAt: Date.now() } satisfies VaultCache,
+        {
+          ...c,
+          version: CACHE_VERSION,
+          updatedAt: Date.now(),
+        } satisfies VaultCache,
         keyFor(c.userId),
       );
       tx.oncomplete = () => resolve();
@@ -67,7 +73,9 @@ export async function putVaultCache(c: Omit<VaultCache, "version" | "updatedAt">
   }
 }
 
-export async function getVaultCache(userId: string): Promise<VaultCache | null> {
+export async function getVaultCache(
+  userId: string,
+): Promise<VaultCache | null> {
   try {
     const db = await openDB();
     const result = await new Promise<VaultCache | null>((resolve, reject) => {

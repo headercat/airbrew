@@ -9,16 +9,12 @@ import {
   Check,
   Clock,
   Copy,
-  CreditCard,
   Eye,
   EyeOff,
-  Globe,
   History,
   Pencil,
-  StickyNote,
   Star,
   Trash2,
-  UserRound,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -37,19 +33,7 @@ import { copyAndAutoClear } from "@/lib/vault/clipboard";
 import { useVault, type DecryptedItem, type Field } from "@/lib/vault/store";
 import { generateTotp, type TotpCode } from "@/lib/vault/totp";
 import { AttachmentsCard } from "./attachments";
-
-function typeIcon(type: DecryptedItem["type"]) {
-  switch (type) {
-    case "login":
-      return Globe;
-    case "card":
-      return CreditCard;
-    case "identity":
-      return UserRound;
-    default:
-      return StickyNote;
-  }
-}
+import { itemIcon } from "./icons";
 
 export default function PasswordView() {
   const { t } = useTranslation();
@@ -111,7 +95,7 @@ export default function PasswordView() {
     }
   }
 
-  const Icon = typeIcon(item.type);
+  const Icon = itemIcon(item.type);
 
   return (
     <PageWrapper>

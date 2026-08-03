@@ -9,11 +9,7 @@
 // into encrypted DraftItems via the existing create path.
 
 export type CSVFormat =
-  | "auto"
-  | "bitwarden"
-  | "chrome"
-  | "firefox"
-  | "1password";
+  "auto" | "bitwarden" | "chrome" | "firefox" | "1password";
 
 export type CSVParsedItem = {
   name: string;
@@ -74,8 +70,7 @@ export function parseCSV(text: string): string[][] {
 // detectFormat inspects the header row to pick the best-matching exporter.
 export function detectFormat(headers: string[]): CSVFormat {
   const lower = headers.map((h) => h.toLowerCase().trim());
-  const has = (...names: string[]) =>
-    names.every((n) => lower.includes(n));
+  const has = (...names: string[]) => names.every((n) => lower.includes(n));
   // 1Password exports use Title (capitalised) and a "Website" column.
   if (lower.includes("title") && lower.includes("website")) return "1password";
   // Firefox includes httpRealm / formActionOrigin.

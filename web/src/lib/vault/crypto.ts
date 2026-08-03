@@ -69,25 +69,43 @@ export function randomBytes(n: number): Uint8Array {
 
 // Worker singleton (lazily created). The worker keeps the heavy Argon2id pass
 // off the main thread so unlock doesn't freeze the UI. We fall back to an
-// in-line argon2id call if the worker can't be created (e.g. CSP / tests).
+// in-line argon2id call if the worker can't be created (e.g. CSP / tests) or
+// crashes mid-derivation.
 let kdfWorker: Worker | null = null;
 let nextKdfId = 1;
 
 function getKdfWorker(): Worker | null {
   if (kdfWorker) return kdfWorker;
   try {
-    kdfWorker = new Worker(new URL("./kdf.worker.ts", import.meta.url), {
+    const w = new Worker(new URL("./kdf.worker.ts", import.meta.url), {
       type: "module",
     });
-    return kdfWorker;
+    // If the worker crashes at runtime (WASM load failure, OOM), terminate
+    // the singleton so the next call re-creates it or falls back to inline.
+    w.onerror = () => {
+      try {
+        w.terminate();
+      } catch {
+        /* already gone */
+      }
+      kdfWorker = null;
+    };
+    kdfWorker = w;
+    return w;
   } catch {
     return null;
   }
 }
 
+// kdfTimeout is how long we wait for the worker before falling back to an
+// inline derivation. The worker is preferred to keep the UI responsive, but a
+// crashed worker that never replies would hang unlock forever without this.
+const kdfTimeout = 30_000;
+
 // deriveMasterKey runs Argon2id over the master password with the per-user
 // salt and params, returning a 32-byte key. The result never leaves memory
-// and is never sent to the server. Runs in a Web Worker when available.
+// and is never sent to the server. Runs in a Web Worker when available, with
+// an inline fallback if the worker is missing or crashes.
 export async function deriveMasterKey(
   password: string,
   saltB64: string,
@@ -99,34 +117,54 @@ export async function deriveMasterKey(
     const id = nextKdfId++;
     // Copy the salt so it is backed by a transferable buffer.
     const saltCopy = new Uint8Array(salt);
-    return new Promise<Uint8Array>((resolve, reject) => {
-      const onMessage = (e: MessageEvent) => {
-        const msg = e.data as {
-          id: number;
-          ok: boolean;
-          hex?: string;
-          error?: string;
+    try {
+      return await new Promise<Uint8Array>((resolve, reject) => {
+        const cleanup = () => {
+          worker.removeEventListener("message", onMessage);
+          worker.removeEventListener("error", onError);
+          window.clearTimeout(timer);
         };
-        if (msg.id !== id) return;
-        worker.removeEventListener("message", onMessage);
-        if (msg.ok && msg.hex) resolve(hexToBytes(msg.hex));
-        else reject(new Error(msg.error ?? "kdf worker failed"));
-      };
-      worker.addEventListener("message", onMessage);
-      worker.postMessage(
-        {
-          id,
-          password,
-          salt: saltCopy,
-          memoryKiB: params.memoryKiB,
-          iterations: params.iterations,
-          parallelism: params.parallelism,
-        },
-        [saltCopy.buffer],
-      );
-    });
+        const onMessage = (e: MessageEvent) => {
+          const msg = e.data as {
+            id: number;
+            ok: boolean;
+            hex?: string;
+            error?: string;
+          };
+          if (msg.id !== id) return;
+          cleanup();
+          if (msg.ok && msg.hex) resolve(hexToBytes(msg.hex));
+          else reject(new Error(msg.error ?? "kdf worker failed"));
+        };
+        const onError = () => {
+          cleanup();
+          reject(new Error("kdf worker crashed"));
+        };
+        const timer = window.setTimeout(() => {
+          cleanup();
+          reject(new Error("kdf worker timed out"));
+        }, kdfTimeout);
+        worker.addEventListener("message", onMessage);
+        worker.addEventListener("error", onError);
+        worker.postMessage(
+          {
+            id,
+            password,
+            salt: saltCopy,
+            memoryKiB: params.memoryKiB,
+            iterations: params.iterations,
+            parallelism: params.parallelism,
+          },
+          [saltCopy.buffer],
+        );
+      });
+    } catch (err) {
+      // Worker crashed or timed out — fall through to inline derivation so
+      // the user is never stuck on a perpetually-busy unlock button.
+      console.warn("vault: kdf worker unavailable, falling back to inline", err);
+    }
   }
-  // Fallback (no worker available): run inline.
+  // Fallback (no worker / crash / timeout): run inline on the main thread.
   const hex = await argon2id({
     password,
     salt,

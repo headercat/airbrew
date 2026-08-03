@@ -21,6 +21,6 @@ export const WORDLIST = [
   "bravo", "cocoa", "delta", "elm", "fable", "globe", "haven", "index",
   "jolly", "kayak", "liver", "mango", "novel", "oasis", "plum", "quiz",
   "rustic", "spark", "trail", "ultra", "vault", "wheat", "yarn", "zinc",
-  "aster", "breeze", "coral", "daisy", "field", "grove", "heart", "ivory",
+  "aster", "breeze", "coral", "daisy", "field", "grove", "heart", "birch",
   "jewel", "karma", "lily", "mint", "nest", "oat", "palm", "quest",
 ];

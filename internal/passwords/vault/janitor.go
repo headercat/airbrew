@@ -30,6 +30,15 @@ const tombstoneTTL = 30 * 24 * time.Hour
 // janitorInterval is how often the cleanup loop runs.
 const janitorInterval = 6 * time.Hour
 
+// revisionTTL is how long per-item history snapshots are kept before the
+// janitor starts pruning them. 365 days matches the "old password" guidance
+// in the health report.
+const revisionTTL = 365 * 24 * time.Hour
+
+// revisionKeepPerItem caps the number of history snapshots per item regardless
+// of age, so a frequently edited item does not grow unbounded.
+const revisionKeepPerItem = 100
+
 // attachmentNamespace is the blob namespace the orphan sweep scans. It must
 // match the namespace passed to blobs.Save by the attachment upload handler.
 const attachmentNamespace = "vault-attachments"
@@ -69,7 +78,20 @@ func (j *Janitor) Start(ctx context.Context) {
 
 func (j *Janitor) runOnce(ctx context.Context) {
 	j.purgeTombstones(ctx)
+	j.purgeOldItemRevisions(ctx)
 	j.sweepOrphanBlobs(ctx)
+}
+
+func (j *Janitor) purgeOldItemRevisions(ctx context.Context) {
+	cutoff := time.Now().UTC().Add(-revisionTTL)
+	n, err := j.repo.PurgeOldItemRevisions(ctx, cutoff, revisionKeepPerItem)
+	if err != nil {
+		j.logger.Warn("vault janitor: revision purge failed", "error", err)
+		return
+	}
+	if n > 0 {
+		j.logger.Info("vault janitor: pruned old item revisions", "count", n)
+	}
 }
 
 func (j *Janitor) purgeTombstones(ctx context.Context) {

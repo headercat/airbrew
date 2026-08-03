@@ -119,7 +119,7 @@ func (h *Handler) setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req envelopeReq
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -172,7 +172,7 @@ func (h *Handler) rotateKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req envelopeReq
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -244,7 +244,7 @@ func (h *Handler) createFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req folderReq
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -264,7 +264,7 @@ func (h *Handler) updateFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var req folderReq
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -365,7 +365,7 @@ func (h *Handler) createItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req itemReq
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -399,7 +399,7 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var req itemReq
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -666,7 +666,7 @@ func (h *Handler) importVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req importReq
-	if err := decodeJSONLimit(r, &req, maxImportJSONBody); err != nil {
+	if err := decodeJSONLimit(w, r, &req, maxImportJSONBody); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -816,16 +816,18 @@ const maxImportJSONBody = 256 << 20
 // accept, with a little headroom for transfer/client-side wrappers.
 const maxExportJSONBody = maxImportJSONBody - (4 << 20)
 
-func decodeJSON(r *http.Request, v any) error {
-	return decodeJSONLimit(r, v, maxJSONBody)
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
+	return decodeJSONLimit(w, r, v, maxJSONBody)
 }
 
-func decodeJSONLimit(r *http.Request, v any, limit int64) error {
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
 	ct := r.Header.Get("Content-Type")
 	if !strings.Contains(ct, "application/json") {
 		return errors.New("content-type must be application/json")
 	}
-	r.Body = http.MaxBytesReader(nil, r.Body, limit)
+	// Pass w so the standard library writes a proper 413 when the body
+	// exceeds the limit, instead of surfacing as a generic decode error.
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
@@ -977,6 +979,7 @@ func (h *Handler) downloadAttachment(w http.ResponseWriter, r *http.Request) {
 	defer body.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment")
+	h.auditVault(r, "vault.attachment_downloaded", att.ID, map[string]any{"item_id": itemID})
 	if _, err := io.Copy(w, body); err != nil {
 		return
 	}

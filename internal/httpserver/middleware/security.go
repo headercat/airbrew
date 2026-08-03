@@ -100,15 +100,36 @@ func allowedOrigin(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	// Compare hosts; port included in u.Host. Cross-scheme is allowed because
-	// a same-host dev deployment may terminate TLS at a proxy, but we still
-	// reject genuinely different origins.
+	// Compare hosts; port included in u.Host. Cross-scheme on the same host is
+	// allowed for reverse-proxy deployments that terminate TLS upstream —
+	// unless the inbound request itself arrived over TLS (or via a proxy that
+	// set X-Forwarded-Proto: https), in which case an http Origin is rejected
+	// so a cleartext side-listener cannot forge requests.
 	return u.Host == r.Host && (origin == "" || sameSite(u, r))
 }
 
+// requestIsHTTPS reports whether the inbound request was transported over TLS
+// (directly or via a trusted reverse proxy).
+func requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	// X-Forwarded-Proto is set by the fronting proxy; DirectClientIP/allowIP
+	// gating already limits who can reach this code path with a spoofed header
+	// to trusted proxy hops.
+	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
 // sameSite is a permissive check: we only reject when the Origin host clearly
-// differs from the request host. Cross-scheme (http vs https) on the same host
-// is treated as same-site (reverse-proxy deployments).
+// differs from the request host. When the request itself is HTTPS, an http
+// Origin is rejected so a cleartext side-listener on the same host cannot
+// satisfy the same-site check.
 func sameSite(u *url.URL, r *http.Request) bool {
-	return u.Host == r.Host
+	if u.Host != r.Host {
+		return false
+	}
+	if requestIsHTTPS(r) && u.Scheme == "http" {
+		return false
+	}
+	return true
 }

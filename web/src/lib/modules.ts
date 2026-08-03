@@ -68,7 +68,7 @@ export const MODULES: ModuleMeta[] = [
     descriptionKey: "dashboard.modules.chat.description",
     icon: MessagesSquare,
     path: "/chat",
-    status: "not_implemented",
+    status: "alpha",
   },
   {
     key: "passwords",
@@ -76,7 +76,7 @@ export const MODULES: ModuleMeta[] = [
     descriptionKey: "dashboard.modules.passwords.description",
     icon: KeyRound,
     path: "/passwords",
-    status: "not_implemented",
+    status: "alpha",
   },
   {
     key: "ai",
@@ -84,7 +84,7 @@ export const MODULES: ModuleMeta[] = [
     descriptionKey: "dashboard.modules.ai.description",
     icon: Bot,
     path: "/ai",
-    status: "not_implemented",
+    status: "alpha",
   },
   {
     key: "workflow",
@@ -92,7 +92,7 @@ export const MODULES: ModuleMeta[] = [
     descriptionKey: "dashboard.modules.workflow.description",
     icon: Workflow,
     path: "/workflow",
-    status: "not_implemented",
+    status: "alpha",
   },
 ];
 
@@ -128,7 +128,6 @@ export const NAV_TREE: NavNode[] = [
     labelKey: "dashboard.modules.drive.label",
     to: "/drive",
     icon: Cloud,
-    badge: "planned",
     children: [
       { labelKey: "nav.drive.myFiles", to: "/drive", icon: FileText },
       { labelKey: "nav.drive.shared", to: "/drive?view=shared", icon: Users },
@@ -152,7 +151,6 @@ export const NAV_TREE: NavNode[] = [
     labelKey: "dashboard.modules.chat.label",
     to: "/chat",
     icon: MessagesSquare,
-    badge: "planned",
     children: [
       { labelKey: "nav.chat.channels", to: "/chat", icon: MessagesSquare },
       { labelKey: "nav.chat.direct", to: "/chat?type=dm", icon: UserIcon },
@@ -162,7 +160,6 @@ export const NAV_TREE: NavNode[] = [
     labelKey: "dashboard.modules.passwords.label",
     to: "/passwords",
     icon: KeyRound,
-    badge: "planned",
     children: [
       { labelKey: "nav.passwords.allItems", to: "/passwords", icon: KeyRound },
       {
@@ -176,7 +173,6 @@ export const NAV_TREE: NavNode[] = [
     labelKey: "dashboard.modules.ai.label",
     to: "/ai",
     icon: Bot,
-    badge: "planned",
     children: [
       { labelKey: "nav.ai.agents", to: "/ai", icon: Bot },
       { labelKey: "nav.ai.history", to: "/ai?view=history", icon: Activity },
@@ -186,7 +182,6 @@ export const NAV_TREE: NavNode[] = [
     labelKey: "dashboard.modules.workflow.label",
     to: "/workflow",
     icon: Workflow,
-    badge: "planned",
     children: [
       { labelKey: "nav.workflow.flows", to: "/workflow", icon: Workflow },
       {

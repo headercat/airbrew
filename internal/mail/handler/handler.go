@@ -6,9 +6,11 @@
 package handler
 
 import (
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
+	"net/mail"
 	"strconv"
 	"strings"
 
@@ -306,7 +308,6 @@ func (h *Handler) getMessage(w http.ResponseWriter, r *http.Request) {
 type patchMessageReq struct {
 	IsRead    *bool `json:"is_read"`
 	IsStarred *bool `json:"is_starred"`
-	IsDraft   *bool `json:"is_draft"`
 }
 
 func (h *Handler) patchMessage(w http.ResponseWriter, r *http.Request) {
@@ -320,7 +321,7 @@ func (h *Handler) patchMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.inbox.PatchFlags(r.Context(), sess.UserID, r.PathValue("id"), inbox.FlagPatch{
-		IsRead: req.IsRead, IsStarred: req.IsStarred, IsDraft: req.IsDraft,
+		IsRead: req.IsRead, IsStarred: req.IsStarred,
 	}); err != nil {
 		writeErr(w, err)
 		return
@@ -407,8 +408,12 @@ func (h *Handler) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Hard ceiling on the whole request body so a huge upload is rejected
+	// before ParseMultipartForm can spill it to temp disk. Matches the
+	// service-level attachment size cap (25 MiB) plus a small envelope.
+	r.Body = http.MaxBytesReader(w, r.Body, 25<<20+512)
 	if err := r.ParseMultipartForm(25 << 20); err != nil {
-		respondErr(w, http.StatusBadRequest, "invalid_request", "expected multipart form with file")
+		respondErr(w, http.StatusBadRequest, "invalid_request", "expected multipart form with file under 25 MiB")
 		return
 	}
 	file, header, err := r.FormFile("file")
@@ -489,20 +494,36 @@ type composeReq struct {
 	Send          bool           `json:"send"`
 }
 
-func (q composeReq) toInput() inbox.SendInput {
+func (q composeReq) toInput() (inbox.SendInput, error) {
+	to, err := toAddresses(q.To)
+	if err != nil {
+		return inbox.SendInput{}, err
+	}
+	cc, err := toAddresses(q.Cc)
+	if err != nil {
+		return inbox.SendInput{}, err
+	}
+	bcc, err := toAddresses(q.Bcc)
+	if err != nil {
+		return inbox.SendInput{}, err
+	}
+	rt, err := toAddresses(q.ReplyTo)
+	if err != nil {
+		return inbox.SendInput{}, err
+	}
 	return inbox.SendInput{
 		MailboxID:     q.MailboxID,
-		To:            toAddresses(q.To),
-		Cc:            toAddresses(q.Cc),
-		Bcc:           toAddresses(q.Bcc),
-		ReplyTo:       toAddresses(q.ReplyTo),
+		To:            to,
+		Cc:            cc,
+		Bcc:           bcc,
+		ReplyTo:       rt,
 		Subject:       q.Subject,
 		Text:          q.Text,
 		HTML:          q.HTML,
 		InReplyTo:     q.InReplyTo,
 		References:    q.References,
 		AttachmentIDs: q.AttachmentIDs,
-	}
+	}, nil
 }
 
 func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
@@ -515,12 +536,17 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	in, err := req.toInput()
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
 	sender, err := outbound.Resolve(r.Context(), h.repo)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	msg, err := h.inbox.Send(r.Context(), sess.UserID, req.toInput(), sender)
+	msg, err := h.inbox.Send(r.Context(), sess.UserID, in, sender)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -528,12 +554,28 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusCreated, toMessageResp(msg))
 }
 
-func toAddresses(in []addressInput) []letter.Address {
+func toAddresses(in []addressInput) ([]letter.Address, error) {
 	out := make([]letter.Address, 0, len(in))
 	for _, a := range in {
-		out = append(out, letter.Address{Name: a.Name, Address: a.Address})
+		addr := strings.TrimSpace(a.Address)
+		if addr == "" {
+			return nil, fmt.Errorf("%w: empty address", inbox.ErrInvalidInput)
+		}
+		// mail.ParseAddress accepts "Name <addr>" and bare "addr"; reject
+		// anything that is not a syntactically valid RFC5322 mailbox so a
+		// typo (alice@exampl) is caught here with a clear 400 instead of a
+		// generic 5xx from the upstream driver.
+		parsed, err := mail.ParseAddress(addr)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", inbox.ErrInvalidInput, err)
+		}
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			name = parsed.Name
+		}
+		out = append(out, letter.Address{Name: name, Address: parsed.Address})
 	}
-	return out
+	return out, nil
 }
 
 func parseContentLength(n int64) string {
@@ -552,13 +594,18 @@ func (h *Handler) createDraft(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	in, err := req.toInput()
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
 	if req.Send {
 		sender, err := outbound.Resolve(r.Context(), h.repo)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, "", req.toInput())
+		draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, "", in)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -571,7 +618,7 @@ func (h *Handler) createDraft(w http.ResponseWriter, r *http.Request) {
 		jsonResp(w, http.StatusCreated, toMessageResp(sent))
 		return
 	}
-	draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, "", req.toInput())
+	draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, "", in)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -589,13 +636,18 @@ func (h *Handler) updateDraft(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	in, err := req.toInput()
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
 	if req.Send {
 		sender, err := outbound.Resolve(r.Context(), h.repo)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		if _, err := h.inbox.SaveDraft(r.Context(), sess.UserID, r.PathValue("id"), req.toInput()); err != nil {
+		if _, err := h.inbox.SaveDraft(r.Context(), sess.UserID, r.PathValue("id"), in); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -607,7 +659,7 @@ func (h *Handler) updateDraft(w http.ResponseWriter, r *http.Request) {
 		jsonResp(w, http.StatusOK, toMessageResp(sent))
 		return
 	}
-	draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, r.PathValue("id"), req.toInput())
+	draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, r.PathValue("id"), in)
 	if err != nil {
 		writeErr(w, err)
 		return

@@ -57,11 +57,12 @@ function isUnsafeUrl(value: string): boolean {
   if (v.startsWith("javascript:") || v.startsWith("vbscript:")) {
     return true;
   }
-  // data: URIs: allow inline images only (data:image/*), reject everything
-  // else (data:text/html, data:text/javascript, …). This preserves the
-  // common case of inline images in modern mail composers and marketing
-  // mail without opening an XSS vector through other media types.
+  // data: URIs: allow inline raster images only (data:image/png|jpeg|…),
+  // reject everything else. SVG is intentionally excluded because it can
+  // carry <script> and exfiltrate via XSS in some browser rendering paths,
+  // even inside a sandboxed iframe when allow-popups is set.
   if (v.startsWith("data:")) {
+    if (v.startsWith("data:image/svg")) return true;
     return !v.startsWith("data:image/");
   }
   // Allow explicit safe protocols; reject anything else with a scheme.

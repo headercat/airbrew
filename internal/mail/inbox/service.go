@@ -66,16 +66,21 @@ func (s *Service) GetMailbox(ctx context.Context, userID, id string) (*Mailbox, 
 
 // DeleteMailbox removes a mailbox and its messages. Per-message raw RFC822
 // and attachment blobs are cleaned up before the cascading row delete so the
-// blob store does not leak orphaned bytes. The sweep is paged because
-// ListMessages clamps its own Limit to 200.
+// blob store does not leak orphaned bytes. The sweep lists with Offset: 0
+// every iteration because each iteration deletes the rows it just listed — a
+// growing offset would point past undeleted rows and skip them, leaking
+// their blobs.
 func (s *Service) DeleteMailbox(ctx context.Context, userID, id string) error {
 	const pageSize = 200
-	for offset := 0; ; offset += pageSize {
+	for {
 		msgs, err := s.repo.ListMessages(ctx, ListFilter{
-			UserID: userID, MailboxID: id, Limit: pageSize, Offset: offset,
+			UserID: userID, MailboxID: id, Limit: pageSize,
 		})
 		if err != nil {
 			return err
+		}
+		if len(msgs) == 0 {
+			break
 		}
 		for _, m := range msgs {
 			// DeleteMessage already cleans the raw blob + every attachment
@@ -84,9 +89,6 @@ func (s *Service) DeleteMailbox(ctx context.Context, userID, id string) error {
 			if err := s.DeleteMessage(ctx, userID, m.ID); err != nil && !errors.Is(err, ErrMessageNotFound) {
 				return err
 			}
-		}
-		if len(msgs) < pageSize {
-			break
 		}
 	}
 	return s.repo.DeleteMailbox(ctx, userID, id)
@@ -244,8 +246,11 @@ func (s *Service) Send(ctx context.Context, userID string, in SendInput, sender 
 		out.Attachments = make([]letter.Attachment, 0, len(atts))
 		for _, a := range atts {
 			data, err := s.readAttachmentData(ctx, a)
-			if err != nil || len(data) == 0 {
-				continue
+			if err != nil {
+				return nil, fmt.Errorf("inbox: read attachment %q: %w", a.Filename, err)
+			}
+			if len(data) == 0 {
+				return nil, fmt.Errorf("%w: attachment %q is empty", ErrInvalidInput, a.Filename)
 			}
 			out.Attachments = append(out.Attachments, letter.Attachment{
 				Filename: a.Filename, ContentType: a.ContentType,
@@ -424,6 +429,12 @@ func (s *Service) SaveDraft(ctx context.Context, userID string, draftID string, 
 		existing.BodyHTML = in.HTML
 		existing.InReplyTo = in.InReplyTo
 		existing.References = in.References
+		// Recompute thread id when the reply chain changed so the draft
+		// re-parents under its parent conversation immediately, not only
+		// when it is eventually sent.
+		if tid := letter.ThreadKey("", in.InReplyTo, in.References); tid != "" && tid != "no-id" {
+			existing.ThreadID = tid
+		}
 		existing.UpdatedAt = now
 		existing.MailboxID = mb.ID
 		if err := s.repo.UpdateDraft(ctx, existing); err != nil {
@@ -500,8 +511,11 @@ func (s *Service) SendDraft(ctx context.Context, userID, draftID string, sender 
 	}
 	for _, a := range atts {
 		data, err := s.readAttachmentData(ctx, a)
-		if err != nil || len(data) == 0 {
-			continue
+		if err != nil {
+			return nil, fmt.Errorf("inbox: read attachment %q: %w", a.Filename, err)
+		}
+		if len(data) == 0 {
+			return nil, fmt.Errorf("%w: attachment %q is empty", ErrInvalidInput, a.Filename)
 		}
 		out.Attachments = append(out.Attachments, letter.Attachment{
 			Filename: a.Filename, ContentType: a.ContentType,
@@ -607,8 +621,11 @@ func (s *Service) RetrySend(ctx context.Context, userID, id string, sender Outbo
 	}
 	for _, a := range atts {
 		data, err := s.readAttachmentData(ctx, a)
-		if err != nil || len(data) == 0 {
-			continue
+		if err != nil {
+			return nil, fmt.Errorf("inbox: read attachment %q: %w", a.Filename, err)
+		}
+		if len(data) == 0 {
+			return nil, fmt.Errorf("%w: attachment %q is empty", ErrInvalidInput, a.Filename)
 		}
 		out.Attachments = append(out.Attachments, letter.Attachment{
 			Filename: a.Filename, ContentType: a.ContentType,

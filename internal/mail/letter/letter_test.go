@@ -87,6 +87,33 @@ func TestParseSynthesisesTextFromHTMLOnly(t *testing.T) {
 		t.Fatalf("html body should be preserved")
 	}
 }
+
+// TestBuildRFC822EncodesNonASCIIDisplayName checks that a Korean display
+// name on the From/To header is RFC2047-encoded so strict SMTP relays and
+// SES (no SMTPUTF8) accept the message instead of rejecting or mangling it.
+func TestBuildRFC822EncodesNonASCIIDisplayName(t *testing.T) {
+	out, err := BuildRFC822(Outgoing{
+		From:    Address{Name: "홍길동", Address: "alice@example.com"},
+		To:      []Address{{Name: "김철수", Address: "bob@example.com"}},
+		Subject: "hello",
+		Text:    "body",
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "From: =?utf-8?") {
+		t.Fatalf("From header not RFC2047-encoded:\n%s", s)
+	}
+	if !strings.Contains(s, "To: =?utf-8?") {
+		t.Fatalf("To header not RFC2047-encoded:\n%s", s)
+	}
+	if strings.Contains(s, "홍길동 <alice@example.com>") {
+		t.Fatalf("raw non-ASCII From leaked:\n%s", s)
+	}
+}
+
+// TestBuildRFC822EncodesNonASCIIFilename checks that non-ASCII attachment
 // filenames are emitted with RFC 2231 encoding (filename*=UTF-8''…) so
 // strict clients like Outlook do not rename or drop the attachment.
 func TestBuildRFC822EncodesNonASCIIFilename(t *testing.T) {

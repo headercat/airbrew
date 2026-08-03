@@ -58,19 +58,10 @@ func (d *smtpDriver) Send(ctx context.Context, o letter.Outgoing) error {
 		from = o.From.Address
 	}
 	addr := net.JoinHostPort(d.cfg.Host, fmt.Sprintf("%d", d.cfg.Port))
-
-	done := make(chan error, 1)
-	go func() { done <- d.deliver(addr, from, recipients, raw) }()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-done:
-		return err
-	}
+	return d.deliver(ctx, addr, from, recipients, raw)
 }
 
-func (d *smtpDriver) deliver(addr, from string, recipients []string, raw []byte) error {
+func (d *smtpDriver) deliver(ctx context.Context, addr, from string, recipients []string, raw []byte) error {
 	var conn net.Conn
 	var err error
 	tlsCfg := &tls.Config{ServerName: d.cfg.Host}
@@ -81,11 +72,25 @@ func (d *smtpDriver) deliver(addr, from string, recipients []string, raw []byte)
 			return fmt.Errorf("smtp: dial tls: %w", err)
 		}
 	default:
-		conn, err = net.DialTimeout("tcp", addr, 15*time.Second)
+		conn, err = (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, "tcp", addr)
 		if err != nil {
 			return fmt.Errorf("smtp: dial: %w", err)
 		}
 	}
+	stop := make(chan struct{})
+	defer close(stop)
+	// ctx cancellation: force-close the conn so any blocking read/write in
+	// the SMTP client returns immediately and the goroutine running Send
+	// unblocks. Otherwise Send could keep delivering after the caller has
+	// given up (the HTTP request was cancelled), producing a duplicate when
+	// the user retries.
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-stop:
+		}
+	}()
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
 

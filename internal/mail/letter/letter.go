@@ -155,13 +155,13 @@ func BuildRFC822(o Outgoing) ([]byte, error) {
 	}
 	h.Set("Date", time.Now().UTC().Format(time.RFC1123Z))
 	h.Set("Message-ID", "<"+o.MessageID+">")
-	h.Set("From", o.From.String())
-	h.Set("To", joinAddresses(o.To))
+	h.Set("From", encodeAddress(o.From))
+	h.Set("To", encodeAddresses(o.To))
 	if len(o.Cc) > 0 {
-		h.Set("Cc", joinAddresses(o.Cc))
+		h.Set("Cc", encodeAddresses(o.Cc))
 	}
 	if len(o.ReplyTo) > 0 {
-		h.Set("Reply-To", joinAddresses(o.ReplyTo))
+		h.Set("Reply-To", encodeAddresses(o.ReplyTo))
 	}
 	h.Set("Subject", mime.QEncoding.Encode("utf-8", o.Subject))
 	if o.InReplyTo != "" {
@@ -287,6 +287,37 @@ func joinAddresses(in []Address) string {
 		parts = append(parts, a.String())
 	}
 	return strings.Join(parts, ", ")
+}
+
+// encodeAddress formats a single address for an outbound header, applying
+// RFC2047 encoding to the display name when it contains non-ASCII characters
+// so strict relays (SES, SMTP servers without SMTPUTF8) accept the message.
+// ASCII names are passed through (quoteName handles special characters).
+func encodeAddress(a Address) string {
+	if a.Name == "" {
+		return a.Address
+	}
+	if isASCII(a.Name) {
+		return a.String()
+	}
+	return mime.QEncoding.Encode("utf-8", a.Name) + " <" + a.Address + ">"
+}
+
+func encodeAddresses(in []Address) string {
+	parts := make([]string, 0, len(in))
+	for _, a := range in {
+		parts = append(parts, encodeAddress(a))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] > 127 {
+			return false
+		}
+	}
+	return true
 }
 
 func trimAngled(s string) string { return strings.Trim(s, "<> ") }

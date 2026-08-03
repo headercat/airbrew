@@ -139,7 +139,17 @@ func (p *imapPoller) Poll(ctx context.Context, ingest Ingester) error {
 
 	for msg := range messages {
 		if ctx.Err() != nil {
-			break
+			// The fetch goroutine may still be writing to the messages
+			// channel; if we just `break` and wait on `done` we deadlock
+			// once the channel fills. Force the fetcher to return by
+			// tearing the connection down, then drain whatever it had
+			// buffered so the goroutine exits cleanly (and the deferred
+			// Logout does not double-close).
+			_ = c.Logout()
+			for range messages {
+			}
+			<-done
+			return ctx.Err()
 		}
 		r := msg.GetBody(section)
 		if r == nil {

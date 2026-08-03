@@ -193,6 +193,7 @@ export default function ContactsPage() {
         : await contacts.create(payload);
       setEditing(null);
       await fetchPage(0, true);
+      void refreshGroups();
       setSelectedID(saved.id);
     } catch (e) {
       setError(errorMessage(e));
@@ -221,6 +222,7 @@ export default function ContactsPage() {
     try {
       await contacts.remove(item.id);
       await fetchPage(0, true);
+      void refreshGroups();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -266,6 +268,7 @@ export default function ContactsPage() {
     try {
       const res = await contacts.importVCF(file);
       await fetchPage(0, true);
+      void refreshGroups();
       flash(
         res.failed
           ? t("contacts.importedWithFailures", {

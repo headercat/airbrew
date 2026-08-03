@@ -321,54 +321,54 @@ func (r *Repository) ListMessages(ctx context.Context, userID, roomID string, be
 	return out, nil
 }
 
+// ReplayEntry pairs a message with its monotonic SQLite rowid, used as the
+// tiebreak in the (created_at, rowid) replay cursor. The random message id is
+// NOT monotonic and so cannot order same-second messages correctly.
+type ReplayEntry struct {
+	Message Message
+	RowID   int64
+}
+
 // ListMessagesSinceAcrossRooms returns up to limit non-deleted messages
-// created AFTER (sinceTime, sinceID) across every room the user participates
-// in, ordered by (created_at, id). It backs the SSE reconnect replay.
+// created AFTER (sinceTime, sinceRowID) across every room the user participates
+// in, ordered by (created_at, rowid). It backs the SSE reconnect replay.
 //
-// NOTE: the cursor MUST be (created_at, id)-based, not chat_messages.seq. seq
-// is only unique within a room (UNIQUE(room_id, seq)), so a global seq cursor
-// would silently lose rows from a low-activity room. The id tiebreak covers
-// multiple messages created within the same second.
-func (r *Repository) ListMessagesSinceAcrossRooms(ctx context.Context, userID string, since time.Time, sinceID string, limit int) ([]Message, error) {
+// NOTE: the cursor MUST be (created_at, rowid)-based, not chat_messages.seq
+// (seq is only unique within a room) and not the message id (a random nanoid,
+// so it does not reflect insertion order). rowid is monotonic and correctly
+// ties-break messages created within the same second.
+func (r *Repository) ListMessagesSinceAcrossRooms(ctx context.Context, userID string, since time.Time, sinceRowID int64, limit int) ([]ReplayEntry, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	// Filter: created_at > since, OR (created_at == since AND id > sinceID).
-	// The second arm only matters when sinceID is non-empty (a continuation).
-	var rows *sql.Rows
-	var err error
-	if sinceID != "" {
-		rows, err = r.db.QueryContext(ctx, messageSelect()+`
-			JOIN chat_room_participants p
-			  ON p.room_id = cm.room_id AND p.user_id = ?
-			WHERE p.user_id = ?
-			  AND cm.deleted_at IS NULL
-			  AND (cm.created_at > ? OR (cm.created_at = ? AND cm.id > ?))
-			ORDER BY cm.created_at ASC, cm.id ASC
-			LIMIT ?`,
-			userID, userID, since.UTC().Truncate(time.Second), since.UTC().Truncate(time.Second), sinceID, limit+1)
-	} else {
-		rows, err = r.db.QueryContext(ctx, messageSelect()+`
-			JOIN chat_room_participants p
-			  ON p.room_id = cm.room_id AND p.user_id = ?
-			WHERE p.user_id = ?
-			  AND cm.deleted_at IS NULL
-			  AND cm.created_at > ?
-			ORDER BY cm.created_at ASC, cm.id ASC
-			LIMIT ?`,
-			userID, userID, since.UTC().Truncate(time.Second), limit+1)
-	}
+	// messageSelectRowid ends mid-clause; the rowid is the monotonic tiebreak
+	// for the (created_at, rowid) replay cursor.
+	q := messageSelectRowid() + `
+		JOIN chat_room_participants p
+		  ON p.room_id = cm.room_id AND p.user_id = ?
+		WHERE p.user_id = ?
+		  AND cm.deleted_at IS NULL
+		  AND (cm.created_at > ? OR (cm.created_at = ? AND cm.rowid > ?))
+		ORDER BY cm.created_at ASC, cm.rowid ASC
+		LIMIT ?`
+	rows, err := r.db.QueryContext(ctx, q,
+		userID, userID,
+		since.UTC().Truncate(time.Second),
+		since.UTC().Truncate(time.Second),
+		sinceRowID,
+		limit+1,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("chat: replay messages since: %w", err)
 	}
 	defer rows.Close()
-	var out []Message
+	var out []ReplayEntry
 	for rows.Next() {
-		msg, err := scanMessage(rows)
+		msg, rowid, err := scanMessageRow(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, msg)
+		out = append(out, ReplayEntry{Message: msg, RowID: rowid})
 	}
 	return out, rows.Err()
 }
@@ -677,6 +677,21 @@ func messageSelect() string {
 		  JOIN users u ON u.id = cm.sender_id `
 }
 
+// messageSelectRowid is messageSelect plus cm.rowid as the final column, for
+// the replay cursor's monotonic tiebreak (the random message id cannot order
+// same-second messages).
+func messageSelectRowid() string {
+	return `
+		SELECT cm.id, cm.room_id, cm.sender_id, u.email, COALESCE(u.display_name,''),
+		       COALESCE(u.avatar_url,''), cm.seq, cm.body, cm.created_at,
+		       cm.edited_at, cm.deleted_at,
+		       COALESCE((SELECT COUNT(*) FROM chat_room_participants crp
+		                  WHERE crp.room_id = cm.room_id AND crp.last_read_seq >= cm.seq), 0),
+		       cm.rowid
+		  FROM chat_messages cm
+		  JOIN users u ON u.id = cm.sender_id `
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }
@@ -702,6 +717,29 @@ func scanMessage(row scanner) (Message, error) {
 		msg.DeletedAt = &deleted.Time
 	}
 	return msg, nil
+}
+
+// scanMessageRow scans the messageSelectRowid column set (12 message columns
+// + rowid) and returns the message plus the monotonic rowid.
+func scanMessageRow(row scanner) (Message, int64, error) {
+	var msg Message
+	var edited, deleted sql.NullTime
+	var rowid int64
+	if err := row.Scan(
+		&msg.ID, &msg.RoomID, &msg.SenderID, &msg.Sender.Email, &msg.Sender.DisplayName,
+		&msg.Sender.AvatarURL, &msg.Seq, &msg.Body, &msg.CreatedAt,
+		&edited, &deleted, &msg.ReadByCount, &rowid,
+	); err != nil {
+		return Message{}, 0, err
+	}
+	msg.Sender.ID = msg.SenderID
+	if edited.Valid {
+		msg.EditedAt = &edited.Time
+	}
+	if deleted.Valid {
+		msg.DeletedAt = &deleted.Time
+	}
+	return msg, rowid, nil
 }
 
 func directKey(a, b string) (string, string) {

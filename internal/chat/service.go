@@ -119,30 +119,33 @@ func (s *Service) Subscribe(userID string) (<-chan Event, func()) {
 }
 
 // ReplayMissed returns up to limit message.created events the user missed
-// after (sinceTime, sinceID), plus the cursor the client should store as its
-// new high-water mark. The cursor is (created_at, id)-based — NOT seq —
-// because seq is only unique within a single room and created_at alone ties
-// on same-second messages. hasMore is true when more rows remain beyond what
-// was returned.
-func (s *Service) ReplayMissed(ctx context.Context, userID string, since time.Time, sinceID string, limit int) (msgs []Message, cursor time.Time, cursorID string, hasMore bool, err error) {
+// after (sinceTime, sinceRowID), plus the cursor the client should store as
+// its new high-water mark. The cursor is (created_at, rowid)-based — NOT seq
+// (per-room) and NOT the random message id (does not reflect insertion
+// order). hasMore is true when more rows remain beyond what was returned.
+func (s *Service) ReplayMissed(ctx context.Context, userID string, since time.Time, sinceRowID int64, limit int) (msgs []Message, cursor time.Time, cursorRowID int64, hasMore bool, err error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	page, err := s.repo.ListMessagesSinceAcrossRooms(ctx, userID, since, sinceID, limit+1)
+	page, err := s.repo.ListMessagesSinceAcrossRooms(ctx, userID, since, sinceRowID, limit+1)
 	if err != nil {
-		return nil, since, sinceID, false, err
+		return nil, since, sinceRowID, false, err
 	}
 	if len(page) > limit {
 		hasMore = true
 		page = page[:limit]
 	}
-	cursor, cursorID = since, sinceID
+	cursor, cursorRowID = since, sinceRowID
 	if len(page) > 0 {
 		last := page[len(page)-1]
-		cursor = last.CreatedAt.UTC()
-		cursorID = last.ID
+		cursor = last.Message.CreatedAt.UTC()
+		cursorRowID = last.RowID
+		msgs = make([]Message, 0, len(page))
+		for _, e := range page {
+			msgs = append(msgs, e.Message)
+		}
 	}
-	return page, cursor, cursorID, hasMore, nil
+	return msgs, cursor, cursorRowID, hasMore, nil
 }
 
 func userIDsFromRoom(room Room) []string {

@@ -144,18 +144,18 @@ func TestReplayAcrossRoomsUsesCreatedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := repo.ListMessagesSinceAcrossRooms(ctx, users[0], time.Unix(0, 0).UTC(), "", 100)
+	got, err := repo.ListMessagesSinceAcrossRooms(ctx, users[0], time.Unix(0, 0).UTC(), 0, 100)
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
 	// Expect all three messages, despite roomA and roomB sharing seq=1.
 	if len(got) != 3 {
-		t.Fatalf("replay returned %d messages, want 3 (per-room seq must not lose rows): %+v", len(got), got)
+		t.Fatalf("replay returned %d entries, want 3 (per-room seq must not lose rows): %+v", len(got), got)
 	}
-	// Ordering is created_at ASC; tiebreak id ASC. Both seq=1 rows must appear.
+	// Ordering is created_at ASC; tiebreak rowid ASC. Both seq=1 rows must appear.
 	seqs := map[string][]int64{}
 	for _, m := range got {
-		seqs[m.RoomID] = append(seqs[m.RoomID], m.Seq)
+		seqs[m.Message.RoomID] = append(seqs[m.Message.RoomID], m.Message.Seq)
 	}
 	if len(seqs[roomA.ID]) != 2 || len(seqs[roomB.ID]) != 1 {
 		t.Fatalf("per-room replay counts wrong: %+v", seqs)
@@ -180,14 +180,14 @@ func TestReplayPagesAndSignalsHasMore(t *testing.T) {
 		}
 	}
 	svc := NewService(repo, NewHub())
-	page1, cur, curID, hasMore, err := svc.ReplayMissed(ctx, users[0], time.Unix(0, 0).UTC(), "", 2)
+	page1, cur, curRow, hasMore, err := svc.ReplayMissed(ctx, users[0], time.Unix(0, 0).UTC(), 0, 2)
 	if err != nil {
 		t.Fatalf("page1: %v", err)
 	}
 	if len(page1) != 2 || !hasMore {
 		t.Fatalf("page1 = %d msgs hasMore=%v, want 2/true", len(page1), hasMore)
 	}
-	page2, _, _, hasMore2, err := svc.ReplayMissed(ctx, users[0], cur, curID, 2)
+	page2, _, _, hasMore2, err := svc.ReplayMissed(ctx, users[0], cur, curRow, 2)
 	if err != nil {
 		t.Fatalf("page2: %v", err)
 	}

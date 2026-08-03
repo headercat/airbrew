@@ -85,7 +85,7 @@ export default function ChatPage() {
   }, []);
 
   const lastCursorRef = useRef("");
-  const lastCursorIDRef = useRef("");
+  const lastCursorRowIDRef = useRef(0);
   // applyEvent closes over live state (activeID, user, ...); route it through a
   // ref so the SSE subscription effect can depend on [] and is not torn down
   // and re-opened on every locale change (which would gap the stream and burst
@@ -103,25 +103,27 @@ export default function ChatPage() {
   useEffect(() => {
     const stream = openChatEvents(
       (ev) => {
-        // Advance the (created_at, id) cursor as live frames arrive so the
-        // next reconnect only replays messages newer than what we have seen.
+        // Advance the created_at cursor as live frames arrive so the next
+        // reconnect only replays messages newer than what we have seen.
+        // (rowid stays 0 until a ready frame refines it; the server's
+        // created_at > ? arm plus the idempotency guard in applyEvent make
+        // a same-second re-replay safe.)
         if (
           (ev.type === "message.created" || ev.type === "message.updated") &&
           ev.message?.created_at
         ) {
           const cur = lastCursorRef.current;
-          const m = ev.message;
-          if (!cur || m.created_at > cur || (m.created_at === cur && m.id > lastCursorIDRef.current)) {
-            lastCursorRef.current = m.created_at;
-            lastCursorIDRef.current = m.id;
+          if (!cur || ev.message.created_at > cur) {
+            lastCursorRef.current = ev.message.created_at;
+            lastCursorRowIDRef.current = 0;
           }
         }
         applyEventRef.current(ev);
       },
       {
         getSinceCursor: () => lastCursorRef.current,
-        getSinceCursorID: () => lastCursorIDRef.current,
-        onReady: (cursor, cursorID) => {
+        getSinceRowID: () => lastCursorRowIDRef.current,
+        onReady: (cursor, rowID) => {
           // A non-empty PRIOR cursor means this ready follows a real
           // disconnect/reconnect (not the initial connect), so room metadata
           // and the active room's messages (incl. edits/deletes that replay
@@ -129,7 +131,7 @@ export default function ChatPage() {
           // prior value here (not at mount) so it is accurate per-reconnect.
           const wasReconnect = lastCursorRef.current !== "";
           lastCursorRef.current = cursor;
-          lastCursorIDRef.current = cursorID;
+          lastCursorRowIDRef.current = rowID;
           setError(null);
           if (wasReconnect) {
             void reloadRoomsRef.current();
@@ -181,31 +183,44 @@ export default function ChatPage() {
         if (ev.room) setRooms((prev) => upsertRoom(prev, ev.room!));
         else void loadRooms();
         break;
-      case "message.created":
-        setRooms((prev) =>
-          moveRoomToTop(
-            prev.map((room) =>
-              room.id === ev.room_id
-                ? {
-                    ...room,
-                    last_message: ev.message,
-                    unread_count:
-                      ev.room_id === activeID ||
-                      ev.message.sender_id === user?.id
-                        ? 0
-                        : room.unread_count + 1,
-                    updated_at: ev.message.created_at,
-                  }
-                : room,
+      case "message.created": {
+        // Idempotency guard: a reconnect re-replays frames the client already
+        // saw (the cursor is created_at, which ties on the second). Skip the
+        // room-level mutation when the incoming message is not newer than the
+        // room's current last_message, so unread counts and ordering are not
+        // double-applied. The active room is deduped by id via mergeMessage.
+        const target = rooms.find((r) => r.id === ev.room_id);
+        const seen =
+          target?.last_message &&
+          ev.message.created_at <= target.last_message.created_at &&
+          target.last_message.id === ev.message.id;
+        if (!seen) {
+          setRooms((prev) =>
+            moveRoomToTop(
+              prev.map((room) =>
+                room.id === ev.room_id
+                  ? {
+                      ...room,
+                      last_message: ev.message,
+                      unread_count:
+                        ev.room_id === activeID ||
+                        ev.message.sender_id === user?.id
+                          ? 0
+                          : room.unread_count + 1,
+                      updated_at: ev.message.created_at,
+                    }
+                  : room,
+              ),
+              ev.room_id,
             ),
-            ev.room_id,
-          ),
-        );
+          );
+        }
         if (ev.room_id === activeID) {
           setMessages((prev) => mergeMessage(prev, ev.message));
           void chat.markRead(ev.room_id, ev.message.seq);
         }
         break;
+      }
       case "message.updated":
         if (ev.room_id === activeID) {
           setMessages((prev) =>

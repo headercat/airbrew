@@ -268,11 +268,25 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	// not seq (seq is per-room and would lose low-activity rooms); the id
 	// tiebreak covers multiple messages created within the same second.
 	var since time.Time
-	sinceID := r.URL.Query().Get("since_id")
+	sinceRowID := int64(0)
+	if raw := r.URL.Query().Get("since_rowid"); raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			sinceRowID = v
+		}
+	}
+	hasCursor := false
 	if raw := r.URL.Query().Get("since_cursor"); raw != "" {
 		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
 			since = parsed.UTC()
+			hasCursor = true
 		}
+	}
+	// On a first connect (no cursor) the SPA has just loaded its rooms and the
+	// active room via REST; replaying every historical message would flood the
+	// client (and on the active room trigger a burst of markRead POSTs that
+	// blows the chat rate limit). Treat an empty cursor as "now" — no replay.
+	if !hasCursor {
+		since = time.Now().UTC()
 	}
 	// Replay missed message.created frames in bounded pages. Stop at a hard
 	// cap so a huge backlog cannot stall the connection forever; if more
@@ -280,10 +294,10 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	const replayMax = 2000
 	replayed := 0
 	cursor := since
-	cursorID := sinceID
+	cursorRowID := sinceRowID
 	lastHasMore := false
 	for replayed < replayMax {
-		page, nextCursor, nextID, hasMore, err := h.svc.ReplayMissed(r.Context(), userID, cursor, cursorID, 200)
+		page, nextCursor, nextRowID, hasMore, err := h.svc.ReplayMissed(r.Context(), userID, cursor, cursorRowID, 200)
 		if err != nil {
 			break
 		}
@@ -292,7 +306,7 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 				Type: "message.created", RoomID: m.RoomID, Message: &m,
 			})
 		}
-		cursor, cursorID = nextCursor, nextID
+		cursor, cursorRowID = nextCursor, nextRowID
 		replayed += len(page)
 		lastHasMore = hasMore
 		if !hasMore {
@@ -304,10 +318,10 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	// backlog would trigger a needless empty reconnect.
 	more := replayed >= replayMax && lastHasMore
 	writeSSE(w, "ready", map[string]any{
-		"ok":       true,
-		"cursor":   cursor.UTC().Format(time.RFC3339),
-		"cursor_id": cursorID,
-		"has_more": more,
+		"ok":           true,
+		"cursor":       cursor.UTC().Format(time.RFC3339),
+		"cursor_rowid": cursorRowID,
+		"has_more":     more,
 	})
 	flusher.Flush()
 

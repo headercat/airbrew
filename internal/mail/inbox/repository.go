@@ -569,8 +569,9 @@ type OutboxItem struct {
 }
 
 // ListOutboxDue returns up to limit outbox rows whose backoff window has
-// elapsed and that have not exceeded maxAttempts. It is user-agnostic because
-// the background sweeper retries on behalf of every user.
+// elapsed and that are not currently being sent by another worker. It is
+// user-agnostic because the background sweeper retries on behalf of every
+// user.
 func (r *Repository) ListOutboxDue(ctx context.Context, now time.Time, maxAttempts int, limit int) ([]OutboxItem, error) {
 	if limit <= 0 {
 		limit = 50
@@ -581,9 +582,10 @@ func (r *Repository) ListOutboxDue(ctx context.Context, now time.Time, maxAttemp
 		WHERE is_outbox = 1
 		  AND outbox_attempts < ?
 		  AND (outbox_next_attempt IS NULL OR outbox_next_attempt <= ?)
+		  AND (outbox_claimed_until IS NULL OR outbox_claimed_until <= ?)
 		ORDER BY outbox_next_attempt ASC
 		LIMIT ?`,
-		maxAttempts, now.UTC().Truncate(time.Second), limit,
+		maxAttempts, now.UTC().Truncate(time.Second), now.UTC().Truncate(time.Second), limit,
 	)
 	if err != nil {
 		return nil, err
@@ -601,14 +603,16 @@ func (r *Repository) ListOutboxDue(ctx context.Context, now time.Time, maxAttemp
 }
 
 // RecordOutboxAttempt increments the attempt counter for id and schedules the
-// next retry at nextAttempt. Called after a failed retry so the sweeper backs
-// off rather than hammering a failing provider.
+// next retry at nextAttempt (the backoff). Called after a failed retry so the
+// sweeper backs off rather than hammering a failing provider. Also releases
+// any active SMTP claim.
 func (r *Repository) RecordOutboxAttempt(ctx context.Context, id string, nextAttempt time.Time) error {
 	now := time.Now().UTC().Truncate(time.Second)
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE mail_messages
 		SET outbox_attempts = outbox_attempts + 1,
 		    outbox_next_attempt = ?,
+		    outbox_claimed_until = NULL,
 		    updated_at = ?
 		WHERE id = ? AND is_outbox = 1`,
 		nextAttempt.UTC().Truncate(time.Second), now, id,
@@ -619,44 +623,40 @@ func (r *Repository) RecordOutboxAttempt(ctx context.Context, id string, nextAtt
 	return nil
 }
 
-// ResetOutboxAttempts clears the attempt counter and, only when no other
-// worker holds the row, the next-attempt lease. Used by the manual retry
-// path so a user-initiated retry resumes the automatic sweeper even after
-// the row previously hit the attempt cap. The lease guard is critical: an
-// in-flight sweeper retry holds outbox_next_attempt in the future; clearing
-// it unconditionally would let the manual retry's ClaimOutbox succeed while
-// the sweeper is still mid-send → duplicate delivery.
-func (r *Repository) ResetOutboxAttempts(ctx context.Context, id string) error {
+// ResetOutboxAttempts clears the attempt counter and the backoff schedule so
+// a user-initiated manual retry can resume immediately even after the row
+// previously hit the attempt cap. It does NOT release an active SMTP claim
+// (outbox_claimed_until), so an in-flight sweeper send still blocks the
+// manual retry's ClaimOutbox → no duplicate delivery. Scoped to the owner.
+func (r *Repository) ResetOutboxAttempts(ctx context.Context, userID, id string) error {
 	now := time.Now().UTC().Truncate(time.Second)
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE mail_messages
 		SET outbox_attempts = 0,
-		    outbox_next_attempt = CASE
-			    WHEN outbox_next_attempt IS NULL OR outbox_next_attempt <= ? THEN NULL
-			    ELSE outbox_next_attempt
-		    END,
+		    outbox_next_attempt = NULL,
 		    updated_at = ?
-		WHERE id = ? AND is_outbox = 1`, now, now, id)
+		WHERE id = ? AND user_id = ? AND is_outbox = 1`, now, id, userID)
 	if err != nil {
 		return fmt.Errorf("inbox: reset outbox attempts: %w", err)
 	}
 	return nil
 }
 
-// ClaimOutbox atomically reserves an outbox row for a retry attempt by moving
-// its next_attempt into the future. It returns true when this caller won the
-// claim. The sweeper and the manual-retry HTTP path both go through RetrySend,
-// so without this guard the two can pick the same row concurrently and both
-// hand it to the driver — producing a duplicate real-world delivery. The claim
-// is released by MarkSent (on success) or RecordOutboxAttempt (on failure).
+// ClaimOutbox atomically reserves an outbox row for a retry attempt by setting
+// a short SMTP lease. It returns true when this caller won the claim. The
+// sweeper and the manual-retry HTTP path both go through RetrySend, so without
+// this guard the two can pick the same row concurrently and both hand it to
+// the driver — producing a duplicate real-world delivery. The claim is
+// released by MarkSent (on success) or RecordOutboxAttempt (on failure); a
+// crashed sender's lease expires on its own after the lease duration.
 func (r *Repository) ClaimOutbox(ctx context.Context, id string, lease time.Duration) (bool, error) {
 	now := time.Now().UTC().Truncate(time.Second)
 	holdUntil := now.Add(lease)
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE mail_messages
-		SET outbox_next_attempt = ?, updated_at = ?
+		SET outbox_claimed_until = ?, updated_at = ?
 		WHERE id = ? AND is_outbox = 1
-		  AND (outbox_next_attempt IS NULL OR outbox_next_attempt <= ?)`,
+		  AND (outbox_claimed_until IS NULL OR outbox_claimed_until <= ?)`,
 		holdUntil, now, id, now)
 	if err != nil {
 		return false, fmt.Errorf("inbox: claim outbox: %w", err)

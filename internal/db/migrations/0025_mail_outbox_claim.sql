@@ -1,0 +1,12 @@
+-- 0025_mail_outbox_claim.sql
+-- Separate the active-SMTP claim from the backoff schedule. Previously a single
+-- outbox_next_attempt column held both: a 2-minute SMTP lease during a send and
+-- a 1..32-minute backoff schedule between retries. Conflating them meant a
+-- manual retry either had to ignore the backoff (re-opening the duplicate-send
+-- race with an in-flight sweeper send) or respect it (blocking the user from
+-- retrying for up to 32 minutes after the attempt cap).
+--
+-- outbox_claimed_until: set by ClaimOutbox for the brief SMTP dial+DATA window;
+--   ListOutboxDue / ClaimOutbox treat a future value as "another worker is
+--   mid-send". Released by MarkSent / RecordOutboxAttempt.
+ALTER TABLE mail_messages ADD COLUMN outbox_claimed_until DATETIME;

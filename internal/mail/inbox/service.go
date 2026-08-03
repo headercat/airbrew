@@ -610,11 +610,10 @@ func (s *Service) RecordOutboxAttempt(ctx context.Context, id string, nextAttemp
 	return s.repo.RecordOutboxAttempt(ctx, id, nextAttempt)
 }
 
-// ResetOutboxAttempts clears the attempt counter and the next-attempt lease.
-// Used by the manual retry path so a user-initiated retry restarts the
-// sweeper's backoff even after the row previously hit the attempt cap.
-func (s *Service) ResetOutboxAttempts(ctx context.Context, id string) error {
-	return s.repo.ResetOutboxAttempts(ctx, id)
+// ResetOutboxAttempts clears the attempt counter and the backoff lease (when
+// unclaimed). Used by the manual retry path. Scoped to the owning user.
+func (s *Service) ResetOutboxAttempts(ctx context.Context, userID, id string) error {
+	return s.repo.ResetOutboxAttempts(ctx, userID, id)
 }
 
 // Counts returns per-folder totals for the user (optionally scoped to one

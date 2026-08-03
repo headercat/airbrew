@@ -373,13 +373,17 @@ func (r *Repository) CreateRun(ctx context.Context, run *Run) error {
 // FinishRun sets the run's terminal state, error text, and finished_at.
 func (r *Repository) FinishRun(ctx context.Context, id string, status RunStatus, errMsg string) error {
 	now := time.Now().UTC().Truncate(time.Second)
-	_, err := r.db.ExecContext(ctx, `
+	// Guard the transition so a cancel cannot clobber a run that the engine
+	// has just finished (success/failed). Only pending/running rows are
+	// eligible for a status change here.
+	res, err := r.db.ExecContext(ctx, `
 		UPDATE workflow_runs SET status = ?, error = ?, finished_at = ?
-		WHERE id = ?
-	`, string(status), errMsg, now, id)
+		WHERE id = ? AND status IN (?, ?)
+	`, string(status), errMsg, now, id, string(RunPending), string(RunRunning))
 	if err != nil {
 		return fmt.Errorf("workflow: finish run: %w", err)
 	}
+	_ = res
 	return nil
 }
 

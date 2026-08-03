@@ -9,15 +9,15 @@ embeds its React SPA, so deployment is one file + one SQLite database.
 
 | Module     | State                                  |
 | ---------- | -------------------------------------- |
-| **Auth**   | Milestone 1 (users/sessions/password)  |
+| **Auth**   | Users/sessions/password, case-insensitive email, session revoke on password change |
 | OAuth/OIDC | Schema ready, endpoints not yet built  |
-| Mail       | Inbound/outbound drivers, mailbox storage                   |
-| Drive      | Stub                                   |
-| Contacts   | Stub                                   |
-| Chat       | Stub                                   |
-| AI         | Provider abstraction + streaming chat  |
-| Workflow   | Stub                                   |
-| Passwords  | Zero-knowledge vault (Milestone 16)    |
+| Mail       | Inbound/outbound drivers, mailbox storage, threading, outbox auto-retry, IMAP/POP3 poll |
+| Drive      | Files, folders, zip download, shares (password/expiry/limit), trash, quota |
+| Contacts   | Address book, groups, vCard import/export, avatars |
+| Chat       | Direct/group rooms, real-time SSE, edit/delete, replay-on-reconnect |
+| AI         | Provider abstraction, streaming chat, tool-calling agents |
+| Workflow   | Graph engine (trigger/logic/action), webhook/schedule/manual, run history, SPA editor |
+| Passwords  | Zero-knowledge vault, delta sync, attachments |
 
 See `docs/auth.md` for the milestone roadmap.
 

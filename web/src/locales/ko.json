@@ -22,6 +22,7 @@
   },
   "nav": {
     "home": "홈",
+    "openMenu": "메뉴 열기",
     "profile": "프로필",
     "admin": "관리 콘솔",
     "mail": {

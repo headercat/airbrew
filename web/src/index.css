@@ -2,6 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Touch devices have no hover. Tailwind's group-hover:opacity-* pattern hides
+ * row/message action buttons until hover, which makes them unreachable on
+ * phones and tablets. Force every hover-revealed element visible when the
+ * primary pointer is coarse so touch users can reach edit/delete/copy/etc.
+ */
+@media (pointer: coarse) {
+  [class*="group-hover:opacity-"] {
+    opacity: 1 !important;
+  }
+}
+
 @layer base {
   :root {
     /* Warm neutral palette — Notion-inspired light mode */

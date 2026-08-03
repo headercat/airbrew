@@ -39,8 +39,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/workflow/runs/{id}/cancel", h.cancelRun)
 }
 
-// RegisterPublicRoutes mounts public workflow endpoints.
-func (h *Handler) RegisterPublicRoutes(mux *http.ServeMux) {
+// RegisterPublicRoutes mounts public workflow endpoints (status is mounted by
+// the module). The webhook trigger is registered separately via
+// RegisterWebhookRoute so the caller can wrap it with a per-IP rate limiter.
+func (h *Handler) RegisterPublicRoutes(mux *http.ServeMux) {}
+
+// RegisterWebhookRoute mounts the public webhook trigger endpoint.
+func (h *Handler) RegisterWebhookRoute(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/workflow/hooks/{token}", h.webhook)
 }
 

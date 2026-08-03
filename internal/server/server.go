@@ -146,6 +146,13 @@ func Build(d Deps) *http.ServeMux {
 	// manual runs and run history require a session plus module-enable gating.
 	workflowMod := workflow.New(d.DB.DB, stubState, adminMod.Audit(), mailMod)
 	workflowMod.RegisterPublicRoutes(mux)
+	// Webhook triggers are unauthenticated; rate-limit per IP so a leaked
+	// token cannot be fired as fast as a client can POST (each fire runs the
+	// whole workflow graph synchronously).
+	workflowHookSub := http.NewServeMux()
+	workflowMod.RegisterWebhookRoute(workflowHookSub)
+	hookLimiter := middleware.NewRateLimiter(60, time.Minute)
+	mux.Handle("/api/workflow/hooks/", middleware.RateLimit(hookLimiter, middleware.ClientIPKey)(workflowHookSub))
 	workflowSub := http.NewServeMux()
 	workflowMod.RegisterRoutes(workflowSub)
 	mux.Handle("/api/workflow/", authMod.SessionMiddleware(middleware.Chain(workflowSub,

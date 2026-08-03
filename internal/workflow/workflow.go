@@ -44,6 +44,14 @@ func (m *Module) RegisterPublicRoutes(mux *http.ServeMux) {
 	m.h.RegisterPublicRoutes(mux)
 }
 
+// RegisterWebhookRoute mounts the public webhook trigger endpoint. The caller
+// is expected to wrap it with a per-IP rate limiter (webhooks are otherwise
+// unauthenticated and a leaked token could be fired as fast as a client can
+// POST).
+func (m *Module) RegisterWebhookRoute(mux *http.ServeMux) {
+	m.h.RegisterWebhookRoute(mux)
+}
+
 // Start launches background trigger dispatchers.
 func (m *Module) Start(ctx context.Context) {
 	if ctx == nil {

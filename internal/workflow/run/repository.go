@@ -108,6 +108,35 @@ func (r *Repository) ListActiveByTrigger(ctx context.Context, t TriggerType) ([]
 	return out, rows.Err()
 }
 
+// GetLastFiredAt returns the persisted last dispatch timestamp for a schedule
+// workflow (or the zero time when never fired). Used by the scheduler to avoid
+// re-firing a cron schedule after a process restart within the same minute.
+func (r *Repository) GetLastFiredAt(ctx context.Context, id string) (time.Time, error) {
+	var t sql.NullTime
+	err := r.db.QueryRowContext(ctx,
+		`SELECT last_fired_at FROM workflows WHERE id = ?`, id).Scan(&t)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return time.Time{}, nil
+		}
+		return time.Time{}, err
+	}
+	if !t.Valid {
+		return time.Time{}, nil
+	}
+	return t.Time.UTC(), nil
+}
+
+// MarkScheduleFired stamps last_fired_at for id. The scheduler calls this
+// immediately after dispatching a run so the next tick (in this process or a
+// restarted one) can see the schedule already ran this minute.
+func (r *Repository) MarkScheduleFired(ctx context.Context, id string, at time.Time) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE workflows SET last_fired_at = ? WHERE id = ?`,
+		at.UTC().Truncate(time.Second), id)
+	return err
+}
+
 // ListWorkflows returns every workflow owned by userID, newest first.
 func (r *Repository) ListWorkflows(ctx context.Context, userID string, limit, offset int) ([]*Workflow, error) {
 	if limit <= 0 || limit > 200 {

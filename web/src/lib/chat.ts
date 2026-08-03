@@ -91,22 +91,59 @@ export const chat = {
     }),
 };
 
-export function openChatEvents(onEvent: (event: ChatEvent) => void) {
-  const es = new EventSource("/api/chat/events");
+export function openChatEvents(
+  onEvent: (event: ChatEvent) => void,
+  opts?: {
+    getSinceSeq?: () => number;
+    onReady?: (seq: number) => void;
+  },
+) {
+  // The browser EventSource reuses the same URL on its built-in reconnect, so
+  // we cannot update the `since_seq` replay cursor dynamically that way. Close
+  // on error and reopen with the latest cursor so the server replays any
+  // message.created frames missed while disconnected (or while the hub dropped
+  // a frame because the subscriber fell behind).
+  const factory = (sinceSeq: number) => {
+    const qs = sinceSeq > 0 ? `?since_seq=${sinceSeq}` : "";
+    return new EventSource(`/api/chat/events${qs}`);
+  };
   const types = [
     "room.created",
     "room.updated",
     "message.created",
     "room.read",
   ];
-  for (const type of types) {
-    es.addEventListener(type, (ev) => {
+  const bind = (stream: EventSource) => {
+    stream.addEventListener("ready", (ev) => {
       try {
-        onEvent(JSON.parse((ev as MessageEvent).data) as ChatEvent);
+        const data = JSON.parse(
+          (ev as MessageEvent).data,
+        ) as { ok: boolean; seq?: number };
+        if (data.seq) opts?.onReady?.(data.seq);
       } catch {
-        /* ignore malformed stream frames */
+        /* ignore malformed ready frame */
       }
     });
-  }
-  return es;
+    for (const type of types) {
+      stream.addEventListener(type, (ev) => {
+        try {
+          onEvent(JSON.parse((ev as MessageEvent).data) as ChatEvent);
+        } catch {
+          /* ignore malformed stream frames */
+        }
+      });
+    }
+  };
+  let es = factory(opts?.getSinceSeq?.() ?? 0);
+  const reconnect = () => {
+    es.close();
+    window.setTimeout(() => {
+      es = factory(opts?.getSinceSeq?.() ?? 0);
+      bind(es);
+      es.onerror = () => reconnect();
+    }, 1500);
+  };
+  bind(es);
+  es.onerror = () => reconnect();
+  return { close: () => es.close() };
 }

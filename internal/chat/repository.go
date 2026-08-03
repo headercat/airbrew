@@ -321,6 +321,60 @@ func (r *Repository) ListMessages(ctx context.Context, userID, roomID string, be
 	return out, nil
 }
 
+// ListMessagesSinceAcrossRooms returns up to limit non-deleted messages with
+// seq > sinceSeq across every room the user participates in, ordered by seq.
+// It backs the SSE reconnect replay so a dropped event (subscriber buffer
+// full) or a transient disconnect does not permanently lose a message.
+func (r *Repository) ListMessagesSinceAcrossRooms(ctx context.Context, userID string, sinceSeq int64, limit int) ([]Message, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := r.db.QueryContext(ctx, messageSelect()+`
+		JOIN chat_room_participants p
+		  ON p.room_id = cm.room_id AND p.user_id = ?
+		WHERE p.user_id = ?
+		  AND cm.deleted_at IS NULL
+		  AND cm.seq > ?
+		ORDER BY cm.seq ASC
+		LIMIT ?`,
+		userID, userID, sinceSeq, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("chat: replay messages since: %w", err)
+	}
+	defer rows.Close()
+	var out []Message
+	for rows.Next() {
+		msg, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, msg)
+	}
+	return out, rows.Err()
+}
+
+// MaxSeqAcrossRooms returns the highest chat_messages.seq the user can see, or
+// 0 when they have none. Used to seed the SSE replay cursor.
+func (r *Repository) MaxSeqAcrossRooms(ctx context.Context, userID string) (int64, error) {
+	var seq sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT MAX(cm.seq)
+		FROM chat_messages cm
+		JOIN chat_room_participants p
+		  ON p.room_id = cm.room_id AND p.user_id = ?
+		WHERE p.user_id = ? AND cm.deleted_at IS NULL`,
+		userID, userID,
+	).Scan(&seq)
+	if err != nil {
+		return 0, err
+	}
+	if !seq.Valid {
+		return 0, nil
+	}
+	return seq.Int64, nil
+}
+
 func (r *Repository) AppendMessage(ctx context.Context, userID, roomID, body string) (Message, []string, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {

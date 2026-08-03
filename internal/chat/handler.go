@@ -223,11 +223,25 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	ch, cancel := h.svc.Subscribe(userID)
-	defer cancel()
-	writeSSE(w, "ready", map[string]bool{"ok": true})
+
+	// Replay any message.created events the client missed since its last seen
+	// seq (passed as ?since_seq=). Recovering dropped frames here means a
+	// brief disconnect or a full subscriber buffer never permanently loses a
+	// message. Emit the snapshot BEFORE subscribing so live events that
+	// arrive during the replay are not duplicated (the cursor advances to the
+	// current max seq first).
+	sinceSeq, _ := strconv.ParseInt(r.URL.Query().Get("since_seq"), 10, 64)
+	missed, highSeq, _ := h.svc.ReplayMissed(r.Context(), userID, sinceSeq, 200)
+	for _, m := range missed {
+		writeSSE(w, "message.created", Event{
+			Type: "message.created", RoomID: m.RoomID, Message: &m,
+		})
+	}
+	writeSSE(w, "ready", map[string]any{"ok": true, "seq": highSeq})
 	flusher.Flush()
 
+	ch, cancel := h.svc.Subscribe(userID)
+	defer cancel()
 	tick := time.NewTicker(25 * time.Second)
 	defer tick.Stop()
 	for {

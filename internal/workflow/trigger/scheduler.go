@@ -54,7 +54,26 @@ func (s *Scheduler) tick(ctx context.Context, minute time.Time) {
 			s.log.WarnContext(ctx, "workflow scheduler: invalid cron skipped", "workflow_id", item.ID, "error", err)
 			continue
 		}
-		if !ok || s.alreadyDispatched(item.ID, minute) {
+		if !ok {
+			continue
+		}
+		// Two layers of dedup: the in-memory map catches a re-tick within the
+		// same process; the persisted last_fired_at catches a re-fire after a
+		// restart within the same minute (which would otherwise duplicate the
+		// run).
+		if s.alreadyDispatched(item.ID, minute) {
+			continue
+		}
+		last, err := s.repo.GetLastFiredAt(ctx, item.ID)
+		if err != nil {
+			s.log.WarnContext(ctx, "workflow scheduler: read last_fired_at", "workflow_id", item.ID, "error", err)
+			continue
+		}
+		if !last.IsZero() && last.UTC().Truncate(time.Minute).Equal(minute) {
+			continue
+		}
+		if err := s.repo.MarkScheduleFired(ctx, item.ID, minute); err != nil {
+			s.log.WarnContext(ctx, "workflow scheduler: write last_fired_at", "workflow_id", item.ID, "error", err)
 			continue
 		}
 		wf := item

@@ -31,6 +31,9 @@ func decodeJSON(r *http.Request, v any) error {
 	if !strings.Contains(ct, "application/json") {
 		return errors.New("content-type must be application/json")
 	}
+	// Cap the request body so a client cannot stream an unbounded payload.
+	// 1 MiB is well above any legitimate contact payload.
+	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)

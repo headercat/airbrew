@@ -78,16 +78,31 @@ export default function ChatPage() {
     }
   }, []);
 
+  const lastSeqRef = useRef(0);
+
   useEffect(() => {
     void loadRooms();
   }, [loadRooms]);
 
   useEffect(() => {
-    const es = openChatEvents((ev) => {
-      applyEvent(ev);
-    });
-    es.onerror = () => setError(t("chat.connectionLost"));
-    return () => es.close();
+    const stream = openChatEvents(
+      (ev) => {
+        if (ev.type === "message.created") {
+          // Track the high-water seq so an SSE reconnect can ask the server
+          // to replay any message.created frames missed while disconnected.
+          lastSeqRef.current = Math.max(lastSeqRef.current, ev.message.seq);
+        }
+        applyEvent(ev);
+      },
+      {
+        getSinceSeq: () => lastSeqRef.current,
+        onReady: (seq) => {
+          if (seq) lastSeqRef.current = Math.max(lastSeqRef.current, seq);
+          setError(null);
+        },
+      },
+    );
+    return () => stream.close();
   }, [t]);
 
   useEffect(() => {

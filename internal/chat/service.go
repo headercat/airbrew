@@ -92,6 +92,25 @@ func (s *Service) Subscribe(userID string) (<-chan Event, func()) {
 	return s.hub.Subscribe(userID)
 }
 
+// ReplayMissed returns up to limit message.created events the user missed
+// since sinceSeq (across all their rooms), plus the current high-water seq.
+// Used by the SSE handler on reconnect to recover events lost while the
+// client was offline or while the in-memory hub dropped a frame.
+func (s *Service) ReplayMissed(ctx context.Context, userID string, sinceSeq int64, limit int) ([]Message, int64, error) {
+	max, err := s.repo.MaxSeqAcrossRooms(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if sinceSeq >= max {
+		return nil, max, nil
+	}
+	msgs, err := s.repo.ListMessagesSinceAcrossRooms(ctx, userID, sinceSeq, limit)
+	if err != nil {
+		return nil, max, err
+	}
+	return msgs, max, nil
+}
+
 func userIDsFromRoom(room Room) []string {
 	ids := make([]string, 0, len(room.Participants))
 	for _, p := range room.Participants {

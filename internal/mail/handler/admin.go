@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -47,18 +48,56 @@ type providerResp struct {
 }
 
 func toProviderResp(p provider.Provider) providerResp {
-	var cfg any
-	_ = json.Unmarshal([]byte(p.Config), &cfg)
-	if cfg == nil {
-		cfg = map[string]any{}
+	cfg := redactSecrets([]byte(p.Config))
+	var cfgAny any
+	_ = json.Unmarshal(cfg, &cfgAny)
+	if cfgAny == nil {
+		cfgAny = map[string]any{}
 	}
 	return providerResp{
 		ID: p.ID, Direction: string(p.Direction), Driver: p.Driver,
-		Config: cfg, IsActive: p.IsActive,
+		Config: cfgAny, IsActive: p.IsActive,
 		CreatedAt: p.CreatedAt.UTC().Format(timeRFC3339),
 		UpdatedAt: p.UpdatedAt.UTC().Format(timeRFC3339),
 	}
 }
+
+// secretFieldNames are the JSON keys the driver configs use to carry
+// credentials. They are masked on read so GET /api/admin/mail/providers and
+// its audit trail do not leak live API keys or passwords to the browser and
+// logs. Writes still preserve the real value (the admin supplies a fresh
+// config on every PUT).
+var secretFieldNames = map[string]struct{}{
+	"api_key":     {},
+	"apikey":      {},
+	"secret_key":  {},
+	"secretkey":   {},
+	"access_key":  {},
+	"accesskey":   {},
+	"password":    {},
+	"pass":        {},
+	"secret":      {},
+	"session_key": {},
+}
+
+func redactSecrets(raw json.RawMessage) []byte {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return raw
+	}
+	for k := range m {
+		if _, ok := secretFieldNames[strings.ToLower(k)]; ok {
+			m[k] = redactedMask
+		}
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+const redactedMask = "***redacted***"
 
 func (a *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
 	provs, err := a.repo.List(r.Context())
@@ -89,6 +128,13 @@ func (a *AdminHandler) upsert(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	// Validate the config parses for the driver before we deactivate the
+	// previous provider and store the new one. A malformed config would
+	// otherwise take mail offline silently until the next send/poll.
+	if err := validateDriverConfig(provider.Direction(req.Direction), req.Driver, req.Config); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid_config", err.Error())
+		return
+	}
 	p, err := a.repo.UpsertAndActivate(r.Context(), provider.Direction(req.Direction), req.Driver, string(req.Config))
 	if err != nil {
 		writeErr(w, err)
@@ -104,6 +150,40 @@ func (a *AdminHandler) upsert(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	jsonResp(w, http.StatusCreated, toProviderResp(p))
+}
+
+// validateDriverConfig runs the matching driver factory against the config
+// blob and discards the result. It returns an error wrapping the underlying
+// message when the config is malformed (missing required field, bad JSON
+// shape, etc.). The factories are cheap and side-effect free.
+func validateDriverConfig(direction provider.Direction, driver string, cfg json.RawMessage) error {
+	switch direction {
+	case provider.DirectionInbound:
+		if !inbound.IsPollDriver(driver) && !isKnownInboundPushDriver(driver) {
+			return fmt.Errorf("unknown inbound driver %q", driver)
+		}
+		if inbound.IsPollDriver(driver) {
+			if _, err := inbound.Build(driver, cfg); err != nil {
+				return err
+			}
+		}
+		return nil
+	case provider.DirectionOutbound:
+		if _, err := outbound.Build(driver, cfg); err != nil {
+			return err
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown direction %q", direction)
+	}
+}
+
+func isKnownInboundPushDriver(driver string) bool {
+	switch driver {
+	case "cloudflare", "ses":
+		return true
+	}
+	return false
 }
 
 func (a *AdminHandler) delete(w http.ResponseWriter, r *http.Request) {

@@ -113,19 +113,30 @@ func (p *pop3Poller) Poll(ctx context.Context, ingest Ingester) error {
 			p.mu.Unlock()
 			continue
 		}
-		if err := ingest.Ingest(ctx, p.cfg.Address, raw, time.Now().UTC()); err != nil {
+		ingestErr := ingest.Ingest(ctx, p.cfg.Address, raw, time.Now().UTC())
+		if ingestErr != nil {
 			// ErrProbe is the admin connectivity-test sentinel. Stop the
 			// sweep immediately WITHOUT marking seen and WITHOUT issuing
 			// DELE — otherwise the probe would delete real upstream mail
 			// when delete_after_fetch is configured.
-			if errors.Is(err, inbox.ErrProbe) {
+			if errors.Is(ingestErr, inbox.ErrProbe) {
 				return nil
 			}
 			// ErrDuplicate is success for poll purposes: the message was
 			// stored in a previous cycle. Mark it seen and honour
 			// delete_after_fetch without re-ingesting.
-			if !errors.Is(err, inbox.ErrDuplicate) {
-				p.log.Warn("pop3: ingest failed", "uid", uid, "error", err)
+			if !errors.Is(ingestErr, inbox.ErrDuplicate) {
+				// A persistent failure (malformed MIME, destination mailbox
+				// not found, ...) would otherwise re-fetch and re-parse this
+				// same message on every poll cycle forever. Mark it seen so
+				// we move on, matching the corrupt/oversize retr path above.
+				// Do NOT DELE: leave the message upstream so the user can
+				// recover it via another client if the failure was real.
+				p.log.Warn("pop3: ingest failed; marking UID seen to avoid a re-fetch loop (not deleting upstream)",
+					"uid", uid, "error", ingestErr)
+				p.mu.Lock()
+				p.seen[uid] = struct{}{}
+				p.mu.Unlock()
 				continue
 			}
 		}

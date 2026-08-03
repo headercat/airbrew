@@ -117,6 +117,24 @@ export default function ChatPage() {
   // edits/deletes); route via refs so the subscription effect stays stable.
   const reloadRoomsRef = useRef<() => Promise<void>>(async () => {});
   const reloadActiveMessagesRef = useRef<() => void>(() => {});
+  // Debounced markRead: coalesce a burst of message.created frames for the
+  // active room into one POST so the chat per-IP rate limit is not blown.
+  const markReadTargetRef = useRef<{ roomID: string; seq: number } | null>(null);
+  const markReadTimerRef = useRef<number | null>(null);
+  const scheduleMarkRead = (roomID: string, seq: number) => {
+    const cur = markReadTargetRef.current;
+    markReadTargetRef.current = {
+      roomID,
+      seq: cur && cur.roomID === roomID ? Math.max(cur.seq, seq) : seq,
+    };
+    if (markReadTimerRef.current != null) return;
+    markReadTimerRef.current = window.setTimeout(() => {
+      markReadTimerRef.current = null;
+      const t = markReadTargetRef.current;
+      markReadTargetRef.current = null;
+      if (t) void chat.markRead(t.roomID, t.seq);
+    }, 400);
+  };
   useEffect(() => {
     void loadRooms();
   }, [loadRooms]);
@@ -240,7 +258,12 @@ export default function ChatPage() {
         );
         if (ev.room_id === activeID) {
           setMessages((prev) => mergeMessage(prev, ev.message));
-          void chat.markRead(ev.room_id, ev.message.seq);
+          // Debounce: a replay burst can deliver dozens of message.created
+          // frames for the active room in rapid succession, and firing
+          // markRead per frame would blow the per-IP chat rate limit
+          // (120/min) and lock the user out of chat. Coalesce into one call
+          // for the highest seq ~400ms after the last frame.
+          scheduleMarkRead(ev.room_id, ev.message.seq);
         }
         break;
       }

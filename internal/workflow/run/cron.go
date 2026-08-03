@@ -13,6 +13,11 @@ type cronExpr struct {
 	day     cronField
 	month   cronField
 	weekday cronField
+	// dayStar/weekdayStar are true when the original field was a bare "*",
+	// used to apply Vixie cron's OR-of-day-and-weekday rule when BOTH are
+	// restricted.
+	dayStar     bool
+	weekdayStar bool
 }
 
 type cronField map[int]bool
@@ -46,7 +51,11 @@ func parseCron(expr string) (cronExpr, error) {
 		weekday[0] = true
 		delete(weekday, 7)
 	}
-	return cronExpr{minute: minute, hour: hour, day: day, month: month, weekday: weekday}, nil
+	return cronExpr{
+		minute: minute, hour: hour, day: day, month: month, weekday: weekday,
+		dayStar:     parts[2] == "*",
+		weekdayStar: parts[4] == "*",
+	}, nil
 }
 
 func parseCronField(field string, min, max int) (cronField, error) {
@@ -105,9 +114,17 @@ func parseCronField(field string, min, max int) (cronField, error) {
 
 func (c cronExpr) matches(t time.Time) bool {
 	t = t.UTC()
+	dayMatch := c.day[t.Day()]
+	weekdayMatch := c.weekday[int(t.Weekday())]
+	// Vixie cron: when BOTH day-of-month and day-of-week are restricted (not
+	// bare "*"), the match is their OR; otherwise it is their AND (the "*"
+	// side is all-true, so AND still reduces to the restricted side).
+	dayOK := dayMatch && weekdayMatch
+	if !c.dayStar && !c.weekdayStar {
+		dayOK = dayMatch || weekdayMatch
+	}
 	return c.minute[t.Minute()] &&
 		c.hour[t.Hour()] &&
-		c.day[t.Day()] &&
-		c.month[int(t.Month())] &&
-		c.weekday[int(t.Weekday())]
+		dayOK &&
+		c.month[int(t.Month())]
 }

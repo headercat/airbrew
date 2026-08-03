@@ -201,8 +201,12 @@ func (p *imapPoller) Poll(ctx context.Context, ingest Ingester) error {
 			// cycle. Treat it as success so the UID is marked seen and we do
 			// not re-fetch it on every tick after a coordinator restart.
 			if !errors.Is(err, inbox.ErrDuplicate) {
-				p.log.Warn("imap: ingest failed", "uid", msg.Uid, "error", err)
-				continue
+				p.log.Warn("imap: ingest failed; marking UID seen to avoid a re-fetch loop",
+					"uid", msg.Uid, "error", err)
+				// A persistent failure (malformed MIME, destination mailbox
+				// not found, ...) would otherwise re-fetch and re-parse this
+				// same message on every poll cycle forever. Mark it seen so
+				// we move on, matching the corrupt/oversize path above.
 			}
 		}
 		p.mu.Lock()

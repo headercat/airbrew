@@ -30,7 +30,15 @@ func NewJanitor(repo *Repository, blobs blob.Store, logger *slog.Logger) *Janito
 // Start runs the loop until ctx is cancelled. It does one pass immediately,
 // then ticks every janitorInterval. Best-effort: errors only log at Warn.
 func (j *Janitor) Start(ctx context.Context) {
-	j.runOnce(ctx)
+	run := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				j.logger.ErrorContext(ctx, "drive: janitor tick panicked", "error", r)
+			}
+		}()
+		j.runOnce(ctx)
+	}
+	run()
 	t := time.NewTicker(janitorInterval)
 	defer t.Stop()
 	for {
@@ -38,7 +46,7 @@ func (j *Janitor) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			j.runOnce(ctx)
+			run()
 		}
 	}
 }

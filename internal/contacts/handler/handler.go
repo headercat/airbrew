@@ -37,6 +37,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/contacts/{id}", h.patchContact)
 	mux.HandleFunc("DELETE /api/contacts/{id}", h.deleteContact)
 	mux.HandleFunc("POST /api/contacts/{id}/avatar", h.uploadAvatar)
+	mux.HandleFunc("GET /api/contacts/{id}/avatar", h.getAvatar)
 	mux.HandleFunc("DELETE /api/contacts/{id}/avatar", h.deleteAvatar)
 	mux.HandleFunc("PUT /api/contacts/{id}/groups", h.setContactGroups)
 
@@ -121,7 +122,7 @@ func toContactResp(c *contact.Contact, groupIDs []string) contactResp {
 		out.Birthday = c.Birthday.UTC().Format("2006-01-02")
 	}
 	if c.AvatarPath != "" {
-		out.AvatarURL = "/api/files/" + c.AvatarPath
+		out.AvatarURL = "/api/contacts/" + c.ID + "/avatar"
 	}
 	return out
 }
@@ -600,6 +601,40 @@ func (h *Handler) deleteAvatar(w http.ResponseWriter, r *http.Request) {
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
 	})
 	h.writeContact(w, r, http.StatusOK, c)
+}
+
+// getAvatar streams a contact's avatar bytes. It lives behind the session- and
+// module-gated contacts mux (unlike the public /api/files/ blob path), so a
+// user must own the contact to fetch its avatar.
+func (h *Handler) getAvatar(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	c, err := h.svc.Get(r.Context(), sess.UserID, r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if c.AvatarPath == "" || h.blobs == nil {
+		respondErr(w, http.StatusNotFound, "not_found", "contact has no avatar")
+		return
+	}
+	body, ct, err := h.blobs.Open(r.Context(), c.AvatarPath)
+	if err != nil {
+		respondErr(w, http.StatusNotFound, "not_found", "avatar blob missing")
+		return
+	}
+	defer body.Close()
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if _, err := io.Copy(w, body); err != nil {
+		slog.Warn("contacts: avatar stream failed", "id", c.ID, "error", err)
+	}
 }
 
 // --- group membership ------------------------------------------------------

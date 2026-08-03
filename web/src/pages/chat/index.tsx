@@ -546,6 +546,10 @@ export default function ChatPage() {
 
               <div
                 ref={scrollRef}
+                role="log"
+                aria-live="polite"
+                aria-relevant="additions"
+                aria-label={t("chat.title")}
                 className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4"
               >
                 {messages.length > 0 && (
@@ -679,6 +683,7 @@ function RoomRow({
   currentUserID: string;
   onClick: () => void;
 }) {
+  const { t } = useTranslation();
   const people = room.participants ?? [];
   const other =
     people.find((p) => p.user.id !== currentUserID)?.user ?? people[0]?.user;
@@ -704,7 +709,7 @@ function RoomRow({
           )}
         </div>
         <p className="truncate text-xs text-muted-foreground">
-          {room.last_message?.body || "No messages yet"}
+          {room.last_message?.body || t("chat.noMessages")}
         </p>
       </div>
     </button>
@@ -763,7 +768,7 @@ function MessageBubble({
               }}
             >
               {busy && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-              {t("workflow.save")}
+              {t("common.save")}
             </Button>
           </div>
         </div>
@@ -800,7 +805,9 @@ function MessageBubble({
             <span className="italic">{t("chat.edited")}</span>
           )}
           {message.pending && <Loader2 className="h-3 w-3 animate-spin" />}
-          {message.failed && <span className="text-destructive">Failed</span>}
+          {message.failed && (
+            <span className="text-destructive">{t("chat.failed")}</span>
+          )}
           {mine && (message.read_by_count ?? 0) > 1 && (
             <CheckCheck className="h-3 w-3" />
           )}

@@ -8,7 +8,13 @@
     "open": "Open",
     "search": "Search",
     "error": "Something went wrong",
-    "close": "Close"
+    "close": "Close",
+    "unknown": "Unknown",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "retry": "Retry",
+    "copied": "Copied",
+    "skipToContent": "Skip to content"
   },
   "sidebar": {
     "workspace": "Workspace",
@@ -118,6 +124,16 @@
         "label": "Passwords",
         "description": "Zero-knowledge password vault with multi-device sync."
       },
+      "ai": {
+        "label": "AI Agents",
+        "description": "Tool-using LLM agents with streaming responses."
+      },
+      "workflow": {
+        "label": "Workflows",
+        "description": "Trigger/action graph automation engine."
+      }
+    }
+  },
   "chat": {
     "title": "Chat",
     "subtitle": "Direct and group messaging, delivered in real time.",
@@ -143,17 +159,9 @@
     "emptyRoom": "No messages yet. Say hello!",
     "composerPlaceholder": "Type a message (Enter to send, Shift+Enter for newline)",
     "send": "Send",
+    "failed": "Failed",
+    "noMessages": "No messages yet",
     "connectionLost": "Connection lost. Reconnecting…"
-  },
-  "ai": {
-        "label": "AI Agents",
-        "description": "Tool-using LLM agents with streaming responses."
-      },
-      "workflow": {
-        "label": "Workflows",
-        "description": "Trigger/action graph automation engine."
-      }
-    }
   },
   "workflow": {
     "title": "Workflows",

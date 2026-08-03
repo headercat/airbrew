@@ -296,10 +296,18 @@ export default function ChatPage() {
 
   async function loadEarlier() {
     if (!activeID || messages.length === 0) return;
+    // Capture the room + oldest seq so a room switch or new (older-defining)
+    // message arriving before the fetch resolves cannot prepend the wrong
+    // room's history.
+    const room = activeID;
+    const beforeSeq = messages[0].seq;
     setMessagesLoading(true);
     try {
-      const earlier = await chat.listMessages(activeID, messages[0].seq);
-      setMessages((prev) => [...earlier, ...prev]);
+      const earlier = await chat.listMessages(room, beforeSeq);
+      setMessages((prev) => {
+        if (room !== activeID) return prev; // user switched rooms; drop stale
+        return [...earlier, ...prev.filter((m) => m.seq >= beforeSeq)];
+      });
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -398,7 +406,12 @@ export default function ChatPage() {
                       size="icon"
                       onClick={async () => {
                         if (!confirm(t("chat.confirmLeave"))) return;
-                        await chat.leaveRoom(activeRoom.id);
+                        try {
+                          await chat.leaveRoom(activeRoom.id);
+                        } catch (e) {
+                          setError(errMsg(e));
+                          return;
+                        }
                         setRooms((prev) =>
                           prev.filter((r) => r.id !== activeRoom.id),
                         );
@@ -867,7 +880,13 @@ function mergeMessage(
   messages: DraftMessage[],
   msg: ChatMessage,
 ): DraftMessage[] {
-  if (messages.some((m) => m.id === msg.id)) return messages;
+  // Replace an existing id in place so a replayed message.created (whose body
+  // may have since been edited) does not leave a stale row behind.
+  if (messages.some((m) => m.id === msg.id)) {
+    return messages
+      .map((m) => (m.id === msg.id ? { ...msg } : m))
+      .sort((a, b) => a.seq - b.seq);
+  }
   return [...messages, msg].sort((a, b) => a.seq - b.seq);
 }
 

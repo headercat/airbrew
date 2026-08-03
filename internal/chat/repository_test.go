@@ -114,3 +114,51 @@ func TestGroupRenameRequiresOwner(t *testing.T) {
 		t.Fatalf("title = %q, want Launch", renamed.Title)
 	}
 }
+
+// TestEditDeleteMessageAuthzAndCap verifies only the sender can edit/delete
+// their own message, the body cap applies to edits, and delete excludes the
+// row from GetMessage.
+func TestEditDeleteMessageAuthzAndCap(t *testing.T) {
+	repo, users := testRepo(t)
+	ctx := context.Background()
+	room, _, err := repo.CreateOrGetDirect(ctx, users[0], users[1])
+	if err != nil {
+		t.Fatalf("CreateOrGetDirect: %v", err)
+	}
+	msg, _, err := repo.AppendMessage(ctx, users[0], room.ID, "original")
+	if err != nil {
+		t.Fatalf("AppendMessage: %v", err)
+	}
+
+	// Non-sender cannot edit.
+	if _, _, err := repo.EditMessage(ctx, users[1], room.ID, msg.ID, "hijack"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected ErrForbidden for non-sender edit, got %v", err)
+	}
+	// Over-cap body rejected.
+	long := make([]byte, maxMessageBody+1)
+	for i := range long {
+		long[i] = 'x'
+	}
+	if _, _, err := repo.EditMessage(ctx, users[0], room.ID, msg.ID, string(long)); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for over-cap edit, got %v", err)
+	}
+	// Sender can edit; body + edited_at update.
+	edited, _, err := repo.EditMessage(ctx, users[0], room.ID, msg.ID, "fixed")
+	if err != nil {
+		t.Fatalf("EditMessage: %v", err)
+	}
+	if edited.Body != "fixed" || edited.EditedAt == nil {
+		t.Fatalf("edited = %+v, want body fixed and edited_at set", edited)
+	}
+	// Non-sender cannot delete.
+	if _, err := repo.DeleteMessage(ctx, users[1], room.ID, msg.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected ErrForbidden for non-sender delete, got %v", err)
+	}
+	// Sender delete succeeds; GetMessage then 404s.
+	if _, err := repo.DeleteMessage(ctx, users[0], room.ID, msg.ID); err != nil {
+		t.Fatalf("DeleteMessage: %v", err)
+	}
+	if _, err := repo.GetMessage(ctx, users[0], room.ID, msg.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+}

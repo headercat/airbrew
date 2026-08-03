@@ -21,6 +21,10 @@ var (
 	ErrAddressTaken = errors.New("inbox: address already taken")
 	// ErrInvalidInput is returned on shape-validation failure.
 	ErrInvalidInput = errors.New("inbox: invalid input")
+	// ErrRetryInProgress is returned by RetrySend when another worker (the
+	// background sweeper or a concurrent manual retry) has already claimed the
+	// outbox row. Callers should treat it as "try later", not a hard failure.
+	ErrRetryInProgress = errors.New("inbox: retry already in progress")
 	// ErrDuplicate is returned by Ingest when the Message-ID is already stored
 	// in the target mailbox. Callers should treat it as success (idempotent).
 	ErrDuplicate = errors.New("inbox: duplicate message")

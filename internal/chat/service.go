@@ -118,22 +118,29 @@ func (s *Service) Subscribe(userID string) (<-chan Event, func()) {
 }
 
 // ReplayMissed returns up to limit message.created events the user missed
-// since sinceSeq (across all their rooms), plus the current high-water seq.
-// Used by the SSE handler on reconnect to recover events lost while the
-// client was offline or while the in-memory hub dropped a frame.
-func (s *Service) ReplayMissed(ctx context.Context, userID string, sinceSeq int64, limit int) ([]Message, int64, error) {
-	max, err := s.repo.MaxSeqAcrossRooms(ctx, userID)
+// since sinceSeq (across all their rooms), plus the cursor the client should
+// store as its new high-water mark. The cursor is the seq of the last replayed
+// message (or the input sinceSeq when nothing was missed) — NOT the global max
+// — so if the backlog exceeds the cap the unreplayed tail is fetched on the
+// next reconnect instead of being silently skipped. hasMore is true when more
+// rows remain beyond what was returned.
+func (s *Service) ReplayMissed(ctx context.Context, userID string, sinceSeq int64, limit int) (msgs []Message, cursor int64, hasMore bool, err error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	page, err := s.repo.ListMessagesSinceAcrossRooms(ctx, userID, sinceSeq, limit+1)
 	if err != nil {
-		return nil, 0, err
+		return nil, sinceSeq, false, err
 	}
-	if sinceSeq >= max {
-		return nil, max, nil
+	if len(page) > limit {
+		hasMore = true
+		page = page[:limit]
 	}
-	msgs, err := s.repo.ListMessagesSinceAcrossRooms(ctx, userID, sinceSeq, limit)
-	if err != nil {
-		return nil, max, err
+	cursor = sinceSeq
+	if len(page) > 0 {
+		cursor = page[len(page)-1].Seq
 	}
-	return msgs, max, nil
+	return page, cursor, hasMore, nil
 }
 
 func userIDsFromRoom(room Room) []string {

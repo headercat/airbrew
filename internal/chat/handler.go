@@ -201,6 +201,7 @@ func (h *Handler) editMessage(w http.ResponseWriter, r *http.Request) {
 		h.respondErr(w, err)
 		return
 	}
+	h.logAudit(r, "chat.message_edited", msg.RoomID, map[string]any{"seq": msg.Seq})
 	response.JSON(w, http.StatusOK, msg)
 }
 
@@ -209,10 +210,12 @@ func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteMessage(r.Context(), userID, r.PathValue("id"), r.PathValue("msg")); err != nil {
+	roomID := r.PathValue("id")
+	if err := h.svc.DeleteMessage(r.Context(), userID, roomID, r.PathValue("msg")); err != nil {
 		h.respondErr(w, err)
 		return
 	}
+	h.logAudit(r, "chat.message_deleted", roomID, nil)
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -254,28 +257,44 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Replay any message.created events the client missed since its last seen
-	// seq (passed as ?since_seq=). Recovering dropped frames here means a
-	// brief disconnect or a full subscriber buffer never permanently loses a
-	// message. Emit the snapshot BEFORE subscribing so live events that
-	// arrive during the replay are not duplicated (the cursor advances to the
-	// current max seq first). Clamp negatives so a malformed cursor does not
-	// replay the entire history on every reconnect.
+	// Subscribe BEFORE replaying. Events published in the gap between the
+	// replay snapshot and the subscription would otherwise be lost; buffering
+	// them on the subscriber channel first means the live tail drains them
+	// (and the SPA dedups by message id via mergeMessage).
+	ch, cancel := h.svc.Subscribe(userID)
+	defer cancel()
+
+	// Clamp negatives so a malformed cursor does not replay the entire
+	// history on every reconnect.
 	sinceSeq, _ := strconv.ParseInt(r.URL.Query().Get("since_seq"), 10, 64)
 	if sinceSeq < 0 {
 		sinceSeq = 0
 	}
-	missed, highSeq, _ := h.svc.ReplayMissed(r.Context(), userID, sinceSeq, 200)
-	for _, m := range missed {
-		writeSSE(w, "message.created", Event{
-			Type: "message.created", RoomID: m.RoomID, Message: &m,
-		})
+	// Replay missed message.created frames in bounded pages. Stop at a hard
+	// cap so a huge backlog cannot stall the connection forever; if more
+	// remains, hasMore is signalled so the client re-pages.
+	const replayMax = 2000
+	replayed := 0
+	cursor := sinceSeq
+	for replayed < replayMax {
+		page, nextCursor, hasMore, err := h.svc.ReplayMissed(r.Context(), userID, cursor, 200)
+		if err != nil {
+			break
+		}
+		for _, m := range page {
+			writeSSE(w, "message.created", Event{
+				Type: "message.created", RoomID: m.RoomID, Message: &m,
+			})
+		}
+		cursor = nextCursor
+		replayed += len(page)
+		if !hasMore {
+			break
+		}
 	}
-	writeSSE(w, "ready", map[string]any{"ok": true, "seq": highSeq})
+	writeSSE(w, "ready", map[string]any{"ok": true, "seq": cursor, "has_more": replayed >= replayMax})
 	flusher.Flush()
 
-	ch, cancel := h.svc.Subscribe(userID)
-	defer cancel()
 	tick := time.NewTicker(25 * time.Second)
 	defer tick.Stop()
 	for {

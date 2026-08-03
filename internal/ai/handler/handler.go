@@ -30,6 +30,7 @@ import (
 	"github.com/headercat/airbrew/internal/audit"
 	"github.com/headercat/airbrew/internal/auth/session"
 	"github.com/headercat/airbrew/internal/httpserver/requestip"
+	"github.com/headercat/airbrew/internal/logging"
 	"github.com/headercat/airbrew/internal/httpserver/response"
 )
 
@@ -363,7 +364,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	if needTitle {
 		titleCh = make(chan string, 1)
 		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		go func() {
+		logging.Go("ai.autoTitle", func() {
 			defer cancel()
 			defer close(titleCh)
 			t, err := h.autoTitle(bgCtx, sess.UserID, id, req.Message)
@@ -374,7 +375,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 			case titleCh <- t:
 			case <-bgCtx.Done():
 			}
-		}()
+		})
 	}
 
 	for {

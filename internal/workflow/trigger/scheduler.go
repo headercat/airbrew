@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/headercat/airbrew/internal/logging"
 	wfexec "github.com/headercat/airbrew/internal/workflow/exec"
 	"github.com/headercat/airbrew/internal/workflow/run"
 )
@@ -77,7 +78,7 @@ func (s *Scheduler) tick(ctx context.Context, minute time.Time) {
 			continue
 		}
 		wf := item
-		go func() {
+		logging.Go("workflow.schedule", func() {
 			// Derive from the scheduler lifecycle ctx so a shutdown signal
 			// interrupts long-running graphs instead of blocking graceful
 			// shutdown for up to the per-run timeout.
@@ -92,7 +93,7 @@ func (s *Scheduler) tick(ctx context.Context, minute time.Time) {
 			if err != nil {
 				s.log.Warn("workflow scheduler: run failed", "workflow_id", wf.ID, "error", err)
 			}
-		}()
+		})
 	}
 }
 

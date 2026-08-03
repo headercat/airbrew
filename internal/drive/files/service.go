@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/headercat/airbrew/internal/auth/password"
 	"github.com/headercat/airbrew/internal/blob"
 	"github.com/headercat/airbrew/internal/id"
+	"github.com/headercat/airbrew/internal/logging"
 )
 
 // Namespace is the blob-store namespace used for drive file bytes.
@@ -217,14 +219,20 @@ func (s *Service) ArchiveFolder(ctx context.Context, userID, id string) (io.Read
 		return nil, nil, fmt.Errorf("%w: cannot archive a file", ErrInvalidInput)
 	}
 	pr, pw := io.Pipe()
-	go func() {
+	logging.Go("drive.archiveFolder", func() {
+		defer func() {
+			if r := recover(); r != nil {
+				_ = pw.CloseWithError(fmt.Errorf("archive panicked: %v", r))
+				slog.Error("drive: archive goroutine panicked", "error", r)
+			}
+		}()
 		zw := zip.NewWriter(pw)
 		err := s.writeZipFolder(ctx, zw, n, "")
 		if closeErr := zw.Close(); err == nil {
 			err = closeErr
 		}
 		_ = pw.CloseWithError(err)
-	}()
+	})
 	return pr, n, nil
 }
 

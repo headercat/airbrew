@@ -634,6 +634,28 @@ func (r *Repository) ResetOutboxAttempts(ctx context.Context, id string) error {
 	return nil
 }
 
+// ClaimOutbox atomically reserves an outbox row for a retry attempt by moving
+// its next_attempt into the future. It returns true when this caller won the
+// claim. The sweeper and the manual-retry HTTP path both go through RetrySend,
+// so without this guard the two can pick the same row concurrently and both
+// hand it to the driver — producing a duplicate real-world delivery. The claim
+// is released by MarkSent (on success) or RecordOutboxAttempt (on failure).
+func (r *Repository) ClaimOutbox(ctx context.Context, id string, lease time.Duration) (bool, error) {
+	now := time.Now().UTC().Truncate(time.Second)
+	holdUntil := now.Add(lease)
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE mail_messages
+		SET outbox_next_attempt = ?, updated_at = ?
+		WHERE id = ? AND is_outbox = 1
+		  AND (outbox_next_attempt IS NULL OR outbox_next_attempt <= ?)`,
+		holdUntil, now, id, now)
+	if err != nil {
+		return false, fmt.Errorf("inbox: claim outbox: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // PatchFlags applies a flag patch.
 func (r *Repository) PatchFlags(ctx context.Context, userID, id string, patch FlagPatch) error {
 	sets := []string{}

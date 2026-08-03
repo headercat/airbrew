@@ -375,12 +375,16 @@ func (r *Repository) MaxSeqAcrossRooms(ctx context.Context, userID string) (int6
 	return seq.Int64, nil
 }
 
+// maxMessageBody is the byte cap enforced on both send and edit so an edited
+// message cannot bypass the send-time limit.
+const maxMessageBody = 8000
+
 func (r *Repository) AppendMessage(ctx context.Context, userID, roomID, body string) (Message, []string, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return Message{}, nil, fmt.Errorf("%w: message required", ErrInvalidInput)
 	}
-	if len(body) > 8000 {
+	if len(body) > maxMessageBody {
 		return Message{}, nil, fmt.Errorf("%w: message too long", ErrInvalidInput)
 	}
 	if _, _, err := r.participantRole(ctx, userID, roomID); err != nil {
@@ -453,6 +457,9 @@ func (r *Repository) EditMessage(ctx context.Context, userID, roomID, messageID,
 	if body == "" {
 		return Message{}, nil, fmt.Errorf("%w: message required", ErrInvalidInput)
 	}
+	if len(body) > maxMessageBody {
+		return Message{}, nil, fmt.Errorf("%w: message too long", ErrInvalidInput)
+	}
 	if _, _, err := r.participantRole(ctx, userID, roomID); err != nil {
 		return Message{}, nil, err
 	}
@@ -480,6 +487,11 @@ func (r *Repository) EditMessage(ctx context.Context, userID, roomID, messageID,
 			return Message{}, nil, ErrForbidden
 		}
 		return Message{}, nil, ErrNotFound
+	}
+	// Keep the room's ordering fresh so the sidebar reflects the edit.
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE chat_rooms SET updated_at = ? WHERE id = ?`, now, roomID); err != nil {
+		return Message{}, nil, fmt.Errorf("chat: touch room on edit: %w", err)
 	}
 	msg, err := r.GetMessage(ctx, userID, roomID, messageID)
 	if err != nil {

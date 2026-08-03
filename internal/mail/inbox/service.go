@@ -642,6 +642,17 @@ func (s *Service) RetrySend(ctx context.Context, userID, id string, sender Outbo
 	if !msg.IsOutbox {
 		return nil, fmt.Errorf("%w: message is not in the outbox", ErrInvalidInput)
 	}
+	// Atomically claim the row so a concurrent sweeper tick cannot also hand
+	// it to the driver (duplicate delivery). The lease covers the SMTP dial +
+	// DATA window; on success MarkSent clears the row, on failure
+	// RecordOutboxAttempt resets the lease.
+	claimed, err := s.repo.ClaimOutbox(ctx, msg.ID, 2*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return msg, ErrRetryInProgress
+	}
 	out := letter.Outgoing{
 		From: msg.From, To: msg.To, Cc: msg.Cc, Bcc: msg.Bcc,
 		ReplyTo: msg.ReplyTo, Subject: msg.Subject,

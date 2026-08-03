@@ -20,6 +20,7 @@ package mail
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -163,6 +164,13 @@ func (m *Module) sweepOutbox(ctx context.Context, log *slog.Logger) {
 		}
 		_, err := m.inbox.RetrySend(ctx, item.UserID, item.ID, sender)
 		if err == nil {
+			continue
+		}
+		// Another worker (manual retry) already claimed the row; it will
+		// resolve the send and the next sweeper tick will re-collect it if
+		// needed. Do not burn an attempt on a claim that never reached the
+		// driver.
+		if errors.Is(err, inbox.ErrRetryInProgress) {
 			continue
 		}
 		// Exponential backoff: 1m, 2m, 4m, 8m, 16m, 32m (capped).

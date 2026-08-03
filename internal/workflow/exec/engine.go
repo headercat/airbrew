@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/headercat/airbrew/internal/audit"
+	"github.com/headercat/airbrew/internal/logging"
 	"github.com/headercat/airbrew/internal/workflow/defn"
 	"github.com/headercat/airbrew/internal/workflow/run"
 )
@@ -183,7 +184,7 @@ func (e *Engine) ExecuteAsync(ctx context.Context, req Request) (*run.Run, error
 	}
 	wf := req.Workflow
 	input := req.Input
-	go e.runDetached(wf, input, rn, timeout)
+	logging.Go("workflow.runDetached", func() { e.runDetached(wf, input, rn, timeout) })
 	return rn, nil
 }
 

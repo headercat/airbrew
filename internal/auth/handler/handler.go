@@ -443,6 +443,9 @@ func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusServiceUnavailable, "unavailable", "blob store not configured")
 		return
 	}
+	// Cap the whole request body (not just the in-memory threshold) so a
+	// client cannot stream gigabytes of multipart onto temp disk.
+	r.Body = http.MaxBytesReader(w, r.Body, maxAvatarBytes+512)
 	if err := r.ParseMultipartForm(maxAvatarBytes); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid_request", "failed to parse multipart: "+err.Error())
 		return

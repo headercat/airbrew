@@ -586,7 +586,9 @@ function RunStatusBadge({ status }: { status: string }) {
   const variant =
     status === "success"
       ? "secondary"
-      : status === "failed" || status === "cancelled"
+      : status === "failed" ||
+          status === "cancelled" ||
+          status === "timed_out"
         ? "destructive"
         : "outline";
   return (

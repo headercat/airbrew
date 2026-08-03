@@ -106,7 +106,7 @@ export function openChatEvents(
   onEvent: (event: ChatEvent) => void,
   opts?: {
     getSinceSeq?: () => number;
-    onReady?: (seq: number) => void;
+    onReady?: (seq: number, hasMore: boolean) => void;
   },
 ) {
   // The browser EventSource reuses the same URL on its built-in reconnect, so
@@ -129,10 +129,12 @@ export function openChatEvents(
   const bind = (stream: EventSource) => {
     stream.addEventListener("ready", (ev) => {
       try {
-        const data = JSON.parse(
-          (ev as MessageEvent).data,
-        ) as { ok: boolean; seq?: number };
-        if (data.seq) opts?.onReady?.(data.seq);
+        const data = JSON.parse((ev as MessageEvent).data) as {
+          ok: boolean;
+          seq?: number;
+          has_more?: boolean;
+        };
+        if (data.seq) opts?.onReady?.(data.seq, data.has_more ?? false);
       } catch {
         /* ignore malformed ready frame */
       }
@@ -156,6 +158,21 @@ export function openChatEvents(
       es.onerror = () => reconnect();
     }, 1500);
   };
+  // Wrap onReady so a backlog that exceeded the replay cap (has_more) keeps
+  // paging by reopening the stream with the now-advanced cursor, instead of
+  // dropping the unreplayed tail.
+  const upstreamReady = opts?.onReady;
+  if (upstreamReady) {
+    opts.onReady = (seq, hasMore) => {
+      upstreamReady(seq, hasMore);
+      if (hasMore) {
+        es.close();
+        es = factory(opts.getSinceSeq?.() ?? 0);
+        bind(es);
+        es.onerror = () => reconnect();
+      }
+    };
+  }
   bind(es);
   es.onerror = () => reconnect();
   return { close: () => es.close() };

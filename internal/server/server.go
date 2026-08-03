@@ -170,11 +170,27 @@ func Build(d Deps) *http.ServeMux {
 	mux.HandleFunc("GET /api/vault/status", pwMod.Status)
 	pwSub := http.NewServeMux()
 	pwMod.RegisterRoutes(pwSub)
+	// setup and rotate are sensitive (envelope re-wrap) and are given a
+	// stricter per-IP limit than the general vault endpoints. They are mounted
+	// with more specific patterns so they take priority over the catch-all.
+	pwKeySub := http.NewServeMux()
+	pwMod.RegisterKeyRoutes(pwKeySub)
 	vaultLimiter := middleware.NewRateLimiter(120, time.Minute)
-	mux.Handle("/api/vault/", authMod.SessionMiddleware(middleware.Chain(pwSub,
+	vaultKeyLimiter := middleware.NewRateLimiter(5, time.Minute)
+	vaultMux := http.NewServeMux()
+	vaultMux.Handle("POST /api/vault/setup", middleware.Chain(pwKeySub,
+		modules.RequireEnabled(stubState, "passwords"),
+		middleware.RateLimit(vaultKeyLimiter, middleware.ClientIPKey),
+	))
+	vaultMux.Handle("POST /api/vault/keys/rotate", middleware.Chain(pwKeySub,
+		modules.RequireEnabled(stubState, "passwords"),
+		middleware.RateLimit(vaultKeyLimiter, middleware.ClientIPKey),
+	))
+	vaultMux.Handle("/api/vault/", middleware.Chain(pwSub,
 		modules.RequireEnabled(stubState, "passwords"),
 		middleware.RateLimit(vaultLimiter, middleware.ClientIPKey),
-	)))
+	))
+	mux.Handle("/api/vault/", authMod.SessionMiddleware(vaultMux))
 
 	if d.WebProxyTarget != "" {
 		mux.Handle("/", webProxyHandler(d.WebProxyTarget))

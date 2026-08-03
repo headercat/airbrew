@@ -57,6 +57,12 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	m.h.RegisterRoutes(mux)
 }
 
+// RegisterKeyRoutes mounts only the envelope setup/rotate endpoints so the
+// server can apply a stricter rate limit to them.
+func (m *Module) RegisterKeyRoutes(mux *http.ServeMux) {
+	m.h.RegisterKeyRoutes(mux)
+}
+
 // Status is the public GET /api/vault/status handler (no auth), mirroring the
 // other feature modules so the SPA can list and gate the module.
 func (m *Module) Status(w http.ResponseWriter, r *http.Request) {

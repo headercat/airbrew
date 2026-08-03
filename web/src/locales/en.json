@@ -589,7 +589,11 @@
       "hide": "Hide",
       "noHistory": "No previous versions.",
       "restore": "Restore",
-      "confirmRestore": "Restore this version? The current version is saved to history first."
+      "confirmRestore": "Restore this version? The current version is saved to history first.",
+      "copy": "Copy",
+      "copyField": "Copy {{field}}",
+      "revealValue": "Show {{field}}",
+      "hideValue": "Hide {{field}}"
     },
     "attachments": {
       "title": "Attachments",

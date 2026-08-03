@@ -41,10 +41,11 @@ func New(svc *vault.Service, auditSvc *audit.Service, blobs blob.Store) *Handler
 
 // RegisterRoutes mounts the vault endpoints on mux. All routes are under
 // /api/vault and require a loaded session (see Module wiring in server.go).
+// RegisterKeyRoutes mounts the sensitive setup/rotate endpoints on keyMux so
+// the caller can apply a stricter rate-limit chain to them.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/vault/setup", h.setup)
+	h.RegisterKeyRoutes(mux)
 	mux.HandleFunc("GET /api/vault/keys", h.getKeys)
-	mux.HandleFunc("POST /api/vault/keys/rotate", h.rotateKeys)
 
 	mux.HandleFunc("GET /api/vault/sync", h.sync)
 	mux.HandleFunc("GET /api/vault/export", h.exportVault)
@@ -72,6 +73,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/vault/folders/{id}/restore", h.restoreFolder)
 	mux.HandleFunc("DELETE /api/vault/items/{id}/purge", h.purgeItem)
 	mux.HandleFunc("DELETE /api/vault/folders/{id}/purge", h.purgeFolder)
+}
+
+// RegisterKeyRoutes mounts only the envelope setup/rotate endpoints. These are
+// split out so the server can wrap them in a stricter rate limit than the
+// general vault endpoints.
+func (h *Handler) RegisterKeyRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/vault/setup", h.setup)
+	mux.HandleFunc("POST /api/vault/keys/rotate", h.rotateKeys)
 }
 
 // --- envelope ---------------------------------------------------------------

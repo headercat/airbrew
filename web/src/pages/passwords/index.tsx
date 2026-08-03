@@ -2,7 +2,7 @@
 // store: loading → setup (first run) → unlock (locked) → list (unlocked).
 // The editor lives on its own routes (/passwords/new, /passwords/:id).
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   KeyRound,
@@ -214,6 +214,37 @@ function VaultListView() {
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sortBy, setSortBy] = useState<"name" | "updated">("name");
   const navigate = useNavigate();
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // Keyboard shortcuts: "/" focuses search, "n" opens the new-item editor,
+  // and Escape clears the search box. Shortcuts are ignored while the user is
+  // typing in any input/textarea/select so they do not clobber text entry.
+  useEffect(() => {
+    function isTypingTarget(el: EventTarget | null): boolean {
+      if (!(el instanceof HTMLElement)) return false;
+      const tag = el.tagName.toLowerCase();
+      return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable;
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "/" && !isTypingTarget(e.target)) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      } else if (
+        e.key.toLowerCase() === "n" &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !isTypingTarget(e.target)
+      ) {
+        e.preventDefault();
+        navigate("/passwords/new");
+      } else if (e.key === "Escape" && document.activeElement === searchRef.current) {
+        setQuery("");
+        searchRef.current?.blur();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navigate]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -288,10 +319,12 @@ function VaultListView() {
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
+            ref={searchRef}
             className="pl-9"
             placeholder={t("passwords.list.search")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            aria-label={t("passwords.list.search")}
           />
         </div>
         <select

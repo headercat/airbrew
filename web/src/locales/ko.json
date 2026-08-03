@@ -589,7 +589,11 @@
       "hide": "숨기기",
       "noHistory": "이전 버전이 없습니다.",
       "restore": "복원",
-      "confirmRestore": "이 버전을 복원하시겠습니까? 현재 버전은 먼저 기록에 저장됩니다."
+      "confirmRestore": "이 버전을 복원하시겠습니까? 현재 버전은 먼저 기록에 저장됩니다.",
+      "copy": "복사",
+      "copyField": "{{field}} 복사",
+      "revealValue": "{{field}} 표시",
+      "hideValue": "{{field}} 숨기기"
     },
     "attachments": {
       "title": "첨부 파일",

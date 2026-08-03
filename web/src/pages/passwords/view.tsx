@@ -242,10 +242,13 @@ export default function PasswordView() {
 function CopyButton({
   value,
   disabled,
+  label,
 }: {
   value: string;
   disabled?: boolean;
+  label?: string;
 }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   async function copy() {
     if (!value) return;
@@ -261,6 +264,7 @@ function CopyButton({
       onClick={copy}
       disabled={disabled}
       className="h-8 w-8"
+      aria-label={label ? t("passwords.view.copyField", { field: label }) : t("passwords.view.copy")}
     >
       {copied ? (
         <Check className="h-4 w-4 text-green-500" />
@@ -289,7 +293,7 @@ function FieldRow({ field }: { field: Field }) {
           <p className="whitespace-pre-wrap break-all rounded-md bg-muted/40 px-3 py-2 text-sm">
             {field.value || <span className="text-muted-foreground">—</span>}
           </p>
-          <CopyButton value={field.value} />
+          <CopyButton value={field.value} label={label} />
         </div>
       </div>
     );
@@ -313,7 +317,7 @@ function FieldRow({ field }: { field: Field }) {
           >
             {field.value || <span className="text-muted-foreground">—</span>}
           </a>
-          <CopyButton value={field.value} />
+          <CopyButton value={field.value} label={label} />
         </div>
       </div>
     );
@@ -333,13 +337,14 @@ function FieldRow({ field }: { field: Field }) {
         <span className="break-all text-sm">
           {field.value || <span className="text-muted-foreground">—</span>}
         </span>
-        <CopyButton value={field.value} />
+        <CopyButton value={field.value} label={label} />
       </div>
     </div>
   );
 }
 
 function SecretField({ label, value }: { label: string; value: string }) {
+  const { t } = useTranslation();
   const [revealed, setRevealed] = useState(false);
   return (
     <div className="grid gap-1">
@@ -366,6 +371,11 @@ function SecretField({ label, value }: { label: string; value: string }) {
             className="h-8 w-8"
             onClick={() => setRevealed((r) => !r)}
             disabled={!value}
+            aria-label={
+              revealed
+                ? t("passwords.view.hideValue", { field: label })
+                : t("passwords.view.revealValue", { field: label })
+            }
             title={label}
           >
             {revealed ? (
@@ -374,7 +384,7 @@ function SecretField({ label, value }: { label: string; value: string }) {
               <Eye className="h-4 w-4" />
             )}
           </Button>
-          <CopyButton value={value} />
+          <CopyButton value={value} label={label} />
         </div>
       </div>
     </div>
@@ -430,7 +440,7 @@ function TotpField({ label, secret }: { label: string; secret: string }) {
               : t("passwords.view.totpEmpty")}
           </span>
         )}
-        <CopyButton value={code?.code ?? ""} disabled={!code} />
+        <CopyButton value={code?.code ?? ""} disabled={!code} label={label} />
       </div>
     </div>
   );

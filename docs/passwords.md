@@ -229,6 +229,7 @@ POST   /api/vault/items/:id/restore          undelete a tombstoned item
 POST   /api/vault/folders/:id/restore        undelete a tombstoned folder
 DELETE /api/vault/items/:id/purge            permanently delete one trashed item
 DELETE /api/vault/folders/:id/purge          permanently delete one trashed folder
+GET    /api/vault/icon?domain=               proxied favicon for login items
 ```
 
 Export bundles include the source key envelope plus encrypted folders, items,

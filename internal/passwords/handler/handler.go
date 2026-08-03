@@ -73,6 +73,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/vault/folders/{id}/restore", h.restoreFolder)
 	mux.HandleFunc("DELETE /api/vault/items/{id}/purge", h.purgeItem)
 	mux.HandleFunc("DELETE /api/vault/folders/{id}/purge", h.purgeFolder)
+
+	mux.HandleFunc("GET /api/vault/icon", h.favicon)
 }
 
 // RegisterKeyRoutes mounts only the envelope setup/rotate endpoints. These are
@@ -1124,4 +1126,60 @@ func (h *Handler) emptyTrash(w http.ResponseWriter, r *http.Request) {
 	}
 	h.auditVault(r, "vault.trash_emptied", sess.UserID, map[string]any{"blobs": len(blobPaths)})
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// --- favicon proxy ---------------------------------------------------------
+//
+// The SPA cannot load third-party favicons directly because the production CSP
+// restricts img-src to 'self' data: blob:. Rather than widen the policy, we
+// proxy through the authenticated vault endpoint so the user's IP is not
+// exposed to the icon provider and the browser never makes a cross-origin
+// request. The domain is validated to a bare hostname so the parameter cannot
+// be abused as an SSRF vector.
+
+var faviconClient = &http.Client{Timeout: 5 * time.Second}
+
+func isValidDomain(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	for _, c := range s {
+		if !(c == '.' || c == '-' ||
+			(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *Handler) favicon(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireSession(w, r); !ok {
+		return
+	}
+	domain := r.URL.Query().Get("domain")
+	if !isValidDomain(domain) {
+		response.Error(w, http.StatusBadRequest, "invalid_request", "valid domain required")
+		return
+	}
+	iconURL := "https://www.google.com/s2/favicons?domain=" + domain + "&sz=64"
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, iconURL, nil)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	resp, err := faviconClient.Do(req)
+	if err != nil {
+		response.Error(w, http.StatusBadGateway, "unavailable", "icon provider unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		response.Error(w, http.StatusNotFound, "not_found", "icon not found")
+		return
+	}
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	// Favicons rarely change; let the browser cache for a day.
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = io.Copy(w, resp.Body)
 }

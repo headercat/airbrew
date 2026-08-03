@@ -33,7 +33,7 @@ import { copyAndAutoClear } from "@/lib/vault/clipboard";
 import { useVault, type DecryptedItem, type Field } from "@/lib/vault/store";
 import { generateTotp, type TotpCode } from "@/lib/vault/totp";
 import { AttachmentsCard } from "./attachments";
-import { itemIcon } from "./icons";
+import { itemIcon, extractDomain, Favicon } from "./icons";
 
 export default function PasswordView() {
   const { t } = useTranslation();
@@ -96,6 +96,11 @@ export default function PasswordView() {
   }
 
   const Icon = itemIcon(item.type);
+  const urlField = item.fields.find((f) => f.kind === "url");
+  const domain =
+    urlField?.value && item.type === "login"
+      ? extractDomain(urlField.value)
+      : null;
 
   return (
     <PageWrapper>
@@ -111,7 +116,11 @@ export default function PasswordView() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted">
-            <Icon className="h-5 w-5 text-muted-foreground" />
+            {domain ? (
+              <Favicon domain={domain} size={20} />
+            ) : (
+              <Icon className="h-5 w-5 text-muted-foreground" />
+            )}
           </div>
           <div className="space-y-1">
             <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">

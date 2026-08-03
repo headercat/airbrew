@@ -36,7 +36,7 @@ import { evaluateMasterPassword } from "@/lib/vault/security";
 import { VaultActions } from "./actions";
 import { PasswordStrengthHint } from "./password-strength";
 import { TrashButton } from "./trash";
-import { itemIcon } from "./icons";
+import { itemIcon, extractDomain, Favicon } from "./icons";
 
 export default function PasswordsPage() {
   const { status, error } = useVault();
@@ -425,6 +425,11 @@ function VaultListView() {
         <div className="space-y-1">
           {filtered.map((it) => {
             const Icon = itemIcon(it.type);
+            const urlField = it.fields.find((f) => f.kind === "url");
+            const domain =
+              urlField?.value && it.type === "login"
+                ? extractDomain(urlField.value)
+                : null;
             return (
               <Link
                 key={it.id}
@@ -432,7 +437,11 @@ function VaultListView() {
                 className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 transition-colors hover:bg-accent/50"
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
-                  <Icon className="h-4 w-4 text-muted-foreground" />
+                  {domain ? (
+                    <Favicon domain={domain} size={16} />
+                  ) : (
+                    <Icon className="h-4 w-4 text-muted-foreground" />
+                  )}
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{it.name}</p>

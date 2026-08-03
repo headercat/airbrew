@@ -285,6 +285,29 @@ func (r *Repository) SubtreeSize(ctx context.Context, userID, rootID string) (in
 	return total.Int64, nil
 }
 
+// SubtreeSizeAny returns the file byte total under rootID inclusive of trashed
+// descendants (it does not filter on deleted_at). Used by Restore to verify
+// the about-to-be-restored footprint fits the quota, since Restore's cascade
+// un-deletes the whole subtree.
+func (r *Repository) SubtreeSizeAny(ctx context.Context, userID, rootID string) (int64, error) {
+	var total sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+		WITH RECURSIVE subtree(id) AS (
+		  SELECT id FROM drive_nodes WHERE id = ? AND user_id = ?
+		  UNION ALL
+		  SELECT c.id FROM drive_nodes c JOIN subtree ON c.parent_id = subtree.id
+		    WHERE c.user_id = ?
+		)
+		SELECT COALESCE(SUM(size_bytes),0)
+		FROM drive_nodes
+		WHERE id IN (SELECT id FROM subtree) AND kind = 'file'`,
+		rootID, userID, userID).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total.Int64, nil
+}
+
 // UpdateNodeFields applies a partial update to name/parent/content metadata.
 type UpdateNodeFields struct {
 	Name        *string

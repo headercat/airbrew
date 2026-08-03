@@ -443,8 +443,22 @@ func (s *Service) Trash(ctx context.Context, userID, id string) error {
 }
 
 // Restore clears the soft-delete flag (and, for folders, the descendants
-// trashed with it). Returns the restored node.
+// trashed with it). Returns the restored node. Quota is checked first so a
+// restore cannot silently push the user over their storage limit.
 func (s *Service) Restore(ctx context.Context, userID, id string) (*Node, error) {
+	if cfg := s.Config(); cfg.QuotaBytes > 0 {
+		restored, err := s.repo.SubtreeSizeAny(ctx, userID, id)
+		if err != nil {
+			return nil, err
+		}
+		used, _, err := s.Usage(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if used+restored > cfg.QuotaBytes {
+			return nil, fmt.Errorf("%w: restoring %d bytes would exceed quota %d", ErrQuotaExceeded, restored, cfg.QuotaBytes)
+		}
+	}
 	if err := s.repo.Restore(ctx, userID, id); err != nil {
 		return nil, err
 	}

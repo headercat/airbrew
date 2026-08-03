@@ -587,34 +587,54 @@ func (r *Repository) syncChanges(ctx context.Context, userID string, since, curr
 	if cut > 0 {
 		return page[:cut], page[cut-1].Revision, true, nil
 	}
-	sameRev, err := r.syncChangesAtRevision(ctx, userID, overflowRev)
+	// The whole revision group might be larger than one page (e.g. an import
+	// that touched thousands of rows at one revision). Cap it and signal
+	// HasMore when the cap is hit so the client keeps paging instead of
+	// materialising an unbounded result set.
+	cap := limit * 4
+	if cap < 1 {
+		cap = 2000
+	}
+	sameRev, truncated, err := r.syncChangesAtRevision(ctx, userID, overflowRev, cap)
 	if err != nil {
 		return nil, 0, false, err
 	}
-	return sameRev, overflowRev, current > overflowRev, nil
+	hasMore := current > overflowRev || truncated
+	return sameRev, overflowRev, hasMore, nil
 }
 
-func (r *Repository) syncChangesAtRevision(ctx context.Context, userID string, revision int64) ([]syncChange, error) {
+// syncChangesAtRevision returns every change at one revision, capped at cap.
+// A single ImportBundle can touch thousands of rows at one revision; without
+// the cap the fallback page would be unbounded and the browser could OOM. The
+// truncated flag is true when more rows at this revision remain.
+func (r *Repository) syncChangesAtRevision(ctx context.Context, userID string, revision, cap int64) ([]syncChange, bool, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT kind, id, revision FROM (
 			SELECT 'folder' AS kind, id, revision FROM vault_folders WHERE user_id = ? AND revision = ?
 			UNION ALL
 			SELECT 'item' AS kind, id, revision FROM vault_items WHERE user_id = ? AND revision = ?
 		)
-		ORDER BY kind ASC, id ASC`, userID, revision, userID, revision)
+		ORDER BY kind ASC, id ASC
+		LIMIT ?`, userID, revision, userID, revision, cap+1)
 	if err != nil {
-		return nil, fmt.Errorf("vault: sync revision group: %w", err)
+		return nil, false, fmt.Errorf("vault: sync revision group: %w", err)
 	}
 	defer rows.Close()
 	var changes []syncChange
 	for rows.Next() {
 		var ch syncChange
 		if err := rows.Scan(&ch.Kind, &ch.ID, &ch.Revision); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		changes = append(changes, ch)
 	}
-	return changes, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if int64(len(changes)) > cap {
+		return changes[:cap], true, nil
+	}
+	return changes, false, nil
 }
 
 // ListItemRevisions returns the archived history snapshots of an item, newest

@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"errors"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -39,6 +40,10 @@ func (s *Service) SetPasswordPolicyChecker(c PasswordPolicyChecker) { s.policy =
 // email or password.
 var ErrInvalidCredentials = errors.New("invalid credentials")
 
+// ErrInvalidEmail is returned by Register when the supplied email does not
+// parse as a bare RFC 5322 address.
+var ErrInvalidEmail = errors.New("invalid email address")
+
 // ProfileUpdate replaces all editable profile fields. A nil Birthday clears
 // the stored value; the zero time also clears.
 type ProfileUpdate struct {
@@ -64,6 +69,11 @@ func (s *Service) registerWithRole(ctx context.Context, email, plainPassword, di
 	email = strings.TrimSpace(email)
 	if email == "" {
 		return nil, errors.New("email required")
+	}
+	// Reject obviously malformed identities ("<script>@x", "a b@c", "x").
+	// net/mail.ParseAddress accepts "Name <addr>" so require a bare address.
+	if _, err := mail.ParseAddress(email); err != nil || strings.ContainsAny(email, " \t<>") {
+		return nil, ErrInvalidEmail
 	}
 	if err := s.checkPasswordPolicy(ctx, plainPassword); err != nil {
 		return nil, err

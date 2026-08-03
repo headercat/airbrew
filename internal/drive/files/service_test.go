@@ -291,6 +291,35 @@ func TestCopyFileAndFolderTree(t *testing.T) {
 	}
 }
 
+// TestRestoreRespectsQuota guards against a restore silently pushing the user
+// over quota: fill the quota, trash the file, upload enough to consume the
+// freed space, then restoring the trashed file must be rejected.
+func TestRestoreRespectsQuota(t *testing.T) {
+	svc, uid := testService(t)
+	ctx := context.Background()
+	// Quota is 2 MiB (see testService). Upload a 1.5 MiB file then trash it.
+	big := strings.Repeat("a", 3<<19) // 1.5 MiB
+	file, err := svc.Upload(ctx, UploadInput{
+		UserID: uid, Name: "big.bin", Content: strings.NewReader(big),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Trash(ctx, uid, file.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Consume the freed space with a 1 MiB file.
+	if _, err := svc.Upload(ctx, UploadInput{
+		UserID: uid, Name: "other.bin", Content: strings.NewReader(strings.Repeat("b", 1<<20)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Restoring the trashed 1.5 MiB file (1 + 1.5 = 2.5 MiB) exceeds 2 MiB.
+	if _, err := svc.Restore(ctx, uid, file.ID); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("expected ErrQuotaExceeded on restore, got %v", err)
+	}
+}
+
 func TestTrashRestoreDelete(t *testing.T) {
 	svc, uid := testService(t)
 	ctx := context.Background()

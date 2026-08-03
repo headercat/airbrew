@@ -116,6 +116,10 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusConflict, "email_taken", "email already registered")
 			return
 		}
+		if errors.Is(err, user.ErrInvalidEmail) {
+			response.Error(w, http.StatusBadRequest, "invalid_email", "enter a valid email address")
+			return
+		}
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}

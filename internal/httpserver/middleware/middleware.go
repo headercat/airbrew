@@ -87,6 +87,22 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Flush delegates to the underlying writer so SSE / chunked handlers (chat
+// events, AI streaming) can flush frames incrementally. Without this the
+// embedded ResponseWriter still supports Flush, but the wrapper type does not
+// implement http.Flusher, so downstream type assertions fail and the handlers
+// return 500 streaming_unsupported. Also advertise via Unwrap so the standard
+// library's http.NewResponseController can reach the concrete writer.
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap lets http.ResponseController / ResponseWriterWrapper reach the
+// underlying ResponseWriter (and its Flusher / Hijacker interfaces).
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // AccessLog logs one human-readable line per HTTP request.
 func AccessLog(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

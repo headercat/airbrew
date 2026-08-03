@@ -707,6 +707,26 @@
       "capitalize": "첫 글자 대문자",
       "includeNumber": "숫자 추가",
       "apply": "사용하기"
+    },
+    "health": {
+      "button": "건강 검사",
+      "title": "비밀번호 건강",
+      "description": "{{total}}개 비밀번호를 검사했습니다.",
+      "allGood": "취약하거나 중복되거나 오래된 비밀번호가 없습니다.",
+      "weak": "취약한 비밀번호 ({{count}}개)",
+      "reused": "중복 사용 비밀번호 ({{count}}건)",
+      "old": "1년 이상 미변경 ({{count}}개)",
+      "reusedCount": "{{count}}회 사용",
+      "ageDays": "{{count}}일 경과",
+      "reasons": {
+        "short": "너무 짧음",
+        "common": "흔한 비밀번호",
+        "low-variety": "문자 다양성 부족",
+        "repeated": "반복 문자",
+        "sequence": "일반적인 시퀀스",
+        "low-entropy": "낮은 엔트로피",
+        "empty": "비어 있음"
+      }
     }
   },
   "profile": {

@@ -42,6 +42,7 @@ import {
 } from "@/lib/vault/security";
 import { WrongMasterPassword, useVault } from "@/lib/vault/store";
 import { PasswordStrengthHint } from "./password-strength";
+import { HealthButton } from "./health";
 
 const MAX_IMPORT_FILE_BYTES = 256 << 20;
 
@@ -189,6 +190,7 @@ export function VaultActions() {
             setInfo(t("passwords.actions.csvImported", { count: n }))
           }
         />
+        <HealthButton />
         <ChangeMasterPassword
           onChange={changeMasterPassword}
           disabled={busy}
@@ -477,9 +479,10 @@ function CSVImport({
     format: CSVFormat;
   } | null>(null);
   const [formatChoice, setFormatChoice] = useState<CSVFormat>("auto");
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(
-    null,
-  );
+  const [progress, setProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -589,9 +592,7 @@ function CSVImport({
                     {it.username ? ` — ${it.username}` : ""}
                   </li>
                 ))}
-                {(pending?.items.length ?? 0) > 20 && (
-                  <li>…</li>
-                )}
+                {(pending?.items.length ?? 0) > 20 && <li>…</li>}
               </ul>
             </>
           )}
@@ -604,11 +605,7 @@ function CSVImport({
             >
               {t("common.cancel")}
             </Button>
-            <Button
-              type="button"
-              onClick={doImport}
-              disabled={busy}
-            >
+            <Button type="button" onClick={doImport} disabled={busy}>
               {busy && <Loader2 className="h-4 w-4 animate-spin" />}
               {t("passwords.actions.csvConfirm")}
             </Button>

@@ -708,6 +708,29 @@
       "capitalize": "Capitalize",
       "includeNumber": "Append number",
       "apply": "Use this"
+    },
+    "health": {
+      "button": "Health check",
+      "title": "Password health",
+      "description": "{{total}} passwords checked.",
+      "allGood": "No weak, reused, or old passwords found.",
+      "weak_one": "Weak password ({{count}})",
+      "weak_other": "Weak passwords ({{count}})",
+      "reused": "Reused passwords ({{count}} uses)",
+      "old_one": "Not updated in over a year ({{count}})",
+      "old_other": "Not updated in over a year ({{count}})",
+      "reusedCount": "Used {{count}}×",
+      "ageDays_one": "{{count}} day old",
+      "ageDays_other": "{{count}} days old",
+      "reasons": {
+        "short": "too short",
+        "common": "common password",
+        "low-variety": "little variety",
+        "repeated": "repeated characters",
+        "sequence": "common sequence",
+        "low-entropy": "low entropy",
+        "empty": "empty"
+      }
     }
   },
   "profile": {

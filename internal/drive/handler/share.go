@@ -25,7 +25,7 @@ type publicShareResp struct {
 
 // getShare returns public metadata for a share so a landing page can render
 // without revealing the file contents. The password is read from the
-// X-Share-Password header (preferred) or the legacy ?pw= query parameter.
+// X-Share-Password header.
 func (h *Handler) getShare(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	pw := sharePassword(r)
@@ -44,8 +44,7 @@ func (h *Handler) getShare(w http.ResponseWriter, r *http.Request) {
 }
 
 // downloadShare streams the shared file. For password-protected shares the
-// password is supplied via the X-Share-Password header (preferred) or the
-// legacy ?pw= query parameter.
+// password is supplied via the X-Share-Password header.
 func (h *Handler) downloadShare(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	pw := sharePassword(r)

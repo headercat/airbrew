@@ -69,6 +69,57 @@ func TestEngineExecutesHTTPAndBranch(t *testing.T) {
 	}
 }
 
+// TestEngineHTTPBlocksRedirectToPrivate verifies the SSRF redirect guard: an
+// action.http that 302s to a loopback address must fail instead of following
+// the redirect (which would bypass the initial isPrivateHost check).
+func TestEngineHTTPBlocksRedirectToPrivate(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Redirect to a loopback address that the initial URL check cannot see.
+		http.Redirect(w, r, "http://127.0.0.1:9/", http.StatusFound)
+	}))
+	defer api.Close()
+
+	db := testDB(t)
+	svc := run.NewService(run.NewRepository(db), nil)
+	engine := New(svc, nil)
+
+	def := defn.Definition{
+		Nodes: []defn.Node{
+			{ID: "start", Type: "trigger.manual"},
+			{ID: "fetch", Type: "action.http", Config: raw(map[string]any{
+				"url": api.URL, "method": "GET", "allow_private": true,
+			})},
+		},
+		Edges: []defn.Edge{{From: "start", To: "fetch"}},
+	}
+	wf, err := svc.Create(context.Background(), run.NewWorkflowInput{
+		UserID: "user_1", Name: "Redirect", Definition: def,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rn, _ := engine.Execute(context.Background(), Request{
+		Workflow: wf, Trigger: run.RunByManual,
+	})
+	// The fetch step must have failed; the run therefore cannot be successful.
+	if rn.Status == run.RunSuccess {
+		t.Fatalf("run succeeded; expected SSRF redirect to be blocked")
+	}
+	steps, err := svc.ListSteps(context.Background(), "user_1", rn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var failed bool
+	for _, s := range steps {
+		if s.NodeID == "fetch" && s.Status == run.StepFailed {
+			failed = true
+		}
+	}
+	if !failed {
+		t.Fatalf("fetch step did not fail on redirect to private host; steps=%+v", steps)
+	}
+}
+
 func testDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file::memory:?cache=shared&_pragma=foreign_keys(1)&_time_format=sqlite")

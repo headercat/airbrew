@@ -59,6 +59,13 @@ func (m *Module) Start(ctx context.Context) {
 			"workflow: lifecycle context is nil; scheduler will not run")
 		return
 	}
+	// Any run still marked "running" belongs to a previous process that died
+	// mid-graph; this process cannot resume it, so surface it as failed.
+	if n, err := m.svc.ReapStaleRunning(ctx); err != nil {
+		slog.WarnContext(ctx, "workflow: reap stale running runs", "error", err)
+	} else if n > 0 {
+		slog.InfoContext(ctx, "workflow: marked interrupted runs as failed", "count", n)
+	}
 	go m.scheduler.Start(ctx)
 }
 

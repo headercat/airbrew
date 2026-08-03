@@ -78,7 +78,10 @@ func (s *Scheduler) tick(ctx context.Context, minute time.Time) {
 		}
 		wf := item
 		go func() {
-			_, err := s.engine.Execute(context.Background(), wfexec.Request{
+			// Derive from the scheduler lifecycle ctx so a shutdown signal
+			// interrupts long-running graphs instead of blocking graceful
+			// shutdown for up to the per-run timeout.
+			_, err := s.engine.Execute(ctx, wfexec.Request{
 				Workflow: wf,
 				Trigger:  run.RunBySchedule,
 				Input: map[string]any{

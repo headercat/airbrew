@@ -382,6 +382,24 @@ func (r *Repository) FinishRun(ctx context.Context, id string, status RunStatus,
 	return nil
 }
 
+// ReapStaleRunning marks every still-running run as failed. A run only stays
+// "running" across a process restart if the previous process died mid-graph
+// (crash, SIGKILL). The scheduler/engine of this process cannot resume it, so
+// surfacing it as failed keeps run history honest and lets the user re-trigger.
+func (r *Repository) ReapStaleRunning(ctx context.Context) (int64, error) {
+	now := time.Now().UTC().Truncate(time.Second)
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE workflow_runs
+		SET status = ?, error = ?, finished_at = ?
+		WHERE status = ?
+	`, string(RunFailed), "run interrupted by process restart", now, string(RunRunning))
+	if err != nil {
+		return 0, fmt.Errorf("workflow: reap stale running: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // GetRun returns one run, scoped to userID.
 func (r *Repository) GetRun(ctx context.Context, userID, id string) (*Run, error) {
 	row := r.db.QueryRowContext(ctx, `

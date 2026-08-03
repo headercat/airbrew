@@ -15,19 +15,21 @@ import (
 	"github.com/headercat/airbrew/internal/auth/session"
 	"github.com/headercat/airbrew/internal/auth/user"
 	"github.com/headercat/airbrew/internal/blob"
+	"github.com/headercat/airbrew/internal/httpserver/middleware"
 	"github.com/headercat/airbrew/internal/httpserver/response"
 	"github.com/headercat/airbrew/internal/security"
 )
 
 // Handler exposes the auth JSON endpoints.
 type Handler struct {
-	users        *user.Repository
-	userSvc      *user.Service
-	sessions     *session.Service
-	blobs        blob.Store
-	audit        *audit.Service
-	security     *security.Service
-	cookieSecure bool
+	users           *user.Repository
+	userSvc         *user.Service
+	sessions        *session.Service
+	blobs           blob.Store
+	audit           *audit.Service
+	security        *security.Service
+	cookieSecure    bool
+	registerLimiter *middleware.RateLimiter
 }
 
 // Deps wires handler dependencies.
@@ -49,6 +51,9 @@ func New(d Deps) *Handler {
 	return &Handler{
 		users: d.UserRepo, userSvc: d.UserSvc, sessions: d.SessSvc,
 		blobs: d.Blobs, audit: d.Audit, security: d.Security, cookieSecure: d.CookieSecure,
+		// Registration runs argon2id (CPU-heavy) and is unauthenticated, so cap
+		// it per IP to blunt account-creation / enumeration / hashing DoS.
+		registerLimiter: middleware.NewRateLimiter(10, time.Minute),
 	}
 }
 
@@ -105,6 +110,11 @@ func toResp(u *user.User) userResp {
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
+	if h.registerLimiter != nil && !h.registerLimiter.Allow(h.clientIP(r)) {
+		w.Header().Set("Retry-After", "60")
+		response.Error(w, http.StatusTooManyRequests, "rate_limited", "too many registration attempts")
+		return
+	}
 	var req registerReq
 	if err := decodeJSON(r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
@@ -483,6 +493,10 @@ func decodeJSON(r *http.Request, v any) error {
 	if !strings.Contains(ct, "application/json") {
 		return errors.New("content-type must be application/json")
 	}
+	// Cap the body so an unauthenticated register/login attempt cannot stream
+	// an oversized payload into the JSON parser. 64 KiB is well above any
+	// legitimate auth payload.
+	r.Body = http.MaxBytesReader(nil, r.Body, 64<<10)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)

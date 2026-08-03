@@ -79,7 +79,11 @@ export default function ChatPage() {
   }, []);
 
   const lastSeqRef = useRef(0);
-
+  // applyEvent closes over live state (activeID, user, ...); route it through a
+  // ref so the SSE subscription effect can depend on [] and is not torn down
+  // and re-opened on every locale change (which would gap the stream and burst
+  // the replay).
+  const applyEventRef = useRef<(ev: ChatEvent) => void>(() => {});
   useEffect(() => {
     void loadRooms();
   }, [loadRooms]);
@@ -92,7 +96,7 @@ export default function ChatPage() {
           // to replay any message.created frames missed while disconnected.
           lastSeqRef.current = Math.max(lastSeqRef.current, ev.message.seq);
         }
-        applyEvent(ev);
+        applyEventRef.current(ev);
       },
       {
         getSinceSeq: () => lastSeqRef.current,
@@ -103,7 +107,7 @@ export default function ChatPage() {
       },
     );
     return () => stream.close();
-  }, [t]);
+  }, []);
 
   useEffect(() => {
     if (!activeID) {
@@ -190,6 +194,9 @@ export default function ChatPage() {
         break;
     }
   }
+  // Keep the ref current so the SSE effect (mounted once) always invokes the
+  // latest applyEvent without re-subscribing.
+  applyEventRef.current = applyEvent;
 
   async function sendMessage() {
     if (!activeRoom || !draft.trim() || sending) return;

@@ -229,8 +229,12 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	// brief disconnect or a full subscriber buffer never permanently loses a
 	// message. Emit the snapshot BEFORE subscribing so live events that
 	// arrive during the replay are not duplicated (the cursor advances to the
-	// current max seq first).
+	// current max seq first). Clamp negatives so a malformed cursor does not
+	// replay the entire history on every reconnect.
 	sinceSeq, _ := strconv.ParseInt(r.URL.Query().Get("since_seq"), 10, 64)
+	if sinceSeq < 0 {
+		sinceSeq = 0
+	}
 	missed, highSeq, _ := h.svc.ReplayMissed(r.Context(), userID, sinceSeq, 200)
 	for _, m := range missed {
 		writeSSE(w, "message.created", Event{

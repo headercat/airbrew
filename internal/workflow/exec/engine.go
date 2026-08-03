@@ -46,6 +46,21 @@ func New(svc *run.Service, mail MailSender) *Engine {
 		svc: svc,
 		client: &http.Client{
 			Timeout: 20 * time.Second,
+			// Re-validate every redirect target: isPrivateHost only checks the
+			// user-supplied URL, so without this a malicious endpoint could
+			// 302 to http://169.254.169.254/... and bypass the SSRF guard.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return errors.New("workflow: too many redirects")
+				}
+				if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+					return errors.New("workflow: redirect to non-http scheme blocked")
+				}
+				if isPrivateHost(req.URL.Hostname()) {
+					return errors.New("workflow: redirect to a private host blocked")
+				}
+				return nil
+			},
 		},
 		mail: mail,
 	}

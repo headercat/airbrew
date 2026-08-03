@@ -192,6 +192,12 @@ func (s *Service) IsCancelled(ctx context.Context, runID string) (bool, error) {
 // avoids duplicating those wrappers in the service.
 func (s *Service) Repo() *Repository { return s.repo }
 
+// ReapStaleRunning marks runs still in "running" state (left over from a
+// previous process that died mid-graph) as failed.
+func (s *Service) ReapStaleRunning(ctx context.Context) (int64, error) {
+	return s.repo.ReapStaleRunning(ctx)
+}
+
 // Audit returns the audit service (used by the engine to log run outcomes).
 func (s *Service) Audit() *audit.Service { return s.audit }
 

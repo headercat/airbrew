@@ -8,17 +8,32 @@
 // raw rows are then normalised into a shared CSVParsedItem the store can turn
 // into encrypted DraftItems via the existing create path.
 
+import type { VaultItemType } from "@/lib/vault/api";
+
 export type CSVFormat =
-  "auto" | "bitwarden" | "chrome" | "firefox" | "1password";
+  | "auto" | "bitwarden" | "chrome" | "firefox" | "1password";
 
 export type CSVParsedItem = {
   name: string;
+  type?: VaultItemType;
+  folder?: string;
   username?: string;
   password?: string;
   url?: string;
   notes?: string;
   totp?: string;
 };
+
+// normalizeCSVType maps the exporter's free-text type label to a vault
+// ItemType. Unknown values fall back to "login" (the common case).
+export function normalizeCSVType(raw: string | undefined): VaultItemType {
+  if (!raw) return "login";
+  const t = raw.toLowerCase().replace(/[\s_-]/g, "");
+  if (t.includes("note")) return "secure_note";
+  if (t.includes("card") || t.includes("credit")) return "card";
+  if (t.includes("identity")) return "identity";
+  return "login";
+}
 
 // parseCSV reads RFC 4180 CSV text into a row x cell matrix. It accepts CRLF
 // and LF line endings and treats a quoted field that spans newlines as part of
@@ -125,13 +140,14 @@ export function convertRows(
   }
 }
 
-type FieldMap = Record<
-  keyof CSVParsedItem,
-  (headers: string[], row: string[]) => string | undefined
+type FieldMap = Partial<
+  Record<keyof CSVParsedItem, (headers: string[], row: string[]) => string | undefined>
 >;
 
 const bitwardenMap: FieldMap = {
   name: (h, r) => cell(h, r, "name"),
+  type: (h, r) => cell(h, r, "type"),
+  folder: (h, r) => cell(h, r, "folder", "collection"),
   username: (h, r) => cell(h, r, "login_username", "username"),
   password: (h, r) => cell(h, r, "login_password", "password"),
   url: (h, r) => cell(h, r, "login_uri", "uri", "url"),
@@ -145,7 +161,6 @@ const chromeMap: FieldMap = {
   password: (h, r) => cell(h, r, "password"),
   url: (h, r) => cell(h, r, "url", "website"),
   notes: (h, r) => cell(h, r, "note", "notes"),
-  totp: () => undefined,
 };
 
 const firefoxMap: FieldMap = {
@@ -161,11 +176,11 @@ const firefoxMap: FieldMap = {
   password: (h, r) => cell(h, r, "password"),
   url: (h, r) => cell(h, r, "url"),
   notes: (h, r) => cell(h, r, "httprealm"),
-  totp: () => undefined,
 };
 
 const onepasswordMap: FieldMap = {
   name: (h, r) => cell(h, r, "title", "name"),
+  type: (h, r) => cell(h, r, "type"),
   username: (h, r) => cell(h, r, "username"),
   password: (h, r) => cell(h, r, "password"),
   url: (h, r) => cell(h, r, "website", "url", "urls"),
@@ -190,13 +205,17 @@ function mapByHeaders(
   row: string[],
   map: FieldMap,
 ): CSVParsedItem {
-  const name = map.name(headers, row)?.trim() || "Untitled";
+  const name = map.name?.(headers, row)?.trim() || "Untitled";
+  const rawType = map.type?.(headers, row);
+  const folderRaw = map.folder?.(headers, row);
   return {
     name,
-    username: map.username(headers, row) || undefined,
-    password: map.password(headers, row) || undefined,
-    url: map.url(headers, row) || undefined,
-    notes: map.notes(headers, row) || undefined,
-    totp: map.totp(headers, row) || undefined,
+    type: rawType ? normalizeCSVType(rawType) : undefined,
+    folder: folderRaw?.trim() || undefined,
+    username: map.username?.(headers, row) || undefined,
+    password: map.password?.(headers, row) || undefined,
+    url: map.url?.(headers, row) || undefined,
+    notes: map.notes?.(headers, row) || undefined,
+    totp: map.totp?.(headers, row) || undefined,
   };
 }

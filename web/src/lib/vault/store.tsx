@@ -541,11 +541,12 @@ type VaultContextValue = {
   emptyTrash: () => Promise<void>;
   // importCSVRows turns parsed CSV items (from another password manager) into
   // encrypted vault items one at a time, calling onProgress after each so the
-  // UI can show a counter. Returns the number of items created.
+  // UI can show a counter. Returns the number of items created and the number
+  // that failed (e.g. network error) so the UI can report skipped rows.
   importCSVRows: (
     items: CSVParsedItem[],
     onProgress?: (done: number, total: number) => void,
-  ) => Promise<number>;
+  ) => Promise<{ created: number; failed: number }>;
 };
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -1713,9 +1714,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     async (
       items: CSVParsedItem[],
       onProgress?: (done: number, total: number) => void,
-    ): Promise<number> => {
+    ): Promise<{ created: number; failed: number }> => {
       let created = 0;
+      let failed = 0;
       const total = items.length;
+      // Cache folder-name → folder-id so repeated CSV rows in the same folder
+      // do not each trigger a create round-trip.
+      const folderCache = new Map<string, string>();
       for (const csv of items) {
         const fields = [];
         if (csv.username)
@@ -1724,9 +1729,26 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           fields.push(newField("password", "Password", csv.password));
         if (csv.url) fields.push(newField("url", "Website", csv.url));
         if (csv.totp) fields.push(newField("totp", "TOTP", csv.totp));
+
+        let folderId = "";
+        if (csv.folder) {
+          const cached = folderCache.get(csv.folder);
+          if (cached) {
+            folderId = cached;
+          } else {
+            try {
+              const f = await createFolder(csv.folder);
+              folderCache.set(csv.folder, f.id);
+              folderId = f.id;
+            } catch {
+              folderCache.set(csv.folder, "");
+            }
+          }
+        }
+
         const draft: DraftItem = {
-          type: "login",
-          folderId: "",
+          type: csv.type ?? "login",
+          folderId,
           name: csv.name || "Untitled",
           notes: csv.notes ?? "",
           fields,
@@ -1737,13 +1759,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           await createItem(draft);
           created++;
         } catch {
-          // Skip rows that fail (e.g. conflict); the counter reflects success.
+          failed++;
         }
-        onProgress?.(created, total);
+        onProgress?.(created + failed, total);
       }
-      return created;
+      return { created, failed };
     },
-    [createItem],
+    [createItem, createFolder],
   );
 
   // Auto-bootstrap on first mount so the page knows which gate to show.

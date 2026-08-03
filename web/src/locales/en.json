@@ -681,7 +681,9 @@
       "csvEmpty": "No items found in the CSV file.",
       "csvParseError": "Could not parse the CSV file.",
       "csvImported_one": "Imported {{count}} item from CSV.",
-      "csvImported_other": "Imported {{count}} items from CSV."
+      "csvImported_other": "Imported {{count}} items from CSV.",
+      "csvFailed_one": "{{count}} item failed.",
+      "csvFailed_other": "{{count}} items failed."
     },
     "trash": {
       "open": "Trash",

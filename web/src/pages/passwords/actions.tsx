@@ -186,8 +186,13 @@ export function VaultActions() {
           onImport={importCSVRows}
           disabled={busy}
           onError={setError}
-          onSuccess={(n) =>
-            setInfo(t("passwords.actions.csvImported", { count: n }))
+          onSuccess={(r) =>
+            setInfo(
+              t("passwords.actions.csvImported", { count: r.created }) +
+                (r.failed > 0
+                  ? " " + t("passwords.actions.csvFailed", { count: r.failed })
+                  : ""),
+            )
           }
         />
         <HealthButton />
@@ -467,10 +472,10 @@ function CSVImport({
   onImport: (
     items: import("@/lib/vault/csv").CSVParsedItem[],
     onProgress?: (done: number, total: number) => void,
-  ) => Promise<number>;
+  ) => Promise<{ created: number; failed: number }>;
   disabled: boolean;
   onError: (msg: string) => void;
-  onSuccess: (count: number) => void;
+  onSuccess: (result: { created: number; failed: number }) => void;
 }) {
   const { t } = useTranslation();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -510,12 +515,12 @@ function CSVImport({
     setBusy(true);
     setProgress({ done: 0, total: pending.items.length });
     try {
-      const created = await onImport(pending.items, (done, total) =>
+      const result = await onImport(pending.items, (done, total) =>
         setProgress({ done, total }),
       );
       setPending(null);
       setProgress(null);
-      onSuccess(created);
+      onSuccess(result);
     } catch (err) {
       onError(fmt(err));
     } finally {

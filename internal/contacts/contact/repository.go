@@ -30,10 +30,44 @@ const contactColumns = `id, user_id,
 
 // CreateContact inserts a contact row.
 func (r *Repository) CreateContact(ctx context.Context, c *Contact) error {
+	return insertContactTx(ctx, r.db, c)
+}
+
+// CreateWithGroups inserts a contact and assigns its group memberships in one
+// transaction, so a failure rolls back the contact row too. groupIDs == nil
+// means "no membership change" (still inserts the contact).
+func (r *Repository) CreateWithGroups(ctx context.Context, c *Contact, groupIDs []string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("contacts: begin create tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck
+	if err := insertContactTx(ctx, tx, c); err != nil {
+		return err
+	}
+	if groupIDs != nil {
+		if err := applyMembershipTx(ctx, tx, c.UserID, c.ID, groupIDs); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("contacts: commit create: %w", err)
+	}
+	return nil
+}
+
+// execer is the shared subset of *sql.DB and *sql.Tx used by the tx-aware
+// helpers, so the same code path serves both standalone and transactional use.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func insertContactTx(ctx context.Context, q execer, c *Contact) error {
 	now := time.Now().UTC().Truncate(time.Second)
 	c.CreatedAt = now
 	c.UpdatedAt = now
-	if _, err := r.db.ExecContext(ctx, `
+	if _, err := q.ExecContext(ctx, `
 		INSERT INTO contacts
 		  (id, user_id, name_prefix, given_name, middle_name, family_name,
 		   name_suffix, display_name, nickname, company, title, department,
@@ -124,10 +158,76 @@ func (r *Repository) CountContacts(ctx context.Context, userID string) (int, err
 	return n, nil
 }
 
+// CountContactsFiltered returns the total number of contacts matching the same
+// filter used by ListContacts (ignoring limit/offset/sort), so the UI can show
+// page counts and "load more" affordances.
+func (r *Repository) CountContactsFiltered(ctx context.Context, f ListFilter) (int, error) {
+	q := "SELECT COUNT(*) FROM contacts WHERE user_id = ?"
+	args := []any{f.UserID}
+	if f.Favorite {
+		q += " AND is_favorite = 1"
+	}
+	if s := strings.TrimSpace(f.Search); s != "" {
+		q += " AND (display_name LIKE ? ESCAPE '\\' OR given_name LIKE ? ESCAPE '\\' OR family_name LIKE ? ESCAPE '\\' OR nickname LIKE ? ESCAPE '\\' OR company LIKE ? ESCAPE '\\' OR emails LIKE ? ESCAPE '\\' OR phones LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\')"
+		like := "%" + likeEscape(s) + "%"
+		for i := 0; i < 8; i++ {
+			args = append(args, like)
+		}
+	}
+	if f.GroupID != "" {
+		q += " AND id IN (SELECT contact_id FROM contact_group_members WHERE group_id = ?)"
+		args = append(args, f.GroupID)
+	}
+	var n int
+	if err := r.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // UpdateContact replaces every editable field on the contact (full PUT).
 func (r *Repository) UpdateContact(ctx context.Context, userID, id string, in UpdateContactInput) error {
+	n, err := updateContactTx(ctx, r.db, userID, id, in)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ReplaceWithGroups updates a contact and replaces its group memberships in one
+// transaction. groupIDs == nil means "leave membership unchanged".
+func (r *Repository) ReplaceWithGroups(ctx context.Context, userID, id string, in UpdateContactInput, groupIDs []string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("contacts: begin replace tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck
+	n, err := updateContactTx(ctx, tx, userID, id, in)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	if groupIDs != nil {
+		if err := applyMembershipTx(ctx, tx, userID, id, groupIDs); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("contacts: commit replace: %w", err)
+	}
+	return nil
+}
+
+// updateContactTx runs the full PUT update against q (db or tx) and returns the
+// number of rows affected.
+func updateContactTx(ctx context.Context, q execer, userID, id string, in UpdateContactInput) (int64, error) {
 	now := time.Now().UTC().Truncate(time.Second)
-	res, err := r.db.ExecContext(ctx, `
+	res, err := q.ExecContext(ctx, `
 		UPDATE contacts SET
 		  name_prefix = ?, given_name = ?, middle_name = ?, family_name = ?,
 		  name_suffix = ?, display_name = ?, nickname = ?, company = ?, title = ?,
@@ -142,12 +242,9 @@ func (r *Repository) UpdateContact(ctx context.Context, userID, id string, in Up
 		boolToInt(in.IsFavorite), now, id, userID,
 	)
 	if err != nil {
-		return fmt.Errorf("contacts: update contact: %w", err)
+		return 0, fmt.Errorf("contacts: update contact: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return res.RowsAffected()
 }
 
 // PatchContact applies a partial update. Slice pointers replace the whole
@@ -286,39 +383,51 @@ func (r *Repository) SetContactGroups(ctx context.Context, userID, contactID str
 	if groupIDs == nil {
 		return nil
 	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("contacts: begin groups tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck
+	if err := applyMembershipTx(ctx, tx, userID, contactID, groupIDs); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("contacts: commit groups: %w", err)
+	}
+	return nil
+}
+
+// applyMembershipTx verifies the contact exists (and is owned by userID),
+// clears its current memberships, and inserts the new set. Unknown or
+// non-owned group ids are silently skipped so a stale client cannot create
+// phantom rows. Runs against q (db or tx) so callers can include it in a
+// larger transaction.
+func applyMembershipTx(ctx context.Context, q execer, userID, contactID string, groupIDs []string) error {
 	var exists int
-	if err := r.db.QueryRowContext(ctx,
+	if err := q.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM contacts WHERE id = ? AND user_id = ?", contactID, userID).Scan(&exists); err != nil {
 		return err
 	}
 	if exists == 0 {
 		return ErrNotFound
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("contacts: begin groups tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }() //nolint:errcheck
-	if _, err := tx.ExecContext(ctx,
+	if _, err := q.ExecContext(ctx,
 		"DELETE FROM contact_group_members WHERE contact_id = ?", contactID); err != nil {
 		return fmt.Errorf("contacts: clear groups: %w", err)
 	}
 	for _, gid := range groupIDs {
 		var owned int
-		if err := tx.QueryRowContext(ctx,
+		if err := q.QueryRowContext(ctx,
 			"SELECT COUNT(*) FROM contact_groups WHERE id = ? AND user_id = ?", gid, userID).Scan(&owned); err != nil {
 			return err
 		}
 		if owned == 0 {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx,
+		if _, err := q.ExecContext(ctx,
 			"INSERT OR IGNORE INTO contact_group_members (contact_id, group_id) VALUES (?, ?)", contactID, gid); err != nil {
 			return fmt.Errorf("contacts: insert member: %w", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("contacts: commit groups: %w", err)
 	}
 	return nil
 }
@@ -460,6 +569,28 @@ func (r *Repository) DeleteGroup(ctx context.Context, userID, id string) error {
 	return nil
 }
 
+// AllAvatarPathsAll returns every non-empty avatar_path across all users, for
+// the janitor's orphan sweep.
+func (r *Repository) AllAvatarPathsAll(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT COALESCE(avatar_path,'') FROM contacts WHERE avatar_path IS NOT NULL")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out, rows.Err()
+}
+
 // --- helpers ---------------------------------------------------------------
 
 type scanner interface {
@@ -576,57 +707,19 @@ func marshalJSON[T any](v []T) string {
 	return string(b)
 }
 
-func unmarshalEmails(s string) []Email {
+func unmarshalJSON[T any](s string) []T {
 	if s == "" {
 		return nil
 	}
-	var out []Email
+	var out []T
 	if err := json.Unmarshal([]byte(s), &out); err != nil {
 		return nil
 	}
 	return out
 }
 
-func unmarshalPhones(s string) []Phone {
-	if s == "" {
-		return nil
-	}
-	var out []Phone
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return nil
-	}
-	return out
-}
-
-func unmarshalAddresses(s string) []Address {
-	if s == "" {
-		return nil
-	}
-	var out []Address
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return nil
-	}
-	return out
-}
-
-func unmarshalIMs(s string) []IM {
-	if s == "" {
-		return nil
-	}
-	var out []IM
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return nil
-	}
-	return out
-}
-
-func unmarshalURLs(s string) []URL {
-	if s == "" {
-		return nil
-	}
-	var out []URL
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return nil
-	}
-	return out
-}
+func unmarshalEmails(s string) []Email      { return unmarshalJSON[Email](s) }
+func unmarshalPhones(s string) []Phone      { return unmarshalJSON[Phone](s) }
+func unmarshalAddresses(s string) []Address { return unmarshalJSON[Address](s) }
+func unmarshalIMs(s string) []IM            { return unmarshalJSON[IM](s) }
+func unmarshalURLs(s string) []URL          { return unmarshalJSON[URL](s) }

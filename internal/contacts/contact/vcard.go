@@ -309,11 +309,20 @@ func unescape(s string) string {
 
 // --- serialization ---------------------------------------------------------
 
-// WriteVCard serialises a contact as a vCard 4.0 record to w.
-func WriteVCard(w io.Writer, c *Contact) error {
+// WriteVCard serialises a contact as a vCard 4.0 record to w. groupNames (when
+// non-empty) are emitted as CATEGORIES so group membership survives a
+// round-trip; the contact's stable id and last-updated timestamp are emitted
+// as UID and REV respectively so re-import can match existing records.
+func WriteVCard(w io.Writer, c *Contact, groupNames []string) error {
 	var b strings.Builder
 	b.WriteString("BEGIN:VCARD\r\n")
 	b.WriteString("VERSION:4.0\r\n")
+	if c.ID != "" {
+		b.WriteString("UID:" + escape(c.ID) + "\r\n")
+	}
+	if !c.UpdatedAt.IsZero() {
+		b.WriteString("REV:" + c.UpdatedAt.UTC().Format("20060102T150405Z") + "\r\n")
+	}
 	b.WriteString("FN:" + escape(c.DisplayName) + "\r\n")
 	b.WriteString("N:" + escape(c.FamilyName) + ";" + escape(c.GivenName) + ";" +
 		escape(c.MiddleName) + ";" + escape(c.NamePrefix) + ";" + escape(c.NameSuffix) + "\r\n")
@@ -364,6 +373,17 @@ func WriteVCard(w io.Writer, c *Contact) error {
 	}
 	if c.Birthday != nil {
 		b.WriteString("BDAY:" + c.Birthday.UTC().Format("2006-01-02") + "\r\n")
+	}
+	if len(groupNames) > 0 {
+		parts := make([]string, 0, len(groupNames))
+		for _, n := range groupNames {
+			if n = strings.TrimSpace(n); n != "" {
+				parts = append(parts, escape(n))
+			}
+		}
+		if len(parts) > 0 {
+			b.WriteString("CATEGORIES:" + strings.Join(parts, ",") + "\r\n")
+		}
 	}
 	if c.Notes != "" {
 		b.WriteString("NOTE:" + escape(c.Notes) + "\r\n")

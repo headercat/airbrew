@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,6 +13,16 @@ import (
 
 // Namespace is the blob-store namespace used for contact avatars.
 const Namespace = "contacts"
+
+// Input-size caps protect the store from unbounded client input.
+const (
+	maxNameLen      = 256     // any single name/label field
+	maxNotesLen     = 1 << 14 // 16 KiB
+	maxValueListLen = 50      // entries per multi-value field (emails/phones/...)
+)
+
+// hexColorRE matches a CSS-style #RRGGBB color (case-insensitive).
+var hexColorRE = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 // Service contains contacts business logic.
 type Service struct {
@@ -31,6 +42,9 @@ func NewService(repo *Repository, blobs blob.Store) *Service {
 func (s *Service) Create(ctx context.Context, in CreateContactInput) (*Contact, error) {
 	if !hasAnyIdentity(in) {
 		return nil, ErrNameRequired
+	}
+	if err := validateInput(in); err != nil {
+		return nil, err
 	}
 	in = normalizeCreateInput(in)
 	c := &Contact{
@@ -55,10 +69,7 @@ func (s *Service) Create(ctx context.Context, in CreateContactInput) (*Contact, 
 		Notes:       in.Notes,
 		IsFavorite:  in.IsFavorite,
 	}
-	if err := s.repo.CreateContact(ctx, c); err != nil {
-		return nil, err
-	}
-	if err := s.repo.SetContactGroups(ctx, in.UserID, c.ID, in.GroupIDs); err != nil {
+	if err := s.repo.CreateWithGroups(ctx, c, in.GroupIDs); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -81,9 +92,10 @@ func (s *Service) Export(ctx context.Context, userID, sortBy string) ([]*Contact
 	})
 }
 
-// Count returns the number of contacts owned by userID.
-func (s *Service) Count(ctx context.Context, userID string) (int, error) {
-	return s.repo.CountContacts(ctx, userID)
+// Count returns the number of contacts matching the filter (ignoring
+// limit/offset/sort), so the UI can render pagination totals.
+func (s *Service) Count(ctx context.Context, f ListFilter) (int, error) {
+	return s.repo.CountContactsFiltered(ctx, f)
 }
 
 // Replace performs a full update (PUT semantics) of every editable field.
@@ -91,11 +103,11 @@ func (s *Service) Replace(ctx context.Context, userID, id string, in UpdateConta
 	if !hasAnyIdentity(in) {
 		return nil, ErrNameRequired
 	}
-	in = normalizeCreateInput(in)
-	if err := s.repo.UpdateContact(ctx, userID, id, in); err != nil {
+	if err := validateInput(in); err != nil {
 		return nil, err
 	}
-	if err := s.repo.SetContactGroups(ctx, userID, id, in.GroupIDs); err != nil {
+	in = normalizeCreateInput(in)
+	if err := s.repo.ReplaceWithGroups(ctx, userID, id, in, in.GroupIDs); err != nil {
 		return nil, err
 	}
 	return s.repo.GetContact(ctx, userID, id)
@@ -205,7 +217,14 @@ func (s *Service) CreateGroup(ctx context.Context, in CreateGroupInput) (*Group,
 	if name == "" {
 		return nil, ErrGroupNameRequired
 	}
-	g := &Group{ID: nextID(), UserID: in.UserID, Name: name, Color: strings.TrimSpace(in.Color)}
+	if len(name) > maxNameLen {
+		return nil, fmt.Errorf("%w: group name exceeds %d characters", ErrInvalidInput, maxNameLen)
+	}
+	color := strings.TrimSpace(in.Color)
+	if color != "" && !hexColorRE.MatchString(color) {
+		return nil, fmt.Errorf("%w: color must be #RRGGBB", ErrInvalidInput)
+	}
+	g := &Group{ID: nextID(), UserID: in.UserID, Name: name, Color: color}
 	if err := s.repo.CreateGroup(ctx, g); err != nil {
 		return nil, err
 	}
@@ -228,7 +247,14 @@ func (s *Service) UpdateGroup(ctx context.Context, userID, id, name, color strin
 	if name == "" {
 		return nil, ErrGroupNameRequired
 	}
-	if err := s.repo.UpdateGroup(ctx, userID, id, name, strings.TrimSpace(color)); err != nil {
+	if len(name) > maxNameLen {
+		return nil, fmt.Errorf("%w: group name exceeds %d characters", ErrInvalidInput, maxNameLen)
+	}
+	color = strings.TrimSpace(color)
+	if color != "" && !hexColorRE.MatchString(color) {
+		return nil, fmt.Errorf("%w: color must be #RRGGBB", ErrInvalidInput)
+	}
+	if err := s.repo.UpdateGroup(ctx, userID, id, name, color); err != nil {
 		return nil, err
 	}
 	return s.repo.GetGroup(ctx, userID, id)
@@ -240,6 +266,39 @@ func (s *Service) DeleteGroup(ctx context.Context, userID, id string) error {
 }
 
 // --- validation / normalization --------------------------------------------
+
+// validateInput enforces per-field size and count limits to keep the store
+// tidy and reject unbounded client input.
+func validateInput(in CreateContactInput) error {
+	for _, s := range []string{
+		in.NamePrefix, in.GivenName, in.MiddleName, in.FamilyName, in.NameSuffix,
+		in.DisplayName, in.Nickname, in.Company, in.Title, in.Department,
+	} {
+		if len(s) > maxNameLen {
+			return fmt.Errorf("%w: a name field exceeds %d characters", ErrInvalidInput, maxNameLen)
+		}
+	}
+	if len(in.Notes) > maxNotesLen {
+		return fmt.Errorf("%w: notes exceed %d characters", ErrInvalidInput, maxNotesLen)
+	}
+	if len(in.Emails) > maxValueListLen || len(in.Phones) > maxValueListLen ||
+		len(in.Addresses) > maxValueListLen || len(in.IMs) > maxValueListLen ||
+		len(in.URLs) > maxValueListLen {
+		return fmt.Errorf("%w: a multi-value field exceeds %d entries", ErrInvalidInput, maxValueListLen)
+	}
+	const valueMax = maxNameLen * 2
+	for _, e := range in.Emails {
+		if len(e.Value) > valueMax {
+			return fmt.Errorf("%w: an email value is too long", ErrInvalidInput)
+		}
+	}
+	for _, p := range in.Phones {
+		if len(p.Value) > valueMax {
+			return fmt.Errorf("%w: a phone value is too long", ErrInvalidInput)
+		}
+	}
+	return nil
+}
 
 func hasAnyIdentity(in CreateContactInput) bool {
 	if strings.TrimSpace(in.NamePrefix+in.GivenName+in.MiddleName+in.FamilyName+in.NameSuffix+in.DisplayName+in.Nickname) != "" {

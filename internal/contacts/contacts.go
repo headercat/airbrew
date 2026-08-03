@@ -16,8 +16,10 @@
 package contacts
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/headercat/airbrew/internal/audit"
@@ -36,10 +38,17 @@ type Module struct {
 }
 
 // New builds the contacts Module bound to the given database. blobs stores
-// avatar bytes (may be nil to disable avatar uploads).
-func New(db *sql.DB, state *modules.State, auditSvc *audit.Service, blobs blob.Store) *Module {
+// avatar bytes (may be nil to disable avatar uploads). When ctx is non-nil the
+// background janitor (orphan avatar sweep) is started.
+func New(ctx context.Context, db *sql.DB, state *modules.State, auditSvc *audit.Service, blobs blob.Store) *Module {
 	repo := contact.NewRepository(db)
 	svc := contact.NewService(repo, blobs)
+	if ctx != nil {
+		go contact.NewJanitor(repo, blobs, slog.Default()).Start(ctx)
+	} else {
+		slog.WarnContext(context.Background(),
+			"contacts: lifecycle context is nil; avatar janitor will not run")
+	}
 	return &Module{
 		state: state,
 		audit: auditSvc,
@@ -65,6 +74,13 @@ func (m *Module) Status(w http.ResponseWriter, r *http.Request) {
 		"module":  "contacts",
 		"status":  status,
 		"enabled": enabled,
+		"capabilities": map[string]any{
+			"max_avatar_bytes": 8 << 20,
+			"avatar_types":     []string{"image/png", "image/jpeg", "image/webp", "image/gif"},
+			"vcard_version":    "4.0",
+			"import":           true,
+			"export":           true,
+		},
 	})
 }
 

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"net/http"
@@ -218,6 +219,11 @@ func (h *Handler) listContacts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	total, err := h.svc.Count(r.Context(), f)
+	if err != nil {
+		slog.Warn("contacts: count failed", "error", err)
+		total = len(contacts)
+	}
 	ids := make([]string, 0, len(contacts))
 	for _, c := range contacts {
 		ids = append(ids, c.ID)
@@ -231,7 +237,7 @@ func (h *Handler) listContacts(w http.ResponseWriter, r *http.Request) {
 	for _, c := range contacts {
 		out = append(out, toContactResp(c, groupMap[c.ID]))
 	}
-	jsonResp(w, http.StatusOK, map[string]any{"contacts": out})
+	jsonResp(w, http.StatusOK, map[string]any{"contacts": out, "total": total})
 }
 
 // --- create ----------------------------------------------------------------
@@ -505,6 +511,15 @@ func (h *Handler) deleteContact(w http.ResponseWriter, r *http.Request) {
 
 // --- avatar ----------------------------------------------------------------
 
+// allowedAvatarTypes is the MIME whitelist for contact avatars. SVG is
+// intentionally excluded to avoid stored XSS when avatars are served inline.
+var allowedAvatarTypes = map[string]bool{
+	"image/png":  true,
+	"image/jpeg": true,
+	"image/webp": true,
+	"image/gif":  true,
+}
+
 func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request) {
 	sess, ok := requireSession(w, r)
 	if !ok {
@@ -520,14 +535,23 @@ func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request) {
 			respondErr(w, http.StatusBadRequest, "invalid_request", "could not parse multipart: "+err.Error())
 			return
 		}
-		f, _, err := r.FormFile("file")
+		f, hdr, err := r.FormFile("file")
 		if err != nil {
 			respondErr(w, http.StatusBadRequest, "invalid_request", "missing 'file' field")
 			return
 		}
 		defer f.Close()
 		body = f
-		contentType = r.Header.Get("Content-Type")
+		// Use the per-part content type, not the outer multipart envelope type.
+		contentType = hdr.Header.Get("Content-Type")
+	}
+	// Sniff the real content type from the leading bytes and replay them so a
+	// mislabeled or attacker-controlled upload cannot bypass the whitelist.
+	body, contentType = sniffImage(body, contentType)
+	if !allowedAvatarTypes[contentType] {
+		respondErr(w, http.StatusUnsupportedMediaType, "invalid_request",
+			"avatar must be a PNG, JPEG, WebP, or GIF image")
+		return
 	}
 	c, err := h.svc.SetAvatar(r.Context(), sess.UserID, r.PathValue("id"), contentType, body)
 	if err != nil {
@@ -540,6 +564,29 @@ func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request) {
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
 	})
 	h.writeContact(w, r, http.StatusOK, c)
+}
+
+// sniffImage reads up to 512 bytes from r to detect the true content type via
+// http.DetectContentType, then returns a reader that replays those bytes
+// followed by the rest of the stream. A declared image content type is trusted
+// when DetectContentType also classifies it as an image; otherwise the sniffed
+// type wins.
+func sniffImage(r io.Reader, contentType string) (io.Reader, string) {
+	ct := strings.TrimSpace(contentType)
+	ct = strings.SplitN(ct, ";", 2)[0]
+	buf := make([]byte, 512)
+	n, _ := io.ReadFull(r, buf)
+	head := buf[:n]
+	detected := strings.SplitN(http.DetectContentType(head), ";", 2)[0]
+	switch {
+	case n == 0:
+		return r, ct
+	case strings.HasPrefix(detected, "image/") && !strings.HasPrefix(ct, "image/"):
+		ct = detected
+	case ct == "" || ct == "application/octet-stream":
+		ct = detected
+	}
+	return io.MultiReader(bytes.NewReader(head), r), ct
 }
 
 func (h *Handler) deleteAvatar(w http.ResponseWriter, r *http.Request) {
@@ -712,12 +759,17 @@ func (h *Handler) importVCards(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "invalid_request", "could not parse vCard: "+err.Error())
 		return
 	}
-	created := 0
+	created, failed := 0, 0
+	var firstErr string
 	var firstID string
 	for _, in := range inputs {
 		in.UserID = sess.UserID
 		c, err := h.svc.Create(r.Context(), in)
 		if err != nil {
+			failed++
+			if firstErr == "" {
+				firstErr = err.Error()
+			}
 			continue
 		}
 		if created == 0 {
@@ -729,11 +781,16 @@ func (h *Handler) importVCards(w http.ResponseWriter, r *http.Request) {
 		EventType: "contacts.import", ActorUserID: sess.UserID,
 		TargetType: "contact", TargetID: firstID,
 		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
-		Metadata: map[string]any{"count": created},
+		Metadata: map[string]any{"count": created, "failed": failed},
 	})
-	jsonResp(w, http.StatusCreated, map[string]any{
-		"imported": created,
-	})
+	resp := map[string]any{"imported": created}
+	if failed > 0 {
+		resp["failed"] = failed
+		if firstErr != "" {
+			resp["error"] = firstErr
+		}
+	}
+	jsonResp(w, http.StatusCreated, resp)
 }
 
 func (h *Handler) exportVCards(w http.ResponseWriter, r *http.Request) {
@@ -746,10 +803,28 @@ func (h *Handler) exportVCards(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// Resolve group memberships and group names so CATEGORIES round-trips.
+	ids := make([]string, 0, len(contacts))
+	for _, c := range contacts {
+		ids = append(ids, c.ID)
+	}
+	groupIDs, _ := h.svc.GroupsForContacts(r.Context(), sess.UserID, ids)
+	groups, _ := h.svc.ListGroups(r.Context(), sess.UserID)
+	nameByID := make(map[string]string, len(groups))
+	for _, g := range groups {
+		nameByID[g.ID] = g.Name
+	}
+
 	w.Header().Set("Content-Type", "text/vcard; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="contacts.vcf"`)
 	for _, c := range contacts {
-		if err := contact.WriteVCard(w, c); err != nil {
+		var names []string
+		for _, gid := range groupIDs[c.ID] {
+			if n, ok := nameByID[gid]; ok {
+				names = append(names, n)
+			}
+		}
+		if err := contact.WriteVCard(w, c, names); err != nil {
 			return
 		}
 	}

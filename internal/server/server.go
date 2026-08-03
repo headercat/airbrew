@@ -111,14 +111,16 @@ func Build(d Deps) *http.ServeMux {
 	adminSub.Handle("/api/admin/drive/", admin.RequireAdmin(authMod.UserRepo)(driveAdminSub))
 
 	// Contacts (address book) module. Status is public; contact/group CRUD,
-	// vCard import/export and avatar uploads require a session and
-	// module-enable gating.
-	contactsMod := contacts.New(d.DB.DB, stubState, adminMod.Audit(), d.Blobs)
+	// vCard import/export and avatar uploads require a session, module-enable
+	// gating, and a per-IP rate limit (import parses up to 16 MiB).
+	contactsMod := contacts.New(d.Ctx, d.DB.DB, stubState, adminMod.Audit(), d.Blobs)
 	contactsMod.RegisterPublicRoutes(mux)
 	contactsSub := http.NewServeMux()
 	contactsMod.RegisterRoutes(contactsSub)
+	contactsLimiter := middleware.NewRateLimiter(120, time.Minute)
 	mux.Handle("/api/contacts/", authMod.SessionMiddleware(middleware.Chain(contactsSub,
 		modules.RequireEnabled(stubState, "contacts"),
+		middleware.RateLimit(contactsLimiter, middleware.ClientIPKey),
 	)))
 
 	// Chat module. Status is public; room/message/user discovery endpoints

@@ -33,6 +33,15 @@ import {
   type KdfParams,
 } from "@/lib/vault/crypto";
 import {
+  AAD,
+  CURRENT_CRYPTO_VERSION,
+  attachmentAAD,
+  folderAAD,
+  isLegacyCrypto,
+  itemAAD,
+  vaultId,
+} from "@/lib/vault/aad";
+import {
   getVaultCache,
   putVaultCache,
   clearVaultCache,
@@ -192,70 +201,8 @@ export class WrongMasterPassword extends Error {
 
 // ---- crypto <-> api glue ----
 
-const AAD = {
-  envelope: "airbrew:vault:envelope-key:v1",
-  folderName: "airbrew:vault:folder-name:v1",
-  itemName: "airbrew:vault:item-name:v1",
-  itemData: "airbrew:vault:item-data:v1",
-  itemNotes: "airbrew:vault:item-notes:v1",
-  attachmentName: "airbrew:vault:attachment-name:v1",
-  attachmentFileKey: "airbrew:vault:attachment-file-key:v1",
-  attachmentPayload: "airbrew:vault:attachment-payload:v1",
-} as const;
-
-const RECORD_AAD_CRYPTO_VERSION = 3;
-const CURRENT_CRYPTO_VERSION = RECORD_AAD_CRYPTO_VERSION;
-
-function isLegacyCrypto(version?: number): boolean {
-  return (version ?? 1) < RECORD_AAD_CRYPTO_VERSION;
-}
-
-function recordAAD(kind: string, id: string, field: string): string {
-  return `airbrew:vault:${kind}:${id}:${field}:v3`;
-}
-
-function folderAAD(id: string, field: "name", version?: number): string {
-  if ((version ?? 1) >= RECORD_AAD_CRYPTO_VERSION) {
-    return recordAAD("folder", id, field);
-  }
-  return AAD.folderName;
-}
-
-function itemAAD(
-  id: string,
-  field: "name" | "data" | "notes",
-  version?: number,
-): string {
-  if ((version ?? 1) >= RECORD_AAD_CRYPTO_VERSION) {
-    return recordAAD("item", id, field);
-  }
-  if (field === "name") return AAD.itemName;
-  if (field === "data") return AAD.itemData;
-  return AAD.itemNotes;
-}
-
-function attachmentAAD(
-  id: string,
-  field: "name" | "file-key" | "payload",
-  version?: number,
-): string {
-  if ((version ?? 1) >= RECORD_AAD_CRYPTO_VERSION) {
-    return recordAAD("attachment", id, field);
-  }
-  if (field === "name") return AAD.attachmentName;
-  if (field === "file-key") return AAD.attachmentFileKey;
-  return AAD.attachmentPayload;
-}
-
-const ID_ALPHABET =
-  "_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
-function vaultId(): string {
-  const bytes = randomBytes(21);
-  let out = "";
-  for (const b of bytes) out += ID_ALPHABET[b & 63];
-  return out;
-}
+// AAD labels, crypto-version constants, and per-record AAD helpers live in
+// lib/vault/aad.ts. See that module for the v1/v2/v3 compatibility model.
 
 async function decryptStringCompat(
   key: Uint8Array,

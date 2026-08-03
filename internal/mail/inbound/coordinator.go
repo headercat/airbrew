@@ -88,17 +88,33 @@ func (c *Coordinator) sync(ctx context.Context) {
 }
 
 func (c *Coordinator) loop(ctx context.Context, p Poller) {
+	base := p.Interval()
+	var failures int
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		if err := p.Poll(ctx, c.ingest); err != nil {
+		err := p.Poll(ctx, c.ingest)
+		wait := base
+		if err != nil {
 			c.log.Warn("mail: inbound poll", "driver", p.Name(), "error", err)
+			failures++
+			// Exponential backoff capped at 10x the base interval so a
+			// misconfigured server or temporary network outage does not
+			// hammer the remote on every tick. The cap keeps the loop
+			// responsive once the provider comes back.
+			backoff := time.Duration(1<<min(failures, 6)) * base
+			if backoff > 10*base {
+				backoff = 10 * base
+			}
+			wait = backoff
+		} else {
+			failures = 0
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(p.Interval()):
+		case <-time.After(wait):
 		}
 	}
 }

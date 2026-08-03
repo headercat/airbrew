@@ -24,8 +24,9 @@ type SMTPConfig struct {
 	Port     int    `json:"port"`
 	Username string `json:"username"`
 	Password string `json:"password"`
-	From     string `json:"from"` // override envelope-from; defaults to message From
-	TLS      string `json:"tls"`  // "", "starttls", "tls"
+	From     string `json:"from"`      // override envelope-from; defaults to message From
+	TLS      string `json:"tls"`       // "", "starttls", "tls"
+	Helo     string `json:"helo_name"` // EHLO hostname; defaults to "airbrew"
 }
 
 type smtpDriver struct{ cfg SMTPConfig }
@@ -94,7 +95,11 @@ func (d *smtpDriver) deliver(addr, from string, recipients []string, raw []byte)
 	}
 	defer c.Close()
 
-	if err := c.Hello("airbrew.local"); err != nil {
+	helo := d.cfg.Helo
+	if helo = strings.TrimSpace(helo); helo == "" {
+		helo = "airbrew"
+	}
+	if err := c.Hello(helo); err != nil {
 		return fmt.Errorf("smtp: hello: %w", err)
 	}
 	if strings.ToLower(d.cfg.TLS) == "starttls" {

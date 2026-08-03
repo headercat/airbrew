@@ -476,6 +476,62 @@ func TestSendDraftFailureLeavesOutbox(t *testing.T) {
 	}
 }
 
+// TestOutboxSweeperDueAndBackoff verifies the outbox sweeper query surfaces
+// rows whose backoff window has elapsed, hides rows still backing off, and
+// drops rows that have hit the attempt cap.
+func TestOutboxSweeperDueAndBackoff(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mb := mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	// Three stuck sends; leave them in the outbox.
+	mk := func(subject string) string {
+		m, err := s.Send(ctx, uid, inbox.SendInput{
+			MailboxID: mb.ID,
+			To:        []letter.Address{{Address: "bob@ext.com"}},
+			Subject:   subject,
+			Text:      "body",
+		}, failingSender{name: "fail"})
+		if err == nil {
+			t.Fatalf("expected send failure for %s", subject)
+		}
+		return m.ID
+	}
+	due := mk("due")
+	cooling := mk("cooling")
+	exhausted := mk("exhausted")
+
+	// 'due' has no next_attempt set yet -> immediately due.
+	// 'cooling' is scheduled in the future -> not due.
+	if err := s.RecordOutboxAttempt(ctx, cooling, time.Now().Add(10*time.Minute)); err != nil {
+		t.Fatalf("record cooling: %v", err)
+	}
+	// 'exhausted' is at the attempt cap -> excluded by maxAttempts.
+	for i := 0; i < 3; i++ {
+		if err := s.RecordOutboxAttempt(ctx, exhausted, time.Now().Add(-time.Minute)); err != nil {
+			t.Fatalf("record exhausted: %v", err)
+		}
+	}
+
+	got, err := s.ListOutboxDue(ctx, time.Now(), 3, 10)
+	if err != nil {
+		t.Fatalf("list due: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, it := range got {
+		ids[it.ID] = true
+	}
+	if !ids[due] {
+		t.Errorf("due row %q not surfaced; got %v", due, got)
+	}
+	if ids[cooling] {
+		t.Errorf("cooling row %q should not be due yet", cooling)
+	}
+	if ids[exhausted] {
+		t.Errorf("exhausted row %q should be excluded by attempt cap", exhausted)
+	}
+}
+
 // TestHeaderlessMessagesDoNotCollapseIntoOneThread verifies that two inbound
 // messages with no Message-ID and no References each start their own thread
 // instead of sharing the literal "no-id" thread_id.

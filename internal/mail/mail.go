@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -107,11 +108,72 @@ func (m *Module) RegisterAdminRoutes(mux *http.ServeMux) {
 	m.admin.RegisterRoutes(mux)
 }
 
-// Start launches the inbound poll coordinator with the given lifecycle
-// context. It returns immediately; the coordinator runs in a goroutine that
-// exits when ctx is cancelled.
+// Start launches the inbound poll coordinator and the outbox retry sweeper
+// with the given lifecycle context. Both return immediately and run in
+// goroutines that exit when ctx is cancelled.
 func (m *Module) Start(ctx context.Context) {
 	go m.coord.Run(ctx)
+	go m.runOutboxSweeper(ctx)
+}
+
+// runOutboxSweeper periodically retries messages stuck in the outbox
+// (is_outbox=1 after a failed send) using the active outbound driver. Without
+// it a transient provider outage leaves every send stranded until the user
+// clicks each row's manual retry. Backoff and attempt caps are handled by the
+// repository (outbox_attempts / outbox_next_attempt).
+func (m *Module) runOutboxSweeper(ctx context.Context) {
+	log := slog.Default()
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			m.sweepOutbox(ctx, log)
+		}
+	}
+}
+
+const (
+	outboxMaxAttempts    = 6
+	outboxSweepBatchSize = 25
+)
+
+func (m *Module) sweepOutbox(ctx context.Context, log *slog.Logger) {
+	due, err := m.inbox.ListOutboxDue(ctx, time.Now(), outboxMaxAttempts, outboxSweepBatchSize)
+	if err != nil {
+		log.Warn("mail: outbox sweep list", "error", err)
+		return
+	}
+	if len(due) == 0 {
+		return
+	}
+	sender, err := outbound.Resolve(ctx, m.prov)
+	if err != nil {
+		// No active outbound provider yet; leave rows to retry later.
+		return
+	}
+	for _, item := range due {
+		if ctx.Err() != nil {
+			return
+		}
+		_, err := m.inbox.RetrySend(ctx, item.UserID, item.ID, sender)
+		if err == nil {
+			continue
+		}
+		// Exponential backoff: 1m, 2m, 4m, 8m, 16m, 32m (capped).
+		backoff := time.Duration(1<<item.Attempts) * time.Minute
+		if backoff > 32*time.Minute {
+			backoff = 32 * time.Minute
+		}
+		next := time.Now().Add(backoff)
+		if rerr := m.inbox.RecordOutboxAttempt(ctx, item.ID, next); rerr != nil {
+			log.Warn("mail: outbox record attempt", "id", item.ID, "error", rerr)
+		}
+		log.Warn("mail: outbox retry failed; scheduled next attempt",
+			"id", item.ID, "attempt", item.Attempts+1, "backoff", backoff, "error", err)
+	}
 }
 
 // SendWorkflowMail lets the workflow module send mail through the configured

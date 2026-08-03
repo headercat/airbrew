@@ -449,7 +449,12 @@ func extract(h mail.Header, body io.Reader) (text, html string, atts []ParsedAtt
 		if rerr != nil {
 			return "", "", nil, rerr
 		}
-		data = decodeCharset(data, params["charset"])
+		// Only transcode charset for genuine text bodies; applying it to a
+		// binary attachment (PDF/image/zip whose client also set charset=)
+		// would mangle non-UTF-8 bytes and corrupt the downloaded file.
+		if strings.HasPrefix(mediatype, "text/") {
+			data = decodeCharset(data, params["charset"])
+		}
 		switch {
 		case strings.HasPrefix(mediatype, "text/plain"):
 			return data, "", nil, nil
@@ -479,7 +484,11 @@ func extract(h mail.Header, body io.Reader) (text, html string, atts []ParsedAtt
 			continue
 		}
 		data := decodeCTE(raw, part.Header.Get("Content-Transfer-Encoding"))
-		data = decodeCharset(data, pparams["charset"])
+		// Transcode charset only for text/* parts; binary attachments must be
+		// preserved byte-for-byte (see note above).
+		if strings.HasPrefix(pmed, "text/") {
+			data = decodeCharset(data, pparams["charset"])
+		}
 		switch {
 		case strings.HasPrefix(pmed, "multipart/"):
 			// Nested container: recurse over the already-decoded bytes.

@@ -187,7 +187,44 @@ func (r *Repository) ListMessages(ctx context.Context, f ListFilter) ([]*Message
 	if f.Offset < 0 {
 		f.Offset = 0
 	}
-	q := "SELECT " + messageColumns + " FROM mail_messages WHERE user_id = ?"
+	where, args := buildListWhere(f)
+	q := "SELECT " + messageColumns + " FROM mail_messages " + where +
+		" ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, f.Limit, f.Offset)
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Message
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// CountMessages returns the total number of messages matching the filter,
+// ignoring Limit/Offset. Use it to render "1–50 of N" and decide whether to
+// offer "load more" in the SPA.
+func (r *Repository) CountMessages(ctx context.Context, f ListFilter) (int, error) {
+	where, args := buildListWhere(f)
+	q := "SELECT COUNT(*) FROM mail_messages " + where
+	var count int
+	if err := r.db.QueryRowContext(ctx, q, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// buildListWhere assembles the WHERE clause + args shared by ListMessages and
+// CountMessages so the two queries never drift apart.
+func buildListWhere(f ListFilter) (string, []any) {
+	q := "WHERE user_id = ?"
 	args := []any{f.UserID}
 	if f.MailboxID != "" {
 		q += " AND mailbox_id = ?"
@@ -216,23 +253,7 @@ func (r *Repository) ListMessages(ctx context.Context, f ListFilter) ([]*Message
 		args = append(args, f.ThreadID)
 	}
 	q, args = applySearch(q, args, f.Query)
-	q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-	args = append(args, f.Limit, f.Offset)
-
-	rows, err := r.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*Message
-	for rows.Next() {
-		m, err := scanMessage(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return q, args
 }
 
 // applySearch appends a case-insensitive LIKE clause across subject, from, to
@@ -534,6 +555,66 @@ func (r *Repository) MarkOutbox(ctx context.Context, userID, id string) error {
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrMessageNotFound
+	}
+	return nil
+}
+
+// OutboxItem is the lightweight row the outbox sweeper needs: who owns the
+// message, which row to retry, and how many attempts have already run (so the
+// backoff schedule can advance). It avoids pulling the full message body.
+type OutboxItem struct {
+	UserID   string
+	ID       string
+	Attempts int
+}
+
+// ListOutboxDue returns up to limit outbox rows whose backoff window has
+// elapsed and that have not exceeded maxAttempts. It is user-agnostic because
+// the background sweeper retries on behalf of every user.
+func (r *Repository) ListOutboxDue(ctx context.Context, now time.Time, maxAttempts int, limit int) ([]OutboxItem, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT user_id, id, outbox_attempts
+		FROM mail_messages
+		WHERE is_outbox = 1
+		  AND outbox_attempts < ?
+		  AND (outbox_next_attempt IS NULL OR outbox_next_attempt <= ?)
+		ORDER BY outbox_next_attempt ASC
+		LIMIT ?`,
+		maxAttempts, now.UTC().Truncate(time.Second), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OutboxItem
+	for rows.Next() {
+		var it OutboxItem
+		if err := rows.Scan(&it.UserID, &it.ID, &it.Attempts); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// RecordOutboxAttempt increments the attempt counter for id and schedules the
+// next retry at nextAttempt. Called after a failed retry so the sweeper backs
+// off rather than hammering a failing provider.
+func (r *Repository) RecordOutboxAttempt(ctx context.Context, id string, nextAttempt time.Time) error {
+	now := time.Now().UTC().Truncate(time.Second)
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE mail_messages
+		SET outbox_attempts = outbox_attempts + 1,
+		    outbox_next_attempt = ?,
+		    updated_at = ?
+		WHERE id = ? AND is_outbox = 1`,
+		nextAttempt.UTC().Truncate(time.Second), now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("inbox: record outbox attempt: %w", err)
 	}
 	return nil
 }

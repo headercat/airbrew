@@ -16,6 +16,7 @@ import (
 
 // memStore is an in-memory blob.Store for tests.
 type memStore struct {
+	mu    sync.Mutex
 	files map[string][]byte
 }
 
@@ -27,12 +28,16 @@ func (m *memStore) Save(_ context.Context, namespace, _ string, r io.Reader) (st
 	if err != nil {
 		return "", err
 	}
+	m.mu.Lock()
 	m.files[id] = b
+	m.mu.Unlock()
 	return id, nil
 }
 
 func (m *memStore) Open(_ context.Context, path string) (io.ReadCloser, string, error) {
+	m.mu.Lock()
 	b, ok := m.files[path]
+	m.mu.Unlock()
 	if !ok {
 		return nil, "", errors.New("not found")
 	}
@@ -40,17 +45,21 @@ func (m *memStore) Open(_ context.Context, path string) (io.ReadCloser, string, 
 }
 
 func (m *memStore) Delete(_ context.Context, path string) error {
+	m.mu.Lock()
 	delete(m.files, path)
+	m.mu.Unlock()
 	return nil
 }
 
 func (m *memStore) List(_ context.Context, namespace string) ([]string, error) {
 	var out []string
+	m.mu.Lock()
 	for k := range m.files {
 		if strings.HasPrefix(k, namespace+"/") {
 			out = append(out, k)
 		}
 	}
+	m.mu.Unlock()
 	return out, nil
 }
 

@@ -144,7 +144,7 @@ export const mail = {
     if (args.q) qs.set("q", args.q);
     if (args.limit) qs.set("limit", String(args.limit));
     if (args.offset) qs.set("offset", String(args.offset));
-    return api.get<{ messages: MailMessage[] }>(
+    return api.get<{ messages: MailMessage[]; total: number }>(
       `/api/mail/messages${qs.size ? `?${qs}` : ""}`,
     );
   },

@@ -1,9 +1,16 @@
 package letter
 
 import (
+	"bytes"
+	"encoding/base64"
 	"strings"
 	"testing"
 )
+
+// encodeBase64 is a tiny helper for building base64 attachment fixtures.
+func encodeBase64(b []byte) string {
+	return base64.StdEncoding.EncodeToString(b)
+}
 
 func TestParseQuotedPrintableBody(t *testing.T) {
 	raw := strings.Join([]string{
@@ -137,5 +144,43 @@ func TestBuildRFC822EncodesNonASCIIFilename(t *testing.T) {
 	}
 	if strings.Contains(s, "filename=\"보고서.pdf\"") || strings.Contains(s, "filename=보고서.pdf") {
 		t.Fatalf("raw non-ASCII filename should not be present:\n%s", s)
+	}
+}
+
+// TestParsePreservesBinaryAttachmentBytes guards against charset transcoding
+// being applied to non-text parts. A PDF whose producer also set charset=utf-8
+// must be returned byte-for-byte; transcoding it would corrupt the download.
+func TestParsePreservesBinaryAttachmentBytes(t *testing.T) {
+	body := []byte("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n%binary\x00\x01\x02 payload")
+	raw := strings.Join([]string{
+		"From: bob@example.com",
+		"To: alice@example.com",
+		"Subject: binary",
+		"Message-ID: <bin1@example.com>",
+		"MIME-Version: 1.0",
+		"Content-Type: multipart/mixed; boundary=\"EDGE\"",
+		"",
+		"--EDGE",
+		"Content-Type: text/plain; charset=utf-8",
+		"",
+		"see attached",
+		"--EDGE",
+		"Content-Type: application/pdf; charset=utf-8; name=\"doc.pdf\"",
+		"Content-Transfer-Encoding: base64",
+		"Content-Disposition: attachment; filename=\"doc.pdf\"",
+		"",
+		encodeBase64(body),
+		"--EDGE--",
+	}, "\r\n")
+	msg, err := Parse([]byte(raw))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(msg.Attachments) != 1 {
+		t.Fatalf("attachments = %d, want 1", len(msg.Attachments))
+	}
+	got := msg.Attachments[0].Data
+	if !bytes.Equal(got, body) {
+		t.Fatalf("binary attachment was mutated:\nwant %x\n got %x", body, got)
 	}
 }

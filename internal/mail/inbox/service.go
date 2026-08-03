@@ -583,6 +583,33 @@ func (s *Service) ListMessages(ctx context.Context, f ListFilter) ([]*Message, e
 	return s.repo.ListMessages(ctx, f)
 }
 
+// ListMessagesWithTotal runs ListMessages and CountMessages in one call so the
+// HTTP layer can return a total alongside the page (the SPA needs it to render
+// "load more" and "1–N of M").
+func (s *Service) ListMessagesWithTotal(ctx context.Context, f ListFilter) ([]*Message, int, error) {
+	msgs, err := s.repo.ListMessages(ctx, f)
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.CountMessages(ctx, f)
+	if err != nil {
+		return nil, 0, err
+	}
+	return msgs, total, nil
+}
+
+// ListOutboxDue returns outbox rows whose retry backoff has elapsed. Used by
+// the mail module's background sweeper.
+func (s *Service) ListOutboxDue(ctx context.Context, now time.Time, maxAttempts, limit int) ([]OutboxItem, error) {
+	return s.repo.ListOutboxDue(ctx, now, maxAttempts, limit)
+}
+
+// RecordOutboxAttempt advances the retry counter and schedules the next
+// attempt. Used by the sweeper after a failed retry.
+func (s *Service) RecordOutboxAttempt(ctx context.Context, id string, nextAttempt time.Time) error {
+	return s.repo.RecordOutboxAttempt(ctx, id, nextAttempt)
+}
+
 // Counts returns per-folder totals for the user (optionally scoped to one
 // mailbox), used for sidebar unread/draft/starred badges.
 func (s *Service) Counts(ctx context.Context, userID, mailboxID string) (FolderCounts, error) {

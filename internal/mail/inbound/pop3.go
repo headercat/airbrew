@@ -23,7 +23,11 @@ type POP3Config struct {
 	Port        int    `json:"port"`
 	Username    string `json:"username"`
 	Password    string `json:"password"`
-	TLS         string `json:"tls"`     // "", "starttls", "tls"
+	// TLS selects the transport security. Empty defaults to "tls" (implicit
+	// TLS) so upstream mailbox passwords are never sent in cleartext. Use
+	// "starttls" for opportunistic upgrade or "none" to permit plaintext (only
+	// safe on a trusted loopback transport).
+	TLS         string `json:"tls"`
 	Address     string `json:"address"` // destination mailbox address in airbrew
 	Delete      bool   `json:"delete_after_fetch"`
 	IntervalSec int    `json:"interval_sec"`
@@ -43,6 +47,9 @@ func buildPOP3(raw json.RawMessage) (Poller, error) {
 	}
 	if cfg.Host == "" || cfg.Port == 0 || cfg.Address == "" {
 		return nil, fmt.Errorf("pop3: host, port and address required")
+	}
+	if cfg.TLS == "" {
+		cfg.TLS = "tls" // refuse to leak mailbox credentials over plaintext by default
 	}
 	return &pop3Poller{cfg: cfg, seen: map[string]struct{}{}, log: slog.Default()}, nil
 }

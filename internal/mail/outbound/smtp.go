@@ -18,15 +18,20 @@ func init() { Register("smtp", buildSMTP) }
 
 // SMTPConfig connects to an external SMTP relay. When TLS is "starttls" the
 // client issues STARTTLS after EHLO; when "tls" it opens a TLS connection
-// directly (SMTPS); otherwise the connection is plaintext (not recommended).
+// directly (SMTPS); "none" is plaintext and only permitted when AllowInsecure
+// is set. An empty TLS defaults to "starttls" so mailbox credentials are never
+// silently sent over a cleartext connection.
 type SMTPConfig struct {
 	Host     string `json:"host"`
 	Port     int    `json:"port"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 	From     string `json:"from"`      // override envelope-from; defaults to message From
-	TLS      string `json:"tls"`       // "", "starttls", "tls"
+	TLS      string `json:"tls"`       // "", "starttls", "tls", "none"
 	Helo     string `json:"helo_name"` // EHLO hostname; defaults to "airbrew"
+	// AllowInsecure permits plaintext auth when TLS is "none". Required so the
+	// default-empty path can never leak credentials.
+	AllowInsecure bool `json:"allow_insecure"`
 }
 
 type smtpDriver struct{ cfg SMTPConfig }
@@ -38,6 +43,12 @@ func buildSMTP(raw json.RawMessage) (Outbounder, error) {
 	}
 	if cfg.Host == "" || cfg.Port == 0 {
 		return nil, fmt.Errorf("smtp: host and port required")
+	}
+	if cfg.TLS == "" {
+		cfg.TLS = "starttls"
+	}
+	if cfg.TLS == "none" && !cfg.AllowInsecure {
+		return nil, fmt.Errorf("smtp: plaintext (tls=none) requires allow_insecure=true")
 	}
 	return &smtpDriver{cfg: cfg}, nil
 }
@@ -66,12 +77,18 @@ func (d *smtpDriver) deliver(ctx context.Context, addr, from string, recipients 
 	var err error
 	tlsCfg := &tls.Config{ServerName: d.cfg.Host}
 	switch strings.ToLower(d.cfg.TLS) {
+	case "none":
+		// Plaintext: only reachable when allow_insecure was set at build time.
+		conn, err = (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return fmt.Errorf("smtp: dial: %w", err)
+		}
 	case "tls":
 		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: 15 * time.Second}, "tcp", addr, tlsCfg)
 		if err != nil {
 			return fmt.Errorf("smtp: dial tls: %w", err)
 		}
-	default:
+	default: // "" and "starttls": plaintext dial, then upgrade before auth.
 		conn, err = (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, "tcp", addr)
 		if err != nil {
 			return fmt.Errorf("smtp: dial: %w", err)

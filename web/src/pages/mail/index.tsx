@@ -91,6 +91,8 @@ export default function MailPage() {
   const [newAddress, setNewAddress] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
   const [searchInput, setSearchInput] = useState(searchQuery);
+  const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const activeMailbox =
@@ -117,6 +119,8 @@ export default function MailPage() {
     }
   }, [activeMailbox?.id]);
 
+  const PAGE_SIZE = 50;
+
   const refreshMessages = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -125,15 +129,36 @@ export default function MailPage() {
         folder,
         mailbox: activeMailbox?.id,
         q: searchQuery || undefined,
-        limit: 100,
+        limit: PAGE_SIZE,
       });
       setMessages(res.messages ?? []);
+      setTotal(res.total ?? 0);
     } catch (e) {
       setError(errorText(e));
     } finally {
       setLoading(false);
     }
   }, [activeMailbox?.id, folder, searchQuery]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || messages.length >= total) return;
+    setLoadingMore(true);
+    try {
+      const res = await mail.messages({
+        folder,
+        mailbox: activeMailbox?.id,
+        q: searchQuery || undefined,
+        limit: PAGE_SIZE,
+        offset: messages.length,
+      });
+      setMessages((prev) => [...prev, ...(res.messages ?? [])]);
+      setTotal(res.total ?? 0);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [activeMailbox?.id, folder, searchQuery, loadingMore, messages.length, total]);
 
   useEffect(() => {
     void refreshMailboxes().catch((e) => setError(errorText(e)));
@@ -253,9 +278,11 @@ export default function MailPage() {
   };
 
   const replyTo = (m: MailMessage) => {
+    // Honor Reply-To for inbound mail (newsletters, support tickets). For
+    // sent mail, reply to the original recipients.
     const to =
       m.direction === "inbound"
-        ? formatAddress(m.from)
+        ? (m.reply_to?.length ? m.reply_to : [m.from]).map(formatAddress).join(", ")
         : m.to.map(formatAddress).join(", ");
     setCompose({
       ...emptyCompose,
@@ -679,6 +706,17 @@ export default function MailPage() {
                   </p>
                 </button>
               ))}
+              {messages.length < total && (
+                <button
+                  onClick={() => void loadMore()}
+                  disabled={loadingMore}
+                  className="block w-full px-3 py-3 text-center text-xs text-muted-foreground hover:bg-accent/40 disabled:opacity-60"
+                >
+                  {loadingMore
+                    ? "불러오는 중…"
+                    : `더 보기 (${total - messages.length}개 남음)`}
+                </button>
+              )}
             </div>
           )}
         </section>

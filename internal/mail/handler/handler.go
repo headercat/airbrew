@@ -225,7 +225,7 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 		Limit:     parseInt(r.URL.Query().Get("limit")),
 		Offset:    parseInt(r.URL.Query().Get("offset")),
 	}
-	msgs, err := h.inbox.ListMessages(r.Context(), f)
+	msgs, total, err := h.inbox.ListMessagesWithTotal(r.Context(), f)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -234,7 +234,7 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 	for _, m := range msgs {
 		out = append(out, toMessageResp(m))
 	}
-	jsonResp(w, http.StatusOK, map[string]any{"messages": out})
+	jsonResp(w, http.StatusOK, map[string]any{"messages": out, "total": total})
 }
 
 func (h *Handler) counts(w http.ResponseWriter, r *http.Request) {
@@ -384,6 +384,7 @@ func (h *Handler) getRaw(w http.ResponseWriter, r *http.Request) {
 	}
 	defer body.Close()
 	w.Header().Set("Content-Type", "message/rfc822")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition",
 		mime.FormatMediaType("attachment", map[string]string{"filename": m.ID + ".eml"}))
 	if _, err := io.Copy(w, body); err != nil {

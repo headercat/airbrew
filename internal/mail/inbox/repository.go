@@ -431,7 +431,9 @@ func (r *Repository) GetAttachment(ctx context.Context, userID, id string) (Atta
 }
 
 // LinkAttachments sets message_id on the given attachment ids (ownership-scoped)
-// so pending uploads become attached to the sent message.
+// so pending uploads become attached to the sent message. Only pending rows
+// (message_id IS NULL) are touched; attachments already bound to a previously
+// sent or received message cannot be silently migrated away from it.
 func (r *Repository) LinkAttachments(ctx context.Context, userID, messageID string, ids []string) error {
 	if len(ids) == 0 {
 		return nil
@@ -443,7 +445,7 @@ func (r *Repository) LinkAttachments(ctx context.Context, userID, messageID stri
 		args = append(args, id)
 	}
 	_, err := r.db.ExecContext(ctx,
-		"UPDATE mail_attachments SET message_id = ? WHERE user_id = ? AND id IN ("+placeholders+")",
+		"UPDATE mail_attachments SET message_id = ? WHERE user_id = ? AND id IN ("+placeholders+") AND message_id IS NULL",
 		args...)
 	if err != nil {
 		return fmt.Errorf("inbox: link attachments: %w", err)

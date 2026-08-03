@@ -192,18 +192,35 @@ export function formatAddress(a?: MailAddress) {
 }
 
 export function parseAddressList(input: string): MailAddress[] {
-  return input
-    .split(/[,\n;]/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const match = part.match(/^(.*?)<([^>]+)>$/);
-      if (match) {
-        return {
-          name: match[1].trim().replace(/^"|"$/g, ""),
-          address: match[2].trim(),
-        };
-      }
-      return { address: part };
-    });
+  const text = input.trim();
+  if (!text) return [];
+  // Split on commas, semicolons and newlines that are NOT inside double
+  // quotes, so display names like `"Doe, John" <john@example.com>` survive
+  // as a single address instead of being broken at the comma.
+  const parts: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') inQuotes = !inQuotes;
+    if (!inQuotes && (ch === "," || ch === ";" || ch === "\n")) {
+      const trimmed = current.trim();
+      if (trimmed) parts.push(trimmed);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  const last = current.trim();
+  if (last) parts.push(last);
+  return parts.map((part) => {
+    const match = part.match(/^(.*?)<([^>]+)>$/);
+    if (match) {
+      return {
+        name: match[1].trim().replace(/^"|"$/g, ""),
+        address: match[2].trim(),
+      };
+    }
+    return { address: part };
+  });
 }

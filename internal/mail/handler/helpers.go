@@ -29,6 +29,10 @@ func decodeJSON(r *http.Request, v any) error {
 	if !strings.Contains(ct, "application/json") {
 		return errors.New("content-type must be application/json")
 	}
+	// Cap the body so a caller cannot OOM the server by pasting a huge
+	// base64 blob into a JSON field. Attachment uploads go through a
+	// separate multipart path with their own 25 MiB cap.
+	r.Body = http.MaxBytesReader(nil, r.Body, 4<<20)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)

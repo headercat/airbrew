@@ -166,6 +166,14 @@ func validateDriverConfig(direction provider.Direction, driver string, cfg json.
 			if _, err := inbound.Build(driver, cfg); err != nil {
 				return err
 			}
+		} else {
+			// Push drivers (cloudflare, ses) authenticate the webhook with
+			// a shared bearer secret; a missing or empty secret would
+			// cause every real webhook to 401. Reject at config time so
+			// the operator is told immediately.
+			if inbound.PushDriverSecret(driver, cfg) == "" {
+				return fmt.Errorf("inbound push driver %q requires a non-empty \"secret\"", driver)
+			}
 		}
 		return nil
 	case provider.DirectionOutbound:

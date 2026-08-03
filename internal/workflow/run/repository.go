@@ -618,7 +618,11 @@ func capJSON(s string) string {
 	if len(s) <= maxJSONLen {
 		return s
 	}
-	return s[:maxJSONLen] + `,"_truncated":true}`
+	b, _ := json.Marshal(map[string]any{
+		"_truncated": true,
+		"preview":    s[:maxJSONLen],
+	})
+	return string(b)
 }
 
 func boolToInt(b bool) int {

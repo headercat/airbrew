@@ -337,7 +337,7 @@ func TestSharePasswordAndExpiry(t *testing.T) {
 	}
 
 	// Password share requires the password.
-	pw, err := svc.CreateShare(ctx, CreateShareInput{UserID: uid, NodeID: file.ID, Password: "hunter2"})
+	pw, err := svc.CreateShare(ctx, CreateShareInput{UserID: uid, NodeID: file.ID, Password: "hunter22"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestSharePasswordAndExpiry(t *testing.T) {
 	if _, _, err := svc.OpenShare(ctx, pw.Token, "wrong"); !errors.Is(err, ErrPasswordRequired) {
 		t.Fatalf("expected ErrPasswordRequired on wrong pw, got %v", err)
 	}
-	if _, _, err := svc.OpenShare(ctx, pw.Token, "hunter2"); err != nil {
+	if _, _, err := svc.OpenShare(ctx, pw.Token, "hunter22"); err != nil {
 		t.Fatalf("correct pw should open: %v", err)
 	}
 
@@ -365,6 +365,32 @@ func TestSharePasswordAndExpiry(t *testing.T) {
 	folder, _ := svc.CreateFolder(ctx, CreateFolderInput{UserID: uid, Name: "f"})
 	if _, err := svc.CreateShare(ctx, CreateShareInput{UserID: uid, NodeID: folder.ID}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput sharing a folder, got %v", err)
+	}
+}
+
+func TestShareCreationLimits(t *testing.T) {
+	svc, uid := testService(t)
+	ctx := context.Background()
+	file, err := svc.Upload(ctx, UploadInput{UserID: uid, Name: "limits.txt", Content: strings.NewReader("data")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.CreateShare(ctx, CreateShareInput{UserID: uid, NodeID: file.ID, Password: "short"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for short password, got %v", err)
+	}
+	farFuture := time.Now().UTC().Add(MaxShareTTL + time.Hour)
+	if _, err := svc.CreateShare(ctx, CreateShareInput{UserID: uid, NodeID: file.ID, ExpiresAt: &farFuture}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for far future expiry, got %v", err)
+	}
+
+	for i := 0; i < MaxActiveSharesPerNode; i++ {
+		if _, err := svc.CreateShare(ctx, CreateShareInput{UserID: uid, NodeID: file.ID}); err != nil {
+			t.Fatalf("share %d: %v", i, err)
+		}
+	}
+	if _, err := svc.CreateShare(ctx, CreateShareInput{UserID: uid, NodeID: file.ID}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for share limit, got %v", err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -295,6 +296,7 @@ func (e *Engine) httpAction(ctx context.Context, n *defn.Node, env env) (map[str
 		URL     string            `json:"url"`
 		Headers map[string]string `json:"headers"`
 		Body    any               `json:"body"`
+		AllowPrivate bool         `json:"allow_private"`
 	}
 	if err := decodeConfig(n, &cfg); err != nil {
 		return nil, "", err
@@ -307,6 +309,9 @@ func (e *Engine) httpAction(ctx context.Context, n *defn.Node, env env) (map[str
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, "", fmt.Errorf("workflow: invalid http url")
+	}
+	if !cfg.AllowPrivate && isPrivateHost(u.Hostname()) {
+		return nil, "", fmt.Errorf("workflow: private http hosts require allow_private")
 	}
 	var body io.Reader
 	if cfg.Body != nil {
@@ -351,6 +356,27 @@ func (e *Engine) httpAction(ctx context.Context, n *defn.Node, env env) (map[str
 		out["json"] = parsed
 	}
 	return out, "out", nil
+}
+
+func isPrivateHost(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		ips, err := net.LookupIP(host)
+		if err != nil {
+			return true
+		}
+		for _, item := range ips {
+			if isPrivateIP(item) {
+				return true
+			}
+		}
+		return false
+	}
+	return isPrivateIP(ip)
+}
+
+func isPrivateIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
 func decodeConfig(n *defn.Node, v any) error {

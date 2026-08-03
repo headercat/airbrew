@@ -235,7 +235,7 @@ func TestSharePasswordGate(t *testing.T) {
 	}
 	_ = json.Unmarshal(up.Body.Bytes(), &file)
 
-	rec := hw.do(t, "POST", "/api/drive/files/"+file.ID+"/shares", `{"password":"hunter2"}`, "application/json")
+	rec := hw.do(t, "POST", "/api/drive/files/"+file.ID+"/shares", `{"password":"hunter22"}`, "application/json")
 	var sh struct {
 		Token string `json:"token"`
 	}
@@ -247,7 +247,7 @@ func TestSharePasswordGate(t *testing.T) {
 	if rec := hw.doNoSession("GET", "/api/drive/s/"+sh.Token, "nope"); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong pw: expected 401, got %d", rec.Code)
 	}
-	if rec := hw.doNoSession("GET", "/api/drive/s/"+sh.Token, "hunter2"); rec.Code != http.StatusOK {
+	if rec := hw.doNoSession("GET", "/api/drive/s/"+sh.Token, "hunter22"); rec.Code != http.StatusOK {
 		t.Fatalf("correct pw: expected 200, got %d", rec.Code)
 	}
 }

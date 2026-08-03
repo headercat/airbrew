@@ -729,6 +729,22 @@ func (r *Repository) ListSharesByNode(ctx context.Context, userID, nodeID string
 	return out, rows.Err()
 }
 
+// CountActiveSharesByNode returns currently usable shares for a node. Expired
+// rows are ignored even if the janitor has not deactivated them yet.
+func (r *Repository) CountActiveSharesByNode(ctx context.Context, userID, nodeID string, now time.Time) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM drive_shares
+		WHERE user_id = ? AND node_id = ? AND is_active = 1
+		  AND (expires_at IS NULL OR expires_at > ?)`,
+		userID, nodeID, now.UTC().Truncate(time.Second)).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // GetShareByToken returns the share for a token plus its node (for public
 // access). The node is returned only if it is live; the caller decides whether
 // the share is still usable (active / not expired / password).

@@ -229,6 +229,10 @@ func humanMessage(actor, target string, e Entry) string {
 		return fmt.Sprintf("%s disabled module %s", actor, e.TargetID)
 	case "branding.updated":
 		return fmt.Sprintf("%s updated workspace branding", actor)
+	case "security.password_policy_changed":
+		return fmt.Sprintf("%s changed the password policy (min length %s)", actor, metadataValue(e, "min_length"))
+	case "security.ip_allowlist_changed":
+		return fmt.Sprintf("%s updated the IP allowlist (%s entries, enabled=%s)", actor, metadataValue(e, "count"), metadataValue(e, "enabled"))
 	case "oauth.client_created":
 		return fmt.Sprintf("%s created OAuth client %s", actor, metadataOrTarget(e, "name", target))
 	case "oauth.client_updated":

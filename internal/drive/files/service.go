@@ -1,6 +1,7 @@
 package files
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,6 +21,13 @@ import (
 
 // Namespace is the blob-store namespace used for drive file bytes.
 const Namespace = "drive"
+
+const (
+	MinSharePasswordLength = 8
+	MaxSharePasswordLength = 256
+	MaxShareTTL            = 365 * 24 * time.Hour
+	MaxActiveSharesPerNode = 25
+)
 
 // Config tunes drive behaviour. A value <= 0 means "no limit" for that field.
 type Config struct {
@@ -196,6 +204,28 @@ func (s *Service) Download(ctx context.Context, userID, id string) (io.ReadClose
 		return nil, nil, fmt.Errorf("%w: file content missing", ErrNotFound)
 	}
 	return body, n, nil
+}
+
+// ArchiveFolder streams a folder subtree as a zip archive. The caller must
+// close the returned reader.
+func (s *Service) ArchiveFolder(ctx context.Context, userID, id string) (io.ReadCloser, *Node, error) {
+	n, err := s.repo.GetNode(ctx, userID, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !n.IsFolder() {
+		return nil, nil, fmt.Errorf("%w: cannot archive a file", ErrInvalidInput)
+	}
+	pr, pw := io.Pipe()
+	go func() {
+		zw := zip.NewWriter(pw)
+		err := s.writeZipFolder(ctx, zw, n, "")
+		if closeErr := zw.Close(); err == nil {
+			err = closeErr
+		}
+		_ = pw.CloseWithError(err)
+	}()
+	return pr, n, nil
 }
 
 // Get returns one live node.
@@ -479,6 +509,24 @@ func (s *Service) CreateShare(ctx context.Context, in CreateShareInput) (*Share,
 	if n.IsFolder() {
 		return nil, fmt.Errorf("%w: folders cannot be shared", ErrInvalidInput)
 	}
+	if in.Password != "" {
+		if len([]rune(in.Password)) < MinSharePasswordLength {
+			return nil, fmt.Errorf("%w: share password must be at least %d characters", ErrInvalidInput, MinSharePasswordLength)
+		}
+		if len(in.Password) > MaxSharePasswordLength {
+			return nil, fmt.Errorf("%w: share password is too long", ErrInvalidInput)
+		}
+	}
+	if in.ExpiresAt != nil && in.ExpiresAt.After(time.Now().UTC().Add(MaxShareTTL)) {
+		return nil, fmt.Errorf("%w: share expiry is too far in the future", ErrInvalidInput)
+	}
+	active, err := s.repo.CountActiveSharesByNode(ctx, in.UserID, in.NodeID, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	if active >= MaxActiveSharesPerNode {
+		return nil, fmt.Errorf("%w: active share limit reached", ErrInvalidInput)
+	}
 	var pwHash string
 	if in.Password != "" {
 		h, err := password.Hash(in.Password)
@@ -569,6 +617,50 @@ func (s *Service) deleteBlob(ctx context.Context, path string) {
 	if s.blobs != nil && path != "" {
 		_ = s.blobs.Delete(ctx, path)
 	}
+}
+
+func (s *Service) writeZipFolder(ctx context.Context, zw *zip.Writer, folder *Node, prefix string) error {
+	children, err := s.repo.ListChildren(ctx, folder.UserID, folder.ID)
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		name := prefix + child.Name
+		if child.IsFolder() {
+			if _, err := zw.CreateHeader(&zip.FileHeader{Name: name + "/", Modified: child.UpdatedAt}); err != nil {
+				return err
+			}
+			if err := s.writeZipFolder(ctx, zw, child, name+"/"); err != nil {
+				return err
+			}
+			continue
+		}
+		if child.BlobPath == "" || s.blobs == nil {
+			return fmt.Errorf("%w: file content missing", ErrNotFound)
+		}
+		body, _, err := s.blobs.Open(ctx, child.BlobPath)
+		if err != nil {
+			return fmt.Errorf("drive: open zip source blob: %w", err)
+		}
+		w, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate, Modified: child.UpdatedAt})
+		if err != nil {
+			body.Close()
+			return err
+		}
+		if _, err := io.Copy(w, body); err != nil {
+			body.Close()
+			return err
+		}
+		if err := body.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // cleanName trims and rejects names containing path separators or the . / ..

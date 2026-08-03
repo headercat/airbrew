@@ -447,6 +447,29 @@ func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	id := r.PathValue("id")
+	meta, err := h.svc.Get(r.Context(), sess.UserID, id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if meta.IsFolder() {
+		body, n, err := h.svc.ArchiveFolder(r.Context(), sess.UserID, id)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		defer body.Close()
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", disposition(n.Name+".zip", false))
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if _, err := io.Copy(w, body); err != nil {
+			slog.WarnContext(r.Context(), "drive: folder archive copy failed",
+				"id", n.ID, "error", err)
+		}
+		return
+	}
 	body, n, err := h.svc.Download(r.Context(), sess.UserID, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)

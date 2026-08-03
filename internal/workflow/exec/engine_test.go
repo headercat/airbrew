@@ -28,7 +28,7 @@ func TestEngineExecutesHTTPAndBranch(t *testing.T) {
 	def := defn.Definition{
 		Nodes: []defn.Node{
 			{ID: "start", Type: "trigger.manual"},
-			{ID: "fetch", Type: "action.http", Config: raw(map[string]any{"url": api.URL, "method": "GET"})},
+			{ID: "fetch", Type: "action.http", Config: raw(map[string]any{"url": api.URL, "method": "GET", "allow_private": true})},
 			{ID: "branch", Type: "logic.if", Config: raw(map[string]any{"expr": "{{ $json.status }} eq 200"})},
 			{ID: "log", Type: "action.log", Config: raw(map[string]any{"message": "body {{ $json.json.message }}"})},
 		},

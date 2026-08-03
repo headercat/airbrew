@@ -362,13 +362,21 @@ export default function MailPage() {
     setBusy(true);
     setError(null);
     try {
-      if (compose.draftId) {
-        await mail.updateDraft(compose.draftId, {
-          ...composeInput(),
-          send: true,
-        });
-      } else {
-        await mail.send(composeInput());
+      const result = compose.draftId
+        ? await mail.updateDraft(compose.draftId, {
+            ...composeInput(),
+            send: true,
+          })
+        : await mail.send(composeInput());
+      if (result?.is_outbox) {
+        // The server persisted the row but the driver failed (HTTP 202).
+        // Surface the failure so the user can find the message in the
+        // 전송 실패 folder and retry, and keep the composer seeded with
+        // the draft id so re-opening lands on the right row.
+        setError("전송에 실패했습니다. 전송 실패함에서 다시 시도할 수 있습니다.");
+        setCompose((prev) => ({ ...prev, draftId: result.id }));
+        await Promise.all([refreshMessages(), refreshCounts()]);
+        return;
       }
       setCompose(emptyCompose);
       setComposeOpen(false);
@@ -832,10 +840,6 @@ function MessageView({
   onDelete: (m: MailMessage) => void;
   onRetry: (m: MailMessage) => void;
 }) {
-  const sanitizedHTML = useMemo(
-    () => (message.body_html ? sanitizeMailHtml(message.body_html) : ""),
-    [message.body_html],
-  );
   const renderedHTML = useMemo(() => {
     if (!message.body_html) return "";
     let html = sanitizeMailHtml(message.body_html);
@@ -944,9 +948,9 @@ function MessageView({
         {renderedHTML ? (
           <iframe
             title="Mail body"
-            sandbox="allow-popups allow-popups-to-escape-sandbox"
+            sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
             referrerPolicy="no-referrer"
-            srcDoc={sanitizedHTML}
+            srcDoc={renderedHTML}
             className="h-full min-h-[360px] w-full rounded-md border bg-white"
           />
         ) : (

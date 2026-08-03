@@ -152,6 +152,11 @@ func sgAttachments(in []letter.Attachment) []map[string]string {
 
 func sgHeaders(o letter.Outgoing) map[string]string {
 	h := map[string]string{}
+	// Pin the Message-ID so Sendgrid does not generate its own. Otherwise
+	// replies reference an id we never stored and the reply thread breaks.
+	if o.MessageID != "" {
+		h["Message-ID"] = "<" + strings.Trim(o.MessageID, "<> ") + ">"
+	}
 	if o.InReplyTo != "" {
 		h["In-Reply-To"] = "<" + strings.Trim(o.InReplyTo, "<> ") + ">"
 	}

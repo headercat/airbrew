@@ -157,11 +157,19 @@ func (p *imapPoller) Poll(ctx context.Context, ingest Ingester) error {
 		}
 		raw, err := io.ReadAll(io.LimitReader(r, maxMessageBytes+1))
 		if err != nil {
-			p.log.Warn("imap: read body failed", "uid", msg.Uid, "error", err)
+			// Mark seen so we do not re-download the same body on every
+			// poll cycle forever (matches the POP3 retr-failure path).
+			p.log.Warn("imap: read body failed, skipping on future polls", "uid", msg.Uid, "error", err)
+			p.mu.Lock()
+			p.seen[msg.Uid] = struct{}{}
+			p.mu.Unlock()
 			continue
 		}
 		if int64(len(raw)) > maxMessageBytes {
-			p.log.Warn("imap: message exceeds size cap, skipping", "uid", msg.Uid, "cap", maxMessageBytes)
+			p.log.Warn("imap: message exceeds size cap, skipping future polls", "uid", msg.Uid, "cap", maxMessageBytes)
+			p.mu.Lock()
+			p.seen[msg.Uid] = struct{}{}
+			p.mu.Unlock()
 			continue
 		}
 		date := msg.InternalDate

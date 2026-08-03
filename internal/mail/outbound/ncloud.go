@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -48,6 +49,13 @@ func buildNcloud(raw json.RawMessage) (Outbounder, error) {
 func (d *ncloudDriver) Name() string { return "ncloud" }
 
 func (d *ncloudDriver) Send(ctx context.Context, o letter.Outgoing) error {
+	// Ncloud SENS does not accept attachments on the same JSON endpoint
+	// (it requires a separate file-upload flow this driver does not
+	// implement). Reject up-front instead of silently shipping a message
+	// that is missing its attachments.
+	if len(o.Attachments) > 0 {
+		return errors.New("ncloud: attachments are not supported by this driver")
+	}
 	recipients := make([]map[string]string, 0, len(o.To)+len(o.Cc))
 	for _, a := range o.To {
 		recipients = append(recipients, map[string]string{"address": a.Address, "name": a.Name, "type": "R"})

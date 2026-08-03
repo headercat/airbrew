@@ -455,7 +455,15 @@ func (h *Handler) downloadAttachment(w http.ResponseWriter, r *http.Request) {
 		ct = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": a.Filename}))
+	dispType := "attachment"
+	if a.Inline {
+		// Inline parts (cid: images, embedded logos) must be served with
+		// Content-Disposition: inline or the browser refuses to render
+		// them inside the message body's <img> tags.
+		dispType = "inline"
+	}
+	w.Header().Set("Content-Disposition",
+		mime.FormatMediaType(dispType, map[string]string{"filename": a.Filename}))
 	if a.SizeBytes > 0 {
 		w.Header().Set("Content-Length", parseContentLength(a.SizeBytes))
 	}
@@ -624,8 +632,8 @@ func (h *Handler) createDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		sent, err := h.inbox.SendDraft(r.Context(), sess.UserID, draft.ID, sender)
 		if err != nil {
-			if draft.IsOutbox {
-				jsonResp(w, http.StatusAccepted, toMessageResp(draft))
+			if sent != nil && sent.IsOutbox {
+				jsonResp(w, http.StatusAccepted, toMessageResp(sent))
 				return
 			}
 			writeErr(w, err)
@@ -669,6 +677,10 @@ func (h *Handler) updateDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		sent, err := h.inbox.SendDraft(r.Context(), sess.UserID, r.PathValue("id"), sender)
 		if err != nil {
+			if sent != nil && sent.IsOutbox {
+				jsonResp(w, http.StatusAccepted, toMessageResp(sent))
+				return
+			}
 			writeErr(w, err)
 			return
 		}

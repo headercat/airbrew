@@ -124,21 +124,28 @@ func (c *pop3Client) retr(n int) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Check the raw wire form for the terminator BEFORE de-stuffing.
+		// A body line of ".\r\n" is wire-escaped as "..\r\n"; de-stuffing
+		// first would turn it into ".\r\n" and the drain loop below would
+		// exit early, desynchronizing the session.
 		if line == ".\r\n" || line == ".\n" {
 			break
+		}
+		if int64(buf.Len())+int64(len(line)) > maxMessageBytes {
+			// Drain the remaining RAW lines so the session stays usable.
+			for {
+				if line, err = c.r.ReadString('\n'); err != nil {
+					return nil, err
+				}
+				if line == ".\r\n" || line == ".\n" {
+					break
+				}
+			}
+			return nil, fmt.Errorf("pop3: message exceeds size cap (%d bytes)", maxMessageBytes)
 		}
 		// De-stuff: lines beginning with ".." lose one dot.
 		if strings.HasPrefix(line, "..") {
 			line = line[1:]
-		}
-		if int64(buf.Len())+int64(len(line)) > maxMessageBytes {
-			// Drain the remaining lines so the session stays usable.
-			for line != ".\r\n" && line != ".\n" {
-				if line, err = c.r.ReadString('\n'); err != nil {
-					return nil, err
-				}
-			}
-			return nil, fmt.Errorf("pop3: message exceeds size cap (%d bytes)", maxMessageBytes)
 		}
 		buf.WriteString(line)
 	}

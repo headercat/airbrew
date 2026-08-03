@@ -139,5 +139,11 @@ func (d *smtpDriver) deliver(ctx context.Context, addr, from string, recipients 
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("smtp: close body: %w", err)
 	}
-	return c.Quit()
+	// The message is queued — the server has already replied 250 OK to
+	// the final dot. A subsequent QUIT failure (network drop, ctx cancel
+	// firing in the millisecond window) must NOT turn the send into an
+	// error: that would leave the row in the outbox and a RetrySend would
+	// deliver the same message a second time.
+	_ = c.Quit()
+	return nil
 }

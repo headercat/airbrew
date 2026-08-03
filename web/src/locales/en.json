@@ -664,7 +664,19 @@
       "minutes_one": "{{count}} minute",
       "minutes_other": "{{count}} minutes",
       "seconds_one": "{{count}} second",
-      "seconds_other": "{{count}} seconds"
+      "seconds_other": "{{count}} seconds",
+      "importCSV": "Import from CSV",
+      "csvFormat": "CSV format",
+      "csvAuto": "Auto-detect",
+      "csvTitle": "Import from CSV",
+      "csvDescription": "Logins from another password manager are encrypted and added to this vault.",
+      "csvDetected": "Found {{count}} items ({{format}}).",
+      "csvConfirm": "Import",
+      "csvProgress": "Importing… {{done}} / {{total}}",
+      "csvEmpty": "No items found in the CSV file.",
+      "csvParseError": "Could not parse the CSV file.",
+      "csvImported_one": "Imported {{count}} item from CSV.",
+      "csvImported_other": "Imported {{count}} items from CSV."
     },
     "trash": {
       "open": "Trash",

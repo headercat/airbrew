@@ -38,6 +38,7 @@ import {
   userIdForEnvelope,
 } from "@/lib/vault/cache";
 import { readVaultSecuritySettings } from "@/lib/vault/security";
+import type { CSVParsedItem } from "@/lib/vault/csv";
 import * as VApi from "@/lib/vault/api";
 import type {
   AttachmentMeta,
@@ -508,6 +509,13 @@ type VaultContextValue = {
   purgeTrashItem: (id: string) => Promise<void>;
   purgeTrashFolder: (id: string) => Promise<void>;
   emptyTrash: () => Promise<void>;
+  // importCSVRows turns parsed CSV items (from another password manager) into
+  // encrypted vault items one at a time, calling onProgress after each so the
+  // UI can show a counter. Returns the number of items created.
+  importCSVRows: (
+    items: CSVParsedItem[],
+    onProgress?: (done: number, total: number) => void,
+  ) => Promise<number>;
 };
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -1622,6 +1630,49 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     await VApi.emptyTrash();
   }, []);
 
+  // --- CSV import ----------------------------------------------------------
+  //
+  // Each parsed row is turned into a DraftItem (login type by default), then
+  // pushed through the normal createItem path so encryption, cursor tracking
+  // and the ciphertext cache stay consistent. Items are created sequentially
+  // to keep the server-side transactions ordered and to let onProgress report
+  // a meaningful counter.
+  const importCSVRows = useCallback(
+    async (
+      items: CSVParsedItem[],
+      onProgress?: (done: number, total: number) => void,
+    ): Promise<number> => {
+      let created = 0;
+      const total = items.length;
+      for (const csv of items) {
+        const fields = [];
+        if (csv.username) fields.push(newField("text", "Username", csv.username));
+        if (csv.password)
+          fields.push(newField("password", "Password", csv.password));
+        if (csv.url) fields.push(newField("url", "Website", csv.url));
+        if (csv.totp) fields.push(newField("totp", "TOTP", csv.totp));
+        const draft: DraftItem = {
+          type: "login",
+          folderId: "",
+          name: csv.name || "Untitled",
+          notes: csv.notes ?? "",
+          fields,
+          favorite: false,
+          reprompt: false,
+        };
+        try {
+          await createItem(draft);
+          created++;
+        } catch {
+          // Skip rows that fail (e.g. conflict); the counter reflects success.
+        }
+        onProgress?.(created, total);
+      }
+      return created;
+    },
+    [createItem],
+  );
+
   // Auto-bootstrap on first mount so the page knows which gate to show.
   useEffect(() => {
     void bootstrap();
@@ -1718,6 +1769,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       purgeTrashItem,
       purgeTrashFolder,
       emptyTrash,
+      importCSVRows,
     }),
     [
       status,
@@ -1754,6 +1806,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       purgeTrashItem,
       purgeTrashFolder,
       emptyTrash,
+      importCSVRows,
     ],
   );
 

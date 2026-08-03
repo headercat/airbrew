@@ -664,7 +664,18 @@
       "minutes_one": "{{count}}분",
       "minutes_other": "{{count}}분",
       "seconds_one": "{{count}}초",
-      "seconds_other": "{{count}}초"
+      "seconds_other": "{{count}}초",
+      "importCSV": "CSV에서 가져오기",
+      "csvFormat": "CSV 형식",
+      "csvAuto": "자동 감지",
+      "csvTitle": "CSV에서 가져오기",
+      "csvDescription": "다른 비밀번호 관리자의 로그인 정보를 암호화하여 이 볼트에 추가합니다.",
+      "csvDetected": "{{count}}개 항목 발견 ({{format}}).",
+      "csvConfirm": "가져오기",
+      "csvProgress": "가져오는 중… {{done}} / {{total}}",
+      "csvEmpty": "CSV 파일에서 항목을 찾을 수 없습니다.",
+      "csvParseError": "CSV 파일을 파싱할 수 없습니다.",
+      "csvImported": "CSV에서 {{count}}개 항목을 가져왔습니다."
     },
     "trash": {
       "open": "휴지통",

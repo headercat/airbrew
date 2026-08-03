@@ -5,7 +5,14 @@
 // re-encrypts the contents with the currently unlocked vault key.
 
 import { useRef, useState } from "react";
-import { Download, FolderPlus, KeyRound, Loader2, Upload } from "lucide-react";
+import {
+  Download,
+  FileUp,
+  FolderPlus,
+  KeyRound,
+  Loader2,
+  Upload,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -22,6 +29,12 @@ import { Modal } from "@/components/ui/modal";
 import { isApiError } from "@/lib/api";
 import type { ExportBundle } from "@/lib/vault/api";
 import {
+  convertRows,
+  parseCSV,
+  readSheet,
+  type CSVFormat,
+} from "@/lib/vault/csv";
+import {
   evaluateMasterPassword,
   readVaultSecuritySettings,
   vaultSecurityOptions,
@@ -34,8 +47,13 @@ const MAX_IMPORT_FILE_BYTES = 256 << 20;
 
 export function VaultActions() {
   const { t } = useTranslation();
-  const { exportBundle, importBundle, changeMasterPassword, createFolder } =
-    useVault();
+  const {
+    exportBundle,
+    importBundle,
+    changeMasterPassword,
+    createFolder,
+    importCSVRows,
+  } = useVault();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -162,6 +180,14 @@ export function VaultActions() {
           onCreate={createFolder}
           disabled={busy}
           onError={setError}
+        />
+        <CSVImport
+          onImport={importCSVRows}
+          disabled={busy}
+          onError={setError}
+          onSuccess={(n) =>
+            setInfo(t("passwords.actions.csvImported", { count: n }))
+          }
         />
         <ChangeMasterPassword
           onChange={changeMasterPassword}
@@ -426,6 +452,169 @@ function SecuritySettings() {
           ))}
         </select>
       </div>
+    </div>
+  );
+}
+
+function CSVImport({
+  onImport,
+  disabled,
+  onError,
+  onSuccess,
+}: {
+  onImport: (
+    items: import("@/lib/vault/csv").CSVParsedItem[],
+    onProgress?: (done: number, total: number) => void,
+  ) => Promise<number>;
+  disabled: boolean;
+  onError: (msg: string) => void;
+  onSuccess: (count: number) => void;
+}) {
+  const { t } = useTranslation();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState<{
+    items: import("@/lib/vault/csv").CSVParsedItem[];
+    format: CSVFormat;
+  } | null>(null);
+  const [formatChoice, setFormatChoice] = useState<CSVFormat>("auto");
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(
+    null,
+  );
+  const [busy, setBusy] = useState(false);
+
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const rows = parseCSV(text);
+      const sheet = readSheet(rows, formatChoice);
+      const items = convertRows(sheet.headers, sheet.body, sheet.format);
+      if (items.length === 0) {
+        onError(t("passwords.actions.csvEmpty"));
+        return;
+      }
+      setFormatChoice(sheet.format);
+      setPending({ items, format: sheet.format });
+    } catch {
+      onError(t("passwords.actions.csvParseError"));
+    }
+  }
+
+  async function doImport() {
+    if (!pending) return;
+    setBusy(true);
+    setProgress({ done: 0, total: pending.items.length });
+    try {
+      const created = await onImport(pending.items, (done, total) =>
+        setProgress({ done, total }),
+      );
+      setPending(null);
+      setProgress(null);
+      onSuccess(created);
+    } catch (err) {
+      onError(fmt(err));
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => fileInput.current?.click()}
+        disabled={disabled}
+      >
+        <FileUp className="h-4 w-4" />
+        {t("passwords.actions.importCSV")}
+      </Button>
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={onPick}
+      />
+      <select
+        aria-label={t("passwords.actions.csvFormat")}
+        className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+        value={formatChoice}
+        onChange={(e) => setFormatChoice(e.target.value as CSVFormat)}
+        disabled={disabled}
+      >
+        <option value="auto">{t("passwords.actions.csvAuto")}</option>
+        <option value="bitwarden">Bitwarden</option>
+        <option value="chrome">Chrome / Edge</option>
+        <option value="firefox">Firefox</option>
+        <option value="1password">1Password</option>
+      </select>
+      <Modal
+        open={pending !== null}
+        onClose={busy ? () => {} : () => setPending(null)}
+        title={t("passwords.actions.csvTitle")}
+        description={t("passwords.actions.csvDescription")}
+      >
+        <div className="space-y-3">
+          {progress ? (
+            <div className="space-y-1">
+              <p className="text-sm text-muted-foreground">
+                {t("passwords.actions.csvProgress", progress)}
+              </p>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{
+                    width: `${progress.total > 0 ? (progress.done / progress.total) * 100 : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm">
+                {t("passwords.actions.csvDetected", {
+                  count: pending?.items.length ?? 0,
+                  format: pending?.format ?? "",
+                })}
+              </p>
+              <ul className="max-h-40 space-y-0.5 overflow-auto text-xs text-muted-foreground">
+                {pending?.items.slice(0, 20).map((it, i) => (
+                  <li key={i} className="truncate">
+                    {it.name || "Untitled"}
+                    {it.username ? ` — ${it.username}` : ""}
+                  </li>
+                ))}
+                {(pending?.items.length ?? 0) > 20 && (
+                  <li>…</li>
+                )}
+              </ul>
+            </>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setPending(null)}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="button"
+              onClick={doImport}
+              disabled={busy}
+            >
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              {t("passwords.actions.csvConfirm")}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

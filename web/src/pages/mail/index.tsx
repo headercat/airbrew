@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
   FileEdit,
@@ -37,13 +38,13 @@ import {
 import { sanitizeMailHtml } from "@/lib/sanitize-mail-html";
 import { cn } from "@/lib/utils";
 
-const folders = [
-  { id: "inbox", label: "받은편지함", icon: Inbox },
-  { id: "sent", label: "보낸메일", icon: Send },
-  { id: "draft", label: "임시보관", icon: FileEdit },
-  { id: "outbox", label: "전송 실패", icon: AlertTriangle },
-  { id: "unread", label: "읽지 않음", icon: Inbox },
-  { id: "starred", label: "중요", icon: Star },
+const FOLDER_DEFS = [
+  { id: "inbox", labelKey: "mail.folders.inbox", icon: Inbox },
+  { id: "sent", labelKey: "mail.folders.sent", icon: Send },
+  { id: "draft", labelKey: "mail.folders.draft", icon: FileEdit },
+  { id: "outbox", labelKey: "mail.folders.outbox", icon: AlertTriangle },
+  { id: "unread", labelKey: "mail.folders.unread", icon: Inbox },
+  { id: "starred", labelKey: "mail.folders.starred", icon: Star },
 ] as const;
 
 type ComposeState = {
@@ -71,6 +72,8 @@ const emptyCompose: ComposeState = {
 };
 
 export default function MailPage() {
+  const { t } = useTranslation();
+  const folders = FOLDER_DEFS.map((f) => ({ ...f, label: t(f.labelKey) }));
   const [params, setParams] = useSearchParams();
   const folder = normalizeFolder(params.get("box"));
   const messageID = params.get("message") ?? "";
@@ -507,9 +510,9 @@ export default function MailPage() {
   if (status && !status.enabled) {
     return (
       <PageWrapper>
-        <PageHeader title="메일" />
+        <PageHeader title={t("mail.title")} />
         <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">
-          메일 모듈이 비활성화되어 있습니다.
+          {t("mail.disabled")}
         </div>
       </PageWrapper>
     );
@@ -518,11 +521,11 @@ export default function MailPage() {
   return (
     <PageWrapper className="h-full">
       <PageHeader
-        title="메일"
+        title={t("mail.title")}
         description={
           activeMailbox
             ? activeMailbox.address
-            : "메일함을 만들면 송수신을 시작할 수 있습니다."
+            : t("mail.createMailboxHint")
         }
         actions={
           <div className="flex items-center gap-2">
@@ -534,7 +537,7 @@ export default function MailPage() {
               }}
             >
               <Input
-                placeholder="메일 검색"
+                placeholder={t("mail.search")}
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 className="h-9 w-56"
@@ -546,7 +549,7 @@ export default function MailPage() {
               onClick={() => void refreshMessages()}
             >
               <RefreshCcw className="mr-2 h-4 w-4" />
-              새로고침
+              {t("mail.refresh")}
             </Button>
             <Button
               size="sm"
@@ -600,6 +603,11 @@ export default function MailPage() {
                         {badge}
                       </Badge>
                     )}
+                  {/* Inbox shows the unread count — the most important "new
+                       mail" signal in the sidebar. */}
+                  {f.id === "inbox" && counts && counts.unread > 0 && (
+                    <Badge variant="default">{counts.unread}</Badge>
+                  )}
                 </button>
               );
             })}

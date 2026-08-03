@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -118,6 +119,60 @@ func TestEngineHTTPBlocksRedirectToPrivate(t *testing.T) {
 	if !failed {
 		t.Fatalf("fetch step did not fail on redirect to private host; steps=%+v", steps)
 	}
+}
+
+// TestExecuteAsyncReturnsRunningAndCompletes verifies the webhook-style async
+// path: the call returns immediately with a "running" row (so the HTTP sender
+// is not blocked), and the graph finishes in the background.
+func TestExecuteAsyncReturnsRunningAndCompletes(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer api.Close()
+
+	db := testDB(t)
+	svc := run.NewService(run.NewRepository(db), nil)
+	engine := New(svc, nil)
+
+	def := defn.Definition{
+		Nodes: []defn.Node{
+			{ID: "start", Type: "trigger.manual"},
+			{ID: "log", Type: "action.log", Config: raw(map[string]any{"message": "async"})},
+		},
+		Edges: []defn.Edge{{From: "start", To: "log"}},
+	}
+	wf, err := svc.Create(context.Background(), run.NewWorkflowInput{
+		UserID: "user_1", Name: "Async", Definition: def,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rn, err := engine.ExecuteAsync(context.Background(), Request{
+		Workflow: wf, Trigger: run.RunByWebhook,
+	})
+	if err != nil {
+		t.Fatalf("execute async: %v", err)
+	}
+	if rn.Status != run.RunRunning {
+		t.Fatalf("immediate status = %s, want running", rn.Status)
+	}
+
+	// Poll until the detached goroutine finishes (bounded).
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		got, err := svc.Repo().GetRunByID(context.Background(), rn.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != run.RunRunning {
+			if got.Status != run.RunSuccess {
+				t.Fatalf("final status = %s, want success", got.Status)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("run never left running state within timeout")
 }
 
 func testDB(t *testing.T) *sql.DB {

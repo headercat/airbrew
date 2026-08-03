@@ -144,6 +144,84 @@ func (e *Engine) Execute(ctx context.Context, req Request) (*run.Run, error) {
 	return rn, err
 }
 
+// ExecuteAsync creates the run row synchronously (so the caller gets a run id
+// immediately, with status "running") and walks the graph in a background
+// goroutine detached from the request context. It is intended for webhook
+// triggers, whose HTTP senders routinely time out before a synchronous run
+// finishes — blocking the response would make them retry and fire duplicate
+// runs. The returned run is in "running" state; the caller should poll the run
+// id or subscribe to run history for the final status.
+func (e *Engine) ExecuteAsync(ctx context.Context, req Request) (*run.Run, error) {
+	if req.Workflow == nil {
+		return nil, errors.New("workflow: workflow is required")
+	}
+	if err := req.Workflow.Definition.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", run.ErrDefinitionInvalid, err)
+	}
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = defaultRunTimeout
+	}
+	if timeout > maxRunTimeout {
+		timeout = maxRunTimeout
+	}
+	rn := &run.Run{
+		WorkflowID: req.Workflow.ID,
+		UserID:     req.Workflow.UserID,
+		Version:    req.Workflow.Version,
+		Status:     run.RunRunning,
+		Trigger:    req.Trigger,
+		InputJSON:  mustJSON(req.Input),
+	}
+	if rn.Trigger == "" {
+		rn.Trigger = run.RunByManual
+	}
+	// Create the run row on the caller's ctx so a fast-fail (bad workflow,
+	// DB down) is reported to the caller rather than swallowed.
+	if err := e.svc.Repo().CreateRun(ctx, rn); err != nil {
+		return nil, err
+	}
+	wf := req.Workflow
+	input := req.Input
+	go e.runDetached(wf, input, rn, timeout)
+	return rn, nil
+}
+
+// runDetached walks the graph on a background context (independent of any
+// HTTP request) and persists the final status. It must not reference the
+// caller's ctx: webhook senders disconnect the moment they receive 202.
+func (e *Engine) runDetached(wf *run.Workflow, input map[string]any, rn *run.Run, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	state := &runState{
+		runID:   rn.ID,
+		trigger: copyMap(input),
+		vars:    map[string]any{},
+	}
+	err := e.walk(ctx, wf, state, input)
+	status := run.RunSuccess
+	errMsg := ""
+	if err != nil {
+		status = run.RunFailed
+		errMsg = err.Error()
+		if errors.Is(err, context.DeadlineExceeded) {
+			status = run.RunTimedOut
+		}
+		if errors.Is(err, errCancelled) {
+			status = run.RunCancelled
+			errMsg = "cancelled"
+		}
+	}
+	_ = e.svc.Repo().FinishRun(context.Background(), rn.ID, status, errMsg)
+	if e.svc.Audit() != nil {
+		e.svc.Audit().Log(context.Background(), audit.Entry{
+			EventType: "workflow.run." + string(status), ActorUserID: wf.UserID,
+			TargetType: "workflow_run", TargetID: rn.ID,
+			Metadata: map[string]any{"workflow_id": wf.ID, "trigger": rn.Trigger},
+		})
+	}
+}
+
 type queuedNode struct {
 	node  *defn.Node
 	input map[string]any

@@ -667,6 +667,10 @@ func (s *Service) RetrySend(ctx context.Context, userID, id string, sender Outbo
 		})
 	}
 	if err := sender.Send(ctx, out); err != nil {
+		// A user-initiated retry just failed. Reset the attempt counter so the
+		// background sweeper resumes backoff from the start; otherwise a row
+		// that previously hit the attempt cap would never be retried again.
+		_ = s.repo.ResetOutboxAttempts(ctx, msg.ID)
 		return msg, fmt.Errorf("inbox: retry send via %s: %w", sender.Name(), err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)

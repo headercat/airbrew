@@ -151,7 +151,10 @@ func (m *Module) sweepOutbox(ctx context.Context, log *slog.Logger) {
 	}
 	sender, err := outbound.Resolve(ctx, m.prov)
 	if err != nil {
-		// No active outbound provider yet; leave rows to retry later.
+		// No active outbound provider configured. Leave the rows in the outbox
+		// (the user still sees them) and log so an operator notices; otherwise
+		// a missing provider silently strands every send.
+		log.Warn("mail: outbox sweep skipped; no active outbound provider", "error", err)
 		return
 	}
 	for _, item := range due {

@@ -619,6 +619,21 @@ func (r *Repository) RecordOutboxAttempt(ctx context.Context, id string, nextAtt
 	return nil
 }
 
+// ResetOutboxAttempts clears the attempt counter and schedules an immediate
+// retry. Used by the manual retry path so a user-initiated retry resumes the
+// automatic sweeper even after the row previously hit the attempt cap.
+func (r *Repository) ResetOutboxAttempts(ctx context.Context, id string) error {
+	now := time.Now().UTC().Truncate(time.Second)
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE mail_messages
+		SET outbox_attempts = 0, outbox_next_attempt = NULL, updated_at = ?
+		WHERE id = ? AND is_outbox = 1`, now, id)
+	if err != nil {
+		return fmt.Errorf("inbox: reset outbox attempts: %w", err)
+	}
+	return nil
+}
+
 // PatchFlags applies a flag patch.
 func (r *Repository) PatchFlags(ctx context.Context, userID, id string, patch FlagPatch) error {
 	sets := []string{}

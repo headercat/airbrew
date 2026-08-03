@@ -377,7 +377,11 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	rn, err := h.engine.Execute(r.Context(), wfexec.Request{Workflow: item, Trigger: run.RunByWebhook, Input: input})
+	// Execute asynchronously: webhook senders (and browsers) routinely time
+	// out before a synchronous run completes, then retry and fire the run
+	// again. Returning 202 with the run id lets the caller poll for the
+	// outcome instead of holding the connection.
+	rn, err := h.engine.ExecuteAsync(r.Context(), wfexec.Request{Workflow: item, Trigger: run.RunByWebhook, Input: input})
 	if err != nil && rn == nil {
 		writeErr(w, err)
 		return

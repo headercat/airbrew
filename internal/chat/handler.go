@@ -264,9 +264,11 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	ch, cancel := h.svc.Subscribe(userID)
 	defer cancel()
 
-	// Clamp/parse the created_at cursor (RFC3339). The cursor is created_at-
-	// based, not seq (seq is per-room and would lose low-activity rooms).
+	// Clamp/parse the (created_at, id) cursor. The cursor is created_at-based,
+	// not seq (seq is per-room and would lose low-activity rooms); the id
+	// tiebreak covers multiple messages created within the same second.
 	var since time.Time
+	sinceID := r.URL.Query().Get("since_id")
 	if raw := r.URL.Query().Get("since_cursor"); raw != "" {
 		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
 			since = parsed.UTC()
@@ -278,9 +280,10 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	const replayMax = 2000
 	replayed := 0
 	cursor := since
+	cursorID := sinceID
 	lastHasMore := false
 	for replayed < replayMax {
-		page, nextCursor, hasMore, err := h.svc.ReplayMissed(r.Context(), userID, cursor, 200)
+		page, nextCursor, nextID, hasMore, err := h.svc.ReplayMissed(r.Context(), userID, cursor, cursorID, 200)
 		if err != nil {
 			break
 		}
@@ -289,7 +292,7 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 				Type: "message.created", RoomID: m.RoomID, Message: &m,
 			})
 		}
-		cursor = nextCursor
+		cursor, cursorID = nextCursor, nextID
 		replayed += len(page)
 		lastHasMore = hasMore
 		if !hasMore {
@@ -303,6 +306,7 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	writeSSE(w, "ready", map[string]any{
 		"ok":       true,
 		"cursor":   cursor.UTC().Format(time.RFC3339),
+		"cursor_id": cursorID,
 		"has_more": more,
 	})
 	flusher.Flush()

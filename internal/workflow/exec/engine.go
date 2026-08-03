@@ -128,6 +128,13 @@ func (e *Engine) Execute(ctx context.Context, req Request) (*run.Run, error) {
 			status = run.RunCancelled
 			errMsg = "cancelled"
 		}
+		// A context.Cancellation that is not the internal cancel sentinel is
+		// a shutdown / lifecycle cancellation (scheduler ctx, request ctx on
+		// the async path); record it as cancelled rather than "failed".
+		if errors.Is(err, context.Canceled) {
+			status = run.RunCancelled
+			errMsg = "cancelled"
+		}
 	}
 	if ferr := e.svc.Repo().FinishRun(context.Background(), rn.ID, status, errMsg); ferr != nil && err == nil {
 		err = ferr
@@ -220,7 +227,7 @@ func (e *Engine) runDetached(wf *run.Workflow, input map[string]any, rn *run.Run
 		if errors.Is(err, context.DeadlineExceeded) {
 			status = run.RunTimedOut
 		}
-		if errors.Is(err, errCancelled) {
+		if errors.Is(err, errCancelled) || errors.Is(err, context.Canceled) {
 			status = run.RunCancelled
 			errMsg = "cancelled"
 		}

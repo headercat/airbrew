@@ -85,6 +85,7 @@ export default function ChatPage() {
   }, []);
 
   const lastCursorRef = useRef("");
+  const lastCursorIDRef = useRef("");
   // applyEvent closes over live state (activeID, user, ...); route it through a
   // ref so the SSE subscription effect can depend on [] and is not torn down
   // and re-opened on every locale change (which would gap the stream and burst
@@ -100,32 +101,37 @@ export default function ChatPage() {
   }, [loadRooms]);
 
   useEffect(() => {
-    const hadCursorBefore = lastCursorRef.current;
     const stream = openChatEvents(
       (ev) => {
-        // Advance the created_at cursor as live frames arrive so the next
-        // reconnect only replays messages newer than what we have seen.
+        // Advance the (created_at, id) cursor as live frames arrive so the
+        // next reconnect only replays messages newer than what we have seen.
         if (
           (ev.type === "message.created" || ev.type === "message.updated") &&
           ev.message?.created_at
         ) {
           const cur = lastCursorRef.current;
-          if (!cur || ev.message.created_at > cur) {
-            lastCursorRef.current = ev.message.created_at;
+          const m = ev.message;
+          if (!cur || m.created_at > cur || (m.created_at === cur && m.id > lastCursorIDRef.current)) {
+            lastCursorRef.current = m.created_at;
+            lastCursorIDRef.current = m.id;
           }
         }
         applyEventRef.current(ev);
       },
       {
         getSinceCursor: () => lastCursorRef.current,
-        onReady: (cursor) => {
+        getSinceCursorID: () => lastCursorIDRef.current,
+        onReady: (cursor, cursorID) => {
+          // A non-empty PRIOR cursor means this ready follows a real
+          // disconnect/reconnect (not the initial connect), so room metadata
+          // and the active room's messages (incl. edits/deletes that replay
+          // does not re-emit) may have drifted — re-fetch both. Read the
+          // prior value here (not at mount) so it is accurate per-reconnect.
+          const wasReconnect = lastCursorRef.current !== "";
           lastCursorRef.current = cursor;
+          lastCursorIDRef.current = cursorID;
           setError(null);
-          // If this ready follows a non-trivial cursor the client was offline
-          // or the hub dropped frames; room metadata and the active room's
-          // messages (including edits/deletes that replay does NOT re-emit)
-          // may have drifted, so re-fetch both.
-          if (hadCursorBefore) {
+          if (wasReconnect) {
             void reloadRoomsRef.current();
             reloadActiveMessagesRef.current();
           }

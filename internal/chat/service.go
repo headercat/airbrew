@@ -119,30 +119,30 @@ func (s *Service) Subscribe(userID string) (<-chan Event, func()) {
 }
 
 // ReplayMissed returns up to limit message.created events the user missed
-// after sinceTime (across all their rooms), plus the cursor the client should
-// store as its new high-water mark. The cursor is the created_at of the last
-// replayed message (or the input sinceTime when nothing was missed). The
-// cursor is created_at-based — NOT seq — because seq is only unique within a
-// single room, so a global seq cursor would silently lose rows from a
-// low-activity room. hasMore is true when more rows remain beyond what was
-// returned.
-func (s *Service) ReplayMissed(ctx context.Context, userID string, since time.Time, limit int) (msgs []Message, cursor time.Time, hasMore bool, err error) {
+// after (sinceTime, sinceID), plus the cursor the client should store as its
+// new high-water mark. The cursor is (created_at, id)-based — NOT seq —
+// because seq is only unique within a single room and created_at alone ties
+// on same-second messages. hasMore is true when more rows remain beyond what
+// was returned.
+func (s *Service) ReplayMissed(ctx context.Context, userID string, since time.Time, sinceID string, limit int) (msgs []Message, cursor time.Time, cursorID string, hasMore bool, err error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	page, err := s.repo.ListMessagesSinceAcrossRooms(ctx, userID, since, limit+1)
+	page, err := s.repo.ListMessagesSinceAcrossRooms(ctx, userID, since, sinceID, limit+1)
 	if err != nil {
-		return nil, since, false, err
+		return nil, since, sinceID, false, err
 	}
 	if len(page) > limit {
 		hasMore = true
 		page = page[:limit]
 	}
-	cursor = since
+	cursor, cursorID = since, sinceID
 	if len(page) > 0 {
-		cursor = page[len(page)-1].CreatedAt.UTC()
+		last := page[len(page)-1]
+		cursor = last.CreatedAt.UTC()
+		cursorID = last.ID
 	}
-	return page, cursor, hasMore, nil
+	return page, cursor, cursorID, hasMore, nil
 }
 
 func userIDsFromRoom(room Room) []string {

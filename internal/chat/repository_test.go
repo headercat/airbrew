@@ -144,7 +144,7 @@ func TestReplayAcrossRoomsUsesCreatedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := repo.ListMessagesSinceAcrossRooms(ctx, users[0], time.Unix(0, 0).UTC(), 100)
+	got, err := repo.ListMessagesSinceAcrossRooms(ctx, users[0], time.Unix(0, 0).UTC(), "", 100)
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
@@ -159,6 +159,40 @@ func TestReplayAcrossRoomsUsesCreatedAt(t *testing.T) {
 	}
 	if len(seqs[roomA.ID]) != 2 || len(seqs[roomB.ID]) != 1 {
 		t.Fatalf("per-room replay counts wrong: %+v", seqs)
+	}
+}
+
+// TestReplayPagesAndSignalsHasMore locks in the round-5 fix: a backlog larger
+// than one replay page must set hasMore and advance the (created_at, id)
+// cursor so the caller can page through the rest instead of truncating.
+func TestReplayPagesAndSignalsHasMore(t *testing.T) {
+	repo, users := testRepo(t)
+	ctx := context.Background()
+	room, _, err := repo.CreateOrGetDirect(ctx, users[0], users[1])
+	if err != nil {
+		t.Fatalf("CreateOrGetDirect: %v", err)
+	}
+	// Three messages in the same second (created_at default is now); the id
+	// tiebreak must keep them distinct in the cursor.
+	for i := 0; i < 3; i++ {
+		if _, _, err := repo.AppendMessage(ctx, users[0], room.ID, "m"); err != nil {
+			t.Fatalf("AppendMessage %d: %v", i, err)
+		}
+	}
+	svc := NewService(repo, NewHub())
+	page1, cur, curID, hasMore, err := svc.ReplayMissed(ctx, users[0], time.Unix(0, 0).UTC(), "", 2)
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1) != 2 || !hasMore {
+		t.Fatalf("page1 = %d msgs hasMore=%v, want 2/true", len(page1), hasMore)
+	}
+	page2, _, _, hasMore2, err := svc.ReplayMissed(ctx, users[0], cur, curID, 2)
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if len(page2) != 1 || hasMore2 {
+		t.Fatalf("page2 = %d msgs hasMore=%v, want 1/false (tail)", len(page2), hasMore2)
 	}
 }
 

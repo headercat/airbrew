@@ -619,15 +619,24 @@ func (r *Repository) RecordOutboxAttempt(ctx context.Context, id string, nextAtt
 	return nil
 }
 
-// ResetOutboxAttempts clears the attempt counter and schedules an immediate
-// retry. Used by the manual retry path so a user-initiated retry resumes the
-// automatic sweeper even after the row previously hit the attempt cap.
+// ResetOutboxAttempts clears the attempt counter and, only when no other
+// worker holds the row, the next-attempt lease. Used by the manual retry
+// path so a user-initiated retry resumes the automatic sweeper even after
+// the row previously hit the attempt cap. The lease guard is critical: an
+// in-flight sweeper retry holds outbox_next_attempt in the future; clearing
+// it unconditionally would let the manual retry's ClaimOutbox succeed while
+// the sweeper is still mid-send → duplicate delivery.
 func (r *Repository) ResetOutboxAttempts(ctx context.Context, id string) error {
 	now := time.Now().UTC().Truncate(time.Second)
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE mail_messages
-		SET outbox_attempts = 0, outbox_next_attempt = NULL, updated_at = ?
-		WHERE id = ? AND is_outbox = 1`, now, id)
+		SET outbox_attempts = 0,
+		    outbox_next_attempt = CASE
+			    WHEN outbox_next_attempt IS NULL OR outbox_next_attempt <= ? THEN NULL
+			    ELSE outbox_next_attempt
+		    END,
+		    updated_at = ?
+		WHERE id = ? AND is_outbox = 1`, now, now, id)
 	if err != nil {
 		return fmt.Errorf("inbox: reset outbox attempts: %w", err)
 	}

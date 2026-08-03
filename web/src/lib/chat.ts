@@ -106,18 +106,22 @@ export function openChatEvents(
   onEvent: (event: ChatEvent) => void,
   opts?: {
     getSinceCursor?: () => string;
-    onReady?: (cursor: string, hasMore: boolean) => void;
+    getSinceCursorID?: () => string;
+    onReady?: (cursor: string, cursorID: string, hasMore: boolean) => void;
   },
 ) {
   // The browser EventSource reuses the same URL on its built-in reconnect, so
   // we cannot update the replay cursor dynamically that way. Close on error
   // and reopen with the latest cursor so the server replays any message.created
   // frames missed while disconnected (or while the hub dropped a frame because
-  // the subscriber fell behind). The cursor is created_at-based (seq is only
-  // unique per room, so a seq cursor would lose low-activity rooms).
-  const factory = (cursor: string) => {
-    const qs = cursor ? `?since_cursor=${encodeURIComponent(cursor)}` : "";
-    return new EventSource(`/api/chat/events${qs}`);
+  // the subscriber fell behind). The cursor is (created_at, id)-based: seq is
+  // only unique per room, and created_at alone ties on same-second messages.
+  const factory = (cursor: string, cursorID: string) => {
+    const qs = new URLSearchParams();
+    if (cursor) qs.set("since_cursor", cursor);
+    if (cursorID) qs.set("since_id", cursorID);
+    const s = qs.toString();
+    return new EventSource(`/api/chat/events${s ? `?${s}` : ""}`);
   };
   const types = [
     "room.created",
@@ -133,9 +137,12 @@ export function openChatEvents(
         const data = JSON.parse((ev as MessageEvent).data) as {
           ok: boolean;
           cursor?: string;
+          cursor_id?: string;
           has_more?: boolean;
         };
-        if (data.cursor) opts?.onReady?.(data.cursor, data.has_more ?? false);
+        if (data.cursor) {
+          opts?.onReady?.(data.cursor, data.cursor_id ?? "", data.has_more ?? false);
+        }
       } catch {
         /* ignore malformed ready frame */
       }
@@ -150,11 +157,11 @@ export function openChatEvents(
       });
     }
   };
-  let es = factory(opts?.getSinceCursor?.() ?? "");
+  let es = factory(opts?.getSinceCursor?.() ?? "", opts?.getSinceCursorID?.() ?? "");
   const reconnect = () => {
     es.close();
     window.setTimeout(() => {
-      es = factory(opts?.getSinceCursor?.() ?? "");
+      es = factory(opts?.getSinceCursor?.() ?? "", opts?.getSinceCursorID?.() ?? "");
       bind(es);
       es.onerror = () => reconnect();
     }, 1500);
@@ -164,11 +171,11 @@ export function openChatEvents(
   // dropping the unreplayed tail.
   const upstreamReady = opts?.onReady;
   if (upstreamReady) {
-    opts.onReady = (cursor, hasMore) => {
-      upstreamReady(cursor, hasMore);
+    opts.onReady = (cursor, cursorID, hasMore) => {
+      upstreamReady(cursor, cursorID, hasMore);
       if (hasMore) {
         es.close();
-        es = factory(opts.getSinceCursor?.() ?? "");
+        es = factory(opts.getSinceCursor?.() ?? "", opts.getSinceCursorID?.() ?? "");
         bind(es);
         es.onerror = () => reconnect();
       }

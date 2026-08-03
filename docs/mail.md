@@ -97,19 +97,51 @@ POST /api/mail/inbound/ses
 GET    /api/mail/mailboxes
 POST   /api/mail/mailboxes
 DELETE /api/mail/mailboxes/{id}
-GET    /api/mail/messages?mailbox=&folder=
+GET    /api/mail/counts?mailbox=                # inbox/sent/draft/starred/unread totals
+GET    /api/mail/messages?mailbox=&folder=&q=&thread=&limit=&offset=
 GET    /api/mail/messages/{id}
-PATCH  /api/mail/messages/{id}          (read/unread/star flags)
+PATCH  /api/mail/messages/{id}                   (read/unread/star/draft flags)
 DELETE /api/mail/messages/{id}
-GET    /api/mail/messages/{id}/raw      (download RFC822)
-POST   /api/mail/send
+GET    /api/mail/messages/{id}/raw               (download RFC822)
+POST   /api/mail/send                            (compose + send)
+POST   /api/mail/drafts                          (save draft; send=true sends immediately)
+PATCH  /api/mail/drafts/{id}                     (update draft; send=true sends it)
+DELETE /api/mail/drafts/{id}
+POST   /api/mail/attachments                     (pending outbound upload)
+GET    /api/mail/attachments/{id}                (download)
+DELETE /api/mail/attachments/{id}                (pending only)
 
 # Admin endpoints (admin session required)
-GET  /api/admin/mail/providers
-PUT  /api/admin/mail/providers          (upsert + activate a driver config)
+GET    /api/admin/mail/providers
+PUT    /api/admin/mail/providers                 (upsert + activate a driver config)
 DELETE /api/admin/mail/providers/{id}
-POST /api/admin/mail/providers/{id}/test
+POST   /api/admin/mail/providers/{id}/test       (sends a probe email / runs one poll)
 ```
+
+### Query and folders
+
+`GET /api/mail/messages` accepts:
+
+- `mailbox` — restrict to one mailbox id
+- `folder` — `inbox` (default), `sent`, `draft`, `starred`, `unread`
+- `q` — free-text search across subject, from, to/cc and body (case-insensitive
+  LIKE; user-supplied `%` and `_` are escaped so they match literally)
+- `thread` — restrict to one conversation id
+- `limit`/`offset` — pagination; limit defaults to 50 and caps at 200
+
+`GET /api/mail/counts` returns a single JSON object with `inbox`, `sent`,
+`draft`, `starred` and `unread` totals for the user (optionally scoped to one
+mailbox) so the SPA can render folder badges in one round-trip.
+
+### Drafts
+
+Drafts are stored as `mail_messages` rows with `direction='outbound'` and
+`is_draft=1`. A draft has no `message_id` until it is sent; its `thread_id`
+defaults to its own row id so unsent drafts form their own conversations. The
+`POST` and `PATCH` draft endpoints both accept `send: true` as a shortcut:
+the draft is saved (or updated) and then immediately handed to the active
+outbound driver in one round-trip. Attachment ids supplied on draft save are
+rebound to the draft (removing dropped ones back to the pending pool).
 
 ## Milestone roadmap
 
@@ -134,3 +166,14 @@ POST /api/admin/mail/providers/{id}/test
   reserved for a later milestone if multi-tenant or hosted deployments are added.
 - **Bounce/complaint handling.** Out of MVP scope; the SES webhook only ingests
   inbound mail, not bounce notifications.
+- **Poll backoff.** The inbound coordinator backs off exponentially on
+  consecutive poll failures (capped at 10x the base interval) so a misconfigured
+  server or transient outage does not produce a tight error loop. A successful
+  poll resets the failure counter.
+- **Search.** A case-insensitive LIKE scan over subject/from/to/cc/body keeps
+  the implementation SQLite-native without pulling in FTS5. User-supplied `%`
+  and `_` are escaped so a search for a literal value is exact.
+- **HTML sanitization.** Inbound HTML bodies are rendered in a sandboxed iframe
+  (`sandbox=""`) by the SPA, and additionally sanitized client-side to strip
+  scripts, forms, media and unsafe URL schemes before the iframe srcDoc is set.
+  This is defence in depth; the sandbox is the primary boundary.

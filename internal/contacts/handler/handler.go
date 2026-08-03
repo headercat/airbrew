@@ -36,9 +36,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/contacts/{id}", h.replaceContact)
 	mux.HandleFunc("PATCH /api/contacts/{id}", h.patchContact)
 	mux.HandleFunc("DELETE /api/contacts/{id}", h.deleteContact)
-	mux.HandleFunc("POST /api/contacts/{id}/avatar", h.uploadAvatar)
-	mux.HandleFunc("GET /api/contacts/{id}/avatar", h.getAvatar)
-	mux.HandleFunc("DELETE /api/contacts/{id}/avatar", h.deleteAvatar)
+	mux.HandleFunc("POST /api/contacts/avatars/{id}", h.uploadAvatar)
+	mux.HandleFunc("GET /api/contacts/avatars/{id}", h.getAvatar)
+	mux.HandleFunc("DELETE /api/contacts/avatars/{id}", h.deleteAvatar)
 	mux.HandleFunc("PUT /api/contacts/{id}/groups", h.setContactGroups)
 
 	mux.HandleFunc("GET /api/contacts/groups", h.listGroups)
@@ -122,7 +122,7 @@ func toContactResp(c *contact.Contact, groupIDs []string) contactResp {
 		out.Birthday = c.Birthday.UTC().Format("2006-01-02")
 	}
 	if c.AvatarPath != "" {
-		out.AvatarURL = "/api/contacts/" + c.ID + "/avatar"
+		out.AvatarURL = "/api/contacts/avatars/" + c.ID
 	}
 	return out
 }

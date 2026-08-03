@@ -20,6 +20,9 @@ import (
 	"net/textproto"
 	"strings"
 	"time"
+
+	"golang.org/x/text/encoding/ianaindex"
+	"golang.org/x/text/transform"
 )
 
 // Address is a named email address. It mirrors net/mail.Address but with JSON
@@ -201,16 +204,21 @@ func BuildRFC822(o Outgoing) ([]byte, error) {
 		if ct == "" {
 			ct = "application/octet-stream"
 		}
-		hdr := textproto.MIMEHeader{
-			"Content-Type":              {fmt.Sprintf("%s; name=%q", ct, a.Filename)},
-			"Content-Transfer-Encoding": {"base64"},
-			"Content-Disposition":       {fmt.Sprintf("attachment; filename=%q", a.Filename)},
-		}
+		dispType := "attachment"
+		dispParams := map[string]string{"filename": a.Filename}
 		if a.Inline || a.ContentID != "" {
-			hdr.Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", a.Filename))
-			if a.ContentID != "" {
-				hdr.Set("Content-ID", "<"+a.ContentID+">")
-			}
+			dispType = "inline"
+		}
+		// mime.FormatMediaType emits RFC 2231 (filename*=UTF-8''…) for
+		// non-ASCII filenames, which strict MIME clients (Outlook,
+		// corporate gateways) require. Plain %q would emit raw UTF-8.
+		hdr := textproto.MIMEHeader{
+			"Content-Type":              {mime.FormatMediaType(ct, map[string]string{"name": a.Filename})},
+			"Content-Transfer-Encoding": {"base64"},
+			"Content-Disposition":       {mime.FormatMediaType(dispType, dispParams)},
+		}
+		if a.ContentID != "" {
+			hdr.Set("Content-ID", "<"+a.ContentID+">")
 		}
 		part, err := mp.CreatePart(hdr)
 		if err != nil {
@@ -402,6 +410,7 @@ func extract(h mail.Header, body io.Reader) (text, html string, atts []ParsedAtt
 		if rerr != nil {
 			return "", "", nil, rerr
 		}
+		data = decodeCharset(data, params["charset"])
 		switch {
 		case strings.HasPrefix(mediatype, "text/plain"):
 			return data, "", nil, nil
@@ -431,6 +440,7 @@ func extract(h mail.Header, body io.Reader) (text, html string, atts []ParsedAtt
 			continue
 		}
 		data := decodeCTE(raw, part.Header.Get("Content-Transfer-Encoding"))
+		data = decodeCharset(data, pparams["charset"])
 		switch {
 		case strings.HasPrefix(pmed, "multipart/"):
 			// Nested container: recurse over the already-decoded bytes.
@@ -503,6 +513,29 @@ func readDecoded(body io.Reader, cte string) (string, error) {
 		return "", err
 	}
 	return decodeCTE(b, cte), nil
+}
+
+// decodeCharset transcodes text from the named IANA charset into UTF-8.
+// Unknown or missing charsets are returned as-is so the caller still sees
+// the raw bytes (the browser then tries its own heuristic on text bodies).
+// UTF-8 and US-ASCII pass through untouched. This matters in practice:
+// Korean (EUC-KR), Japanese (ISO-2022-JP) and Latin (Windows-1252) mail
+// would otherwise render as mojibake.
+func decodeCharset(s string, charset string) string {
+	charset = strings.ToLower(strings.TrimSpace(charset))
+	if charset == "" || charset == "utf-8" || charset == "utf8" || charset == "us-ascii" || charset == "ascii" {
+		return s
+	}
+	enc, err := ianaindex.IANA.Encoding(charset)
+	if err != nil || enc == nil {
+		return s
+	}
+	r := transform.NewReader(strings.NewReader(s), enc.NewDecoder())
+	out, err := io.ReadAll(r)
+	if err != nil {
+		return s
+	}
+	return string(out)
 }
 
 // decodeCTE reverses common Content-Transfer-Encodings.

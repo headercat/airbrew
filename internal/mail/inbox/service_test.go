@@ -185,7 +185,7 @@ func TestSendLinksPendingAttachments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if !bytes.Contains(sender.raw, []byte("Content-Disposition: attachment; filename=\"notes.txt\"")) {
+	if !bytes.Contains(sender.raw, []byte("filename=notes.txt")) {
 		t.Fatalf("sent MIME did not contain attachment: %s", string(sender.raw))
 	}
 	atts, err := s.ListAttachments(ctx, uid, msg.ID)

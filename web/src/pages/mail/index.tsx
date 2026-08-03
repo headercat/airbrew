@@ -860,7 +860,8 @@ function MessageView({
         {sanitizedHTML ? (
           <iframe
             title="Mail body"
-            sandbox=""
+            sandbox="allow-popups allow-popups-to-escape-sandbox"
+            referrerPolicy="no-referrer"
             srcDoc={sanitizedHTML}
             className="h-full min-h-[360px] w-full rounded-md border bg-white"
           />

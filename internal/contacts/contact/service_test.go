@@ -111,3 +111,91 @@ func TestExportUsesLargerLimit(t *testing.T) {
 		t.Fatalf("expected export to include all contacts, got %d", len(exported))
 	}
 }
+
+func TestImportDedupsByUIDAndResolvesGroups(t *testing.T) {
+	svc, uid := testService(t)
+	ctx := context.Background()
+	inputs := []CreateContactInput{
+		{UID: "dup-1", DisplayName: "Ada", GroupNames: []string{"Work", "Unknown"}},
+	}
+	summary := svc.ImportContacts(ctx, uid, inputs)
+	if summary.Created != 1 || summary.Updated != 0 || summary.Failed != 0 {
+		t.Fatalf("first import: %+v", summary)
+	}
+	// Re-import the same UID with updated fields: should update in place.
+	summary = svc.ImportContacts(ctx, uid, []CreateContactInput{
+		{UID: "dup-1", DisplayName: "Ada Lovelace", GroupNames: []string{"Work"}},
+	})
+	if summary.Created != 0 || summary.Updated != 1 || summary.Failed != 0 {
+		t.Fatalf("second import: %+v", summary)
+	}
+
+	list, err := svc.List(ctx, ListFilter{UserID: uid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("dedup should yield 1 contact, got %d", len(list))
+	}
+	if list[0].DisplayName != "Ada Lovelace" {
+		t.Errorf("display name not updated: %q", list[0].DisplayName)
+	}
+	// "Work" was auto-created; "Unknown" too; both memberships should be present
+	// on the first import, then trimmed to just "Work" on the update.
+	groups, err := svc.ListGroups(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, g := range groups {
+		names[g.Name] = true
+	}
+	if !names["Work"] || !names["Unknown"] {
+		t.Errorf("expected groups Work and Unknown to be created, got %v", names)
+	}
+	gids, err := svc.GroupsFor(ctx, uid, list[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gids) != 1 {
+		t.Fatalf("after update, expected 1 group membership, got %v", gids)
+	}
+}
+
+func TestValidationRejectsOversizedInput(t *testing.T) {
+	svc, uid := testService(t)
+	ctx := context.Background()
+	// Oversized notes should be rejected.
+	_, err := svc.Create(ctx, CreateContactInput{
+		UserID:      uid,
+		DisplayName: "ok",
+		Notes:       strings.Repeat("n", maxNotesLen+1),
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for oversized notes, got %v", err)
+	}
+	// Too many emails.
+	tooMany := make([]Email, maxValueListLen+1)
+	for i := range tooMany {
+		tooMany[i] = Email{Value: "a@b.co"}
+	}
+	_, err = svc.Create(ctx, CreateContactInput{UserID: uid, Emails: tooMany})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for too many emails, got %v", err)
+	}
+}
+
+func TestGroupColorValidation(t *testing.T) {
+	svc, uid := testService(t)
+	ctx := context.Background()
+	if _, err := svc.CreateGroup(ctx, CreateGroupInput{UserID: uid, Name: "Bad", Color: "red"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for non-hex color, got %v", err)
+	}
+	g, err := svc.CreateGroup(ctx, CreateGroupInput{UserID: uid, Name: "Good", Color: "#ff0000"})
+	if err != nil {
+		t.Fatalf("valid hex color should pass: %v", err)
+	}
+	if g.Color != "#ff0000" {
+		t.Errorf("color stored as %q, want #ff0000", g.Color)
+	}
+}

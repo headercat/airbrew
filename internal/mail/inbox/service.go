@@ -64,8 +64,21 @@ func (s *Service) GetMailbox(ctx context.Context, userID, id string) (*Mailbox, 
 	return s.repo.GetMailbox(ctx, userID, id)
 }
 
-// DeleteMailbox removes a mailbox and its messages.
+// DeleteMailbox removes a mailbox and its messages. Per-message raw RFC822
+// and attachment blobs are cleaned up before the cascading row delete so the
+// blob store does not leak orphaned bytes.
 func (s *Service) DeleteMailbox(ctx context.Context, userID, id string) error {
+	msgs, err := s.repo.ListMessages(ctx, ListFilter{UserID: userID, MailboxID: id, Limit: 1000})
+	if err != nil {
+		return err
+	}
+	for _, m := range msgs {
+		// DeleteMessage already cleans the raw blob + every attachment blob.
+		// ErrMessageNotFound is fine: a concurrent delete may have raced.
+		if err := s.DeleteMessage(ctx, userID, m.ID); err != nil && !errors.Is(err, ErrMessageNotFound) {
+			return err
+		}
+	}
 	return s.repo.DeleteMailbox(ctx, userID, id)
 }
 
@@ -521,17 +534,30 @@ func (s *Service) PatchFlags(ctx context.Context, userID, id string, patch FlagP
 	return s.repo.PatchFlags(ctx, userID, id, patch)
 }
 
-// DeleteMessage removes a message and its raw blob.
+// DeleteMessage removes a message, its raw RFC822 blob and every attachment
+// blob. Per-attachment rows cascade on the row delete but the blob store has
+// no such trigger, so we sweep here.
 func (s *Service) DeleteMessage(ctx context.Context, userID, id string) error {
 	m, err := s.repo.GetMessage(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	atts, err := s.repo.ListAttachmentsByMessage(ctx, userID, id)
 	if err != nil {
 		return err
 	}
 	if err := s.repo.DeleteMessage(ctx, userID, id); err != nil {
 		return err
 	}
-	if s.blobs != nil && m.RawPath != "" {
-		_ = s.blobs.Delete(ctx, m.RawPath)
+	if s.blobs != nil {
+		if m.RawPath != "" {
+			_ = s.blobs.Delete(ctx, m.RawPath)
+		}
+		for _, a := range atts {
+			if a.BlobPath != "" {
+				_ = s.blobs.Delete(ctx, a.BlobPath)
+			}
+		}
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
+	"github.com/headercat/airbrew/internal/mail/inbox"
 )
 
 func init() { Register("imap", buildIMAP) }
@@ -153,8 +155,13 @@ func (p *imapPoller) Poll(ctx context.Context, ingest Ingester) error {
 			date = time.Now().UTC()
 		}
 		if err := ingest.Ingest(ctx, p.cfg.Address, raw, date); err != nil {
-			p.log.Warn("imap: ingest failed", "uid", msg.Uid, "error", err)
-			continue
+			// ErrDuplicate means we already stored the message in a previous
+			// cycle. Treat it as success so the UID is marked seen and we do
+			// not re-fetch it on every tick after a coordinator restart.
+			if !errors.Is(err, inbox.ErrDuplicate) {
+				p.log.Warn("imap: ingest failed", "uid", msg.Uid, "error", err)
+				continue
+			}
 		}
 		p.mu.Lock()
 		p.seen[msg.Uid] = struct{}{}

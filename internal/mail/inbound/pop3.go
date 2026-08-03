@@ -3,12 +3,15 @@ package inbound
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/headercat/airbrew/internal/mail/inbox"
 )
 
 func init() { Register("pop3", buildPOP3) }
@@ -97,8 +100,13 @@ func (p *pop3Poller) Poll(ctx context.Context, ingest Ingester) error {
 			continue
 		}
 		if err := ingest.Ingest(ctx, p.cfg.Address, raw, time.Now().UTC()); err != nil {
-			p.log.Warn("pop3: ingest failed", "uid", uid, "error", err)
-			continue
+			// ErrDuplicate is success for poll purposes: the message was
+			// stored in a previous cycle. Mark it seen and honour
+			// delete_after_fetch without re-ingesting.
+			if !errors.Is(err, inbox.ErrDuplicate) {
+				p.log.Warn("pop3: ingest failed", "uid", uid, "error", err)
+				continue
+			}
 		}
 		p.mu.Lock()
 		p.seen[uid] = struct{}{}

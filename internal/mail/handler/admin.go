@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/headercat/airbrew/internal/audit"
+	"github.com/headercat/airbrew/internal/mail/inbox"
 	"github.com/headercat/airbrew/internal/mail/inbound"
 	"github.com/headercat/airbrew/internal/mail/letter"
 	"github.com/headercat/airbrew/internal/mail/outbound"
@@ -210,12 +211,16 @@ func (a *AdminHandler) test(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// discardIngester accepts messages but does nothing, used for admin
-// connectivity probes so a poll driver's login/fetch path is exercised without
-// storing junk mail.
+// discardIngester accepts messages but pretends they are duplicates, so
+// admin connectivity probes via Poll exercise the login/fetch path without
+// storing junk mail AND without triggering the POP3 poller's
+// delete_after_fetch branch (which would delete real upstream mail when the
+// ingester reports success).
 type discardIngester struct{}
 
-func (*discardIngester) Ingest(context.Context, string, []byte, time.Time) error { return nil }
+func (*discardIngester) Ingest(ctx context.Context, recipient string, raw []byte, receivedAt time.Time) error {
+	return inbox.ErrDuplicate
+}
 
 // testRecipientFromConfig pulls a fallback recipient out of known driver
 // config shapes (smtp.from / cloudflare.worker_url owner is unreachable, but

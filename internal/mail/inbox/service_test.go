@@ -338,3 +338,47 @@ func mustIngest(t *testing.T, s *inbox.Service, ctx context.Context, recipient s
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// TestDeleteCleansAttachmentBlobs verifies that deleting a message also
+// removes the blobs of every attachment bound to it, not only the row.
+func TestDeleteCleansAttachmentBlobs(t *testing.T) {
+	blobs, err := blob.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatalf("blob store: %v", err)
+	}
+	// Wrap to assert the blob path disappears.
+	s, ctx := newServiceWithBlob(t, blobs)
+	const uid = "u1"
+	mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	mustIngest(t, s, ctx, "alice@airbrew.local", []byte(
+		"From: bob@ext.com\r\nTo: alice@airbrew.local\r\nMessage-ID: <m-att>\r\n"+
+			"Subject: with attach\r\nMIME-Version: 1.0\r\n"+
+			"Content-Type: multipart/mixed; boundary=\"b\"\r\n\r\n"+
+			"--b\r\nContent-Type: text/plain\r\n\r\nhi\r\n"+
+			"--b\r\nContent-Type: text/plain; name=\"a.txt\"\r\n"+
+			"Content-Disposition: attachment; filename=\"a.txt\"\r\n\r\nxxx\r\n"+
+			"--b--\r\n"))
+	msgs, err := s.ListMessages(ctx, inbox.ListFilter{UserID: uid})
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("list: %v (%d)", err, len(msgs))
+	}
+	msg := msgs[0]
+	atts, err := s.ListAttachments(ctx, uid, msg.ID)
+	if err != nil || len(atts) != 1 {
+		t.Fatalf("attachments: %v (%d)", err, len(atts))
+	}
+	blobPath := atts[0].BlobPath
+	if blobPath == "" {
+		t.Fatal("blob path empty")
+	}
+	if _, _, err := blobs.Open(ctx, blobPath); err != nil {
+		t.Fatalf("blob should exist before delete: %v", err)
+	}
+	if err := s.DeleteMessage(ctx, uid, msg.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, _, err := blobs.Open(ctx, blobPath); err == nil {
+		t.Fatal("blob should be gone after delete")
+	}
+}

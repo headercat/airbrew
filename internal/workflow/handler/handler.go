@@ -358,7 +358,9 @@ func (h *Handler) cancelRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
+	// Read up to 64 KiB + 1 byte so we can detect (and flag) truncation rather
+	// than silently running the workflow against a partial body.
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024+1))
 	if err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -367,6 +369,10 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 		"body":        string(body),
 		"headers":     r.Header,
 		"remote_addr": clientIP(r),
+	}
+	if len(body) > 64*1024 {
+		input["body"] = string(body[:64*1024])
+		input["body_truncated"] = true
 	}
 	var parsed any
 	if json.Unmarshal(body, &parsed) == nil {

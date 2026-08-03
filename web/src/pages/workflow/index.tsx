@@ -434,6 +434,17 @@ function RunsView() {
     void refresh();
   }, [refresh]);
 
+  // Auto-refresh while any visible run is still non-terminal, so webhook/
+  // scheduler runs leave "running" without a manual refresh.
+  useEffect(() => {
+    const pending = runs.some(
+      (r) => r.status === "running" || r.status === "pending",
+    );
+    if (!pending) return;
+    const id = window.setInterval(() => void refresh(), 3000);
+    return () => window.clearInterval(id);
+  }, [runs, refresh]);
+
   if (openRun) {
     return <RunDetail run={openRun} onBack={() => setOpenRun(null)} />;
   }
@@ -492,28 +503,45 @@ function RunDetail({
   onBack: () => void;
 }) {
   const { t } = useTranslation();
+  const [current, setCurrent] = useState<WorkflowRun>(run);
   const [steps, setSteps] = useState<WorkflowStepRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const refreshDetail = useCallback(async () => {
+    try {
+      const [r, s] = await Promise.all([
+        workflow.getRun(run.id),
+        workflow.listSteps(run.id),
+      ]);
+      setCurrent(r);
+      setSteps(s);
+      setError(null);
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [run.id]);
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    workflow
-      .listSteps(run.id)
-      .then((s) => {
-        if (alive) setSteps(s);
-      })
-      .catch((e) => {
-        if (alive) setError(errMsg(e));
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
+    void refreshDetail().then(() => {
+      if (!alive) return;
+    });
     return () => {
       alive = false;
     };
-  }, [run.id]);
+  }, [refreshDetail]);
+
+  // Poll while the run is non-terminal so webhook/async runs stream in.
+  useEffect(() => {
+    if (current.status === "running" || current.status === "pending") {
+      const id = window.setInterval(() => void refreshDetail(), 2500);
+      return () => window.clearInterval(id);
+    }
+  }, [current.status, refreshDetail]);
 
   return (
     <div className="space-y-4">
@@ -525,15 +553,15 @@ function RunDetail({
         {t("workflow.backToRuns")}
       </button>
       <div className="flex items-center gap-3">
-        <RunStatusBadge status={run.status} />
-        <span className="font-mono text-sm">{run.id}</span>
+        <RunStatusBadge status={current.status} />
+        <span className="font-mono text-sm">{current.id}</span>
         <span className="text-xs text-muted-foreground">
-          {fmtDate(run.started_at)}
+          {fmtDate(current.started_at)}
         </span>
       </div>
-      {run.error && (
+      {current.error && (
         <pre className="overflow-auto rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          {run.error}
+          {current.error}
         </pre>
       )}
       {error && (

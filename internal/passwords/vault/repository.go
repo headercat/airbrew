@@ -587,15 +587,13 @@ func (r *Repository) syncChanges(ctx context.Context, userID string, since, curr
 	if cut > 0 {
 		return page[:cut], page[cut-1].Revision, true, nil
 	}
-	// The whole revision group might be larger than one page (e.g. an import
-	// that touched thousands of rows at one revision). Cap it and signal
-	// HasMore when the cap is hit so the client keeps paging instead of
-	// materialising an unbounded result set.
-	cap := limit * 4
-	if cap < 1 {
-		cap = 2000
-	}
-	sameRev, truncated, err := r.syncChangesAtRevision(ctx, userID, overflowRev, cap)
+	// The whole page sits at one revision. Return every row at that revision
+	// (the cursor is revision-based, so a cap here would drop rows that the
+	// client could never page back to). A generous hard ceiling guards against
+	// a genuinely pathological set; beyond it we accept HasMore so the client
+	// can fall back to a full resync rather than silently losing items.
+	const sameRevHardCeiling = 50000
+	sameRev, truncated, err := r.syncChangesAtRevision(ctx, userID, overflowRev, sameRevHardCeiling)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -603,11 +601,12 @@ func (r *Repository) syncChanges(ctx context.Context, userID string, since, curr
 	return sameRev, overflowRev, hasMore, nil
 }
 
-// syncChangesAtRevision returns every change at one revision, capped at cap.
-// A single ImportBundle can touch thousands of rows at one revision; without
-// the cap the fallback page would be unbounded and the browser could OOM. The
-// truncated flag is true when more rows at this revision remain.
-func (r *Repository) syncChangesAtRevision(ctx context.Context, userID string, revision, cap int64) ([]syncChange, bool, error) {
+// syncChangesAtRevision returns every change at one revision, with a hard
+// ceiling. A revision-based cursor cannot page within a single revision, so a
+// cap that lost rows would permanently drop them; instead we return the whole
+// group up to a generous ceiling and signal truncated so the caller can fall
+// back to a full resync for the (very rare) pathological case.
+func (r *Repository) syncChangesAtRevision(ctx context.Context, userID string, revision, ceiling int64) ([]syncChange, bool, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT kind, id, revision FROM (
 			SELECT 'folder' AS kind, id, revision FROM vault_folders WHERE user_id = ? AND revision = ?
@@ -615,7 +614,7 @@ func (r *Repository) syncChangesAtRevision(ctx context.Context, userID string, r
 			SELECT 'item' AS kind, id, revision FROM vault_items WHERE user_id = ? AND revision = ?
 		)
 		ORDER BY kind ASC, id ASC
-		LIMIT ?`, userID, revision, userID, revision, cap+1)
+		LIMIT ?`, userID, revision, userID, revision, ceiling+1)
 	if err != nil {
 		return nil, false, fmt.Errorf("vault: sync revision group: %w", err)
 	}
@@ -631,8 +630,8 @@ func (r *Repository) syncChangesAtRevision(ctx context.Context, userID string, r
 	if err := rows.Err(); err != nil {
 		return nil, false, err
 	}
-	if int64(len(changes)) > cap {
-		return changes[:cap], true, nil
+	if int64(len(changes)) > ceiling {
+		return changes[:ceiling], true, nil
 	}
 	return changes, false, nil
 }

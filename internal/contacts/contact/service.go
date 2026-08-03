@@ -50,6 +50,7 @@ func (s *Service) Create(ctx context.Context, in CreateContactInput) (*Contact, 
 	c := &Contact{
 		ID:          nextID(),
 		UserID:      in.UserID,
+		UID:         in.UID,
 		NamePrefix:  in.NamePrefix,
 		GivenName:   in.GivenName,
 		MiddleName:  in.MiddleName,
@@ -160,6 +161,82 @@ func (s *Service) Delete(ctx context.Context, userID, id string) error {
 		_ = s.blobs.Delete(ctx, avatar)
 	}
 	return nil
+}
+
+// ImportSummary records the outcome of a batch vCard import.
+type ImportSummary struct {
+	Created int
+	Updated int
+	Failed  int
+	// FirstError is the first per-card failure message, surfaced to the user.
+	FirstError string
+}
+
+// ImportContacts ingests a batch of parsed contacts. A contact with a UID that
+// matches an existing row updates that row in place (dedup); others are
+// created. GroupNames are resolved to group ids (creating groups as needed).
+// Per-card failures are counted but never abort the batch.
+func (s *Service) ImportContacts(ctx context.Context, userID string, inputs []CreateContactInput) ImportSummary {
+	var sum ImportSummary
+	for _, in := range inputs {
+		in.UserID = userID
+		if len(in.GroupNames) > 0 {
+			in.GroupIDs = append(in.GroupIDs, s.resolveGroupNames(ctx, userID, in.GroupNames)...)
+		}
+		if in.UID != "" {
+			if existing, err := s.repo.GetContactByUID(ctx, userID, in.UID); err == nil {
+				if _, err := s.Replace(ctx, userID, existing.ID, in); err != nil {
+					sum.record(err)
+					continue
+				}
+				sum.Updated++
+				continue
+			}
+		}
+		if _, err := s.Create(ctx, in); err != nil {
+			sum.record(err)
+			continue
+		}
+		sum.Created++
+	}
+	return sum
+}
+
+func (s *ImportSummary) record(err error) {
+	s.Failed++
+	if s.FirstError == "" {
+		s.FirstError = err.Error()
+	}
+}
+
+// resolveGroupNames maps group labels to ids, creating any that don't exist.
+func (s *Service) resolveGroupNames(ctx context.Context, userID string, names []string) []string {
+	groups, err := s.repo.ListGroups(ctx, userID)
+	if err != nil {
+		return nil
+	}
+	nameToID := make(map[string]string, len(groups))
+	for _, g := range groups {
+		nameToID[strings.ToLower(g.Name)] = g.ID
+	}
+	var ids []string
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if id, ok := nameToID[strings.ToLower(name)]; ok {
+			ids = append(ids, id)
+			continue
+		}
+		g, err := s.CreateGroup(ctx, CreateGroupInput{UserID: userID, Name: name})
+		if err != nil {
+			continue
+		}
+		nameToID[strings.ToLower(name)] = g.ID
+		ids = append(ids, g.ID)
+	}
+	return ids
 }
 
 // SetAvatar stores the uploaded avatar bytes in the blob store and records the
@@ -295,6 +372,23 @@ func validateInput(in CreateContactInput) error {
 	for _, p := range in.Phones {
 		if len(p.Value) > valueMax {
 			return fmt.Errorf("%w: a phone value is too long", ErrInvalidInput)
+		}
+	}
+	for _, u := range in.URLs {
+		if len(u.Value) > valueMax {
+			return fmt.Errorf("%w: a URL value is too long", ErrInvalidInput)
+		}
+	}
+	for _, m := range in.IMs {
+		if len(m.Value) > valueMax {
+			return fmt.Errorf("%w: an IM value is too long", ErrInvalidInput)
+		}
+	}
+	for _, a := range in.Addresses {
+		for _, s := range []string{a.Street, a.Locality, a.Region, a.PostalCode, a.Country} {
+			if len(s) > valueMax {
+				return fmt.Errorf("%w: an address field is too long", ErrInvalidInput)
+			}
 		}
 	}
 	return nil

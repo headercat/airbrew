@@ -176,6 +176,14 @@ func parseOneCard(lines []string) (CreateContactInput, bool) {
 			if t, ok := parseBirthday(value); ok {
 				c.Birthday = &t
 			}
+		case "UID":
+			c.UID = unescape(value)
+		case "CATEGORIES":
+			for _, n := range strings.Split(value, ",") {
+				if n = strings.TrimSpace(unescape(n)); n != "" {
+					c.GroupNames = append(c.GroupNames, n)
+				}
+			}
 		}
 	}
 	if c.DisplayName == "" {
@@ -317,7 +325,9 @@ func WriteVCard(w io.Writer, c *Contact, groupNames []string) error {
 	var b strings.Builder
 	b.WriteString("BEGIN:VCARD\r\n")
 	b.WriteString("VERSION:4.0\r\n")
-	if c.ID != "" {
+	if uid := c.UID; uid != "" {
+		b.WriteString("UID:" + escape(uid) + "\r\n")
+	} else if c.ID != "" {
 		b.WriteString("UID:" + escape(c.ID) + "\r\n")
 	}
 	if !c.UpdatedAt.IsZero() {

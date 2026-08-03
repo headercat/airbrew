@@ -568,25 +568,19 @@ func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request) {
 
 // sniffImage reads up to 512 bytes from r to detect the true content type via
 // http.DetectContentType, then returns a reader that replays those bytes
-// followed by the rest of the stream. A declared image content type is trusted
-// when DetectContentType also classifies it as an image; otherwise the sniffed
-// type wins.
+// followed by the rest of the stream. The sniffed type always wins over any
+// client-declared Content-Type so a mislabeled or hostile upload cannot bypass
+// the whitelist; an empty body yields "" so the whitelist rejects it.
 func sniffImage(r io.Reader, contentType string) (io.Reader, string) {
-	ct := strings.TrimSpace(contentType)
-	ct = strings.SplitN(ct, ";", 2)[0]
+	_ = contentType
 	buf := make([]byte, 512)
 	n, _ := io.ReadFull(r, buf)
+	if n == 0 {
+		return r, ""
+	}
 	head := buf[:n]
 	detected := strings.SplitN(http.DetectContentType(head), ";", 2)[0]
-	switch {
-	case n == 0:
-		return r, ct
-	case strings.HasPrefix(detected, "image/") && !strings.HasPrefix(ct, "image/"):
-		ct = detected
-	case ct == "" || ct == "application/octet-stream":
-		ct = detected
-	}
-	return io.MultiReader(bytes.NewReader(head), r), ct
+	return io.MultiReader(bytes.NewReader(head), r), detected
 }
 
 func (h *Handler) deleteAvatar(w http.ResponseWriter, r *http.Request) {
@@ -759,35 +753,24 @@ func (h *Handler) importVCards(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "invalid_request", "could not parse vCard: "+err.Error())
 		return
 	}
-	created, failed := 0, 0
-	var firstErr string
-	var firstID string
-	for _, in := range inputs {
-		in.UserID = sess.UserID
-		c, err := h.svc.Create(r.Context(), in)
-		if err != nil {
-			failed++
-			if firstErr == "" {
-				firstErr = err.Error()
-			}
-			continue
-		}
-		if created == 0 {
-			firstID = c.ID
-		}
-		created++
-	}
+	summary := h.svc.ImportContacts(r.Context(), sess.UserID, inputs)
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType: "contacts.import", ActorUserID: sess.UserID,
-		TargetType: "contact", TargetID: firstID,
-		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
-		Metadata: map[string]any{"count": created, "failed": failed},
+		TargetType: "contact",
+		IPAddress:  clientIP(r), UserAgent: r.UserAgent(),
+		Metadata: map[string]any{
+			"created": summary.Created, "updated": summary.Updated, "failed": summary.Failed,
+		},
 	})
-	resp := map[string]any{"imported": created}
-	if failed > 0 {
-		resp["failed"] = failed
-		if firstErr != "" {
-			resp["error"] = firstErr
+	resp := map[string]any{
+		"imported": summary.Created + summary.Updated,
+		"created":  summary.Created,
+		"updated":  summary.Updated,
+	}
+	if summary.Failed > 0 {
+		resp["failed"] = summary.Failed
+		if summary.FirstError != "" {
+			resp["error"] = summary.FirstError
 		}
 	}
 	jsonResp(w, http.StatusCreated, resp)

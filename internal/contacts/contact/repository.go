@@ -20,7 +20,7 @@ type Repository struct {
 // NewRepository returns a Repository bound to db.
 func NewRepository(db *sql.DB) *Repository { return &Repository{db: db} }
 
-const contactColumns = `id, user_id,
+const contactColumns = `id, user_id, COALESCE(uid,''),
 	COALESCE(name_prefix,''), COALESCE(given_name,''), COALESCE(middle_name,''),
 	COALESCE(family_name,''), COALESCE(name_suffix,''), COALESCE(display_name,''),
 	COALESCE(nickname,''), COALESCE(company,''), COALESCE(title,''),
@@ -69,13 +69,13 @@ func insertContactTx(ctx context.Context, q execer, c *Contact) error {
 	c.UpdatedAt = now
 	if _, err := q.ExecContext(ctx, `
 		INSERT INTO contacts
-		  (id, user_id, name_prefix, given_name, middle_name, family_name,
+		  (id, user_id, uid, name_prefix, given_name, middle_name, family_name,
 		   name_suffix, display_name, nickname, company, title, department,
 		   emails, phones, addresses, ims, urls, birthday, notes, avatar_path,
 		   is_favorite, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		c.ID, c.UserID, c.NamePrefix, c.GivenName, c.MiddleName, c.FamilyName,
+		c.ID, c.UserID, nullable(c.UID), c.NamePrefix, c.GivenName, c.MiddleName, c.FamilyName,
 		c.NameSuffix, c.DisplayName, c.Nickname, c.Company, c.Title, c.Department,
 		marshalJSON(c.Emails), marshalJSON(c.Phones), marshalJSON(c.Addresses),
 		marshalJSON(c.IMs), marshalJSON(c.URLs), nullableTime(c.Birthday), c.Notes,
@@ -90,6 +90,21 @@ func insertContactTx(ctx context.Context, q execer, c *Contact) error {
 func (r *Repository) GetContact(ctx context.Context, userID, id string) (*Contact, error) {
 	row := r.db.QueryRowContext(ctx,
 		"SELECT "+contactColumns+" FROM contacts WHERE id = ? AND user_id = ?", id, userID)
+	c, err := scanContact(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return c, err
+}
+
+// GetContactByUID returns one contact matching the stable external uid, for
+// import dedup. An empty uid always returns ErrNotFound.
+func (r *Repository) GetContactByUID(ctx context.Context, userID, uid string) (*Contact, error) {
+	if uid == "" {
+		return nil, ErrNotFound
+	}
+	row := r.db.QueryRowContext(ctx,
+		"SELECT "+contactColumns+" FROM contacts WHERE user_id = ? AND uid = ?", userID, uid)
 	c, err := scanContact(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -602,7 +617,7 @@ func scanContact(row scanner) (*Contact, error) {
 	var emails, phones, addresses, ims, urls string
 	var favorite int
 	var birthday sql.NullTime
-	err := row.Scan(&c.ID, &c.UserID,
+	err := row.Scan(&c.ID, &c.UserID, &c.UID,
 		&c.NamePrefix, &c.GivenName, &c.MiddleName, &c.FamilyName, &c.NameSuffix,
 		&c.DisplayName, &c.Nickname, &c.Company, &c.Title, &c.Department,
 		&emails, &phones, &addresses, &ims, &urls,

@@ -72,6 +72,7 @@ type Address struct {
 type Contact struct {
 	ID          string
 	UserID      string
+	UID         string // optional stable external id (vCard UID), for import dedup
 	NamePrefix  string
 	GivenName   string
 	MiddleName  string
@@ -144,6 +145,7 @@ type Group struct {
 // CreateContactInput carries the editable fields for creating a contact.
 type CreateContactInput struct {
 	UserID      string
+	UID         string // optional vCard UID; on import, used to match an existing contact
 	NamePrefix  string
 	GivenName   string
 	MiddleName  string
@@ -163,6 +165,9 @@ type CreateContactInput struct {
 	Notes       string
 	IsFavorite  bool
 	GroupIDs    []string
+	// GroupNames carries group labels by name (e.g. vCard CATEGORIES). On
+	// import the service resolves these to ids, creating groups as needed.
+	GroupNames []string
 }
 
 // UpdateContactInput carries the editable fields for a full replacement (PUT).

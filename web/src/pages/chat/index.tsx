@@ -85,11 +85,16 @@ export default function ChatPage() {
   // and re-opened on every locale change (which would gap the stream and burst
   // the replay).
   const applyEventRef = useRef<(ev: ChatEvent) => void>(() => {});
+  // loadRooms is called on reconnect to refresh room state (a replay only
+  // re-emits message.created, not room.read/room.updated); route via a ref so
+  // the subscription effect stays stable.
+  const reloadRoomsRef = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
     void loadRooms();
   }, [loadRooms]);
 
   useEffect(() => {
+    const hadSeqBefore = lastSeqRef.current;
     const stream = openChatEvents(
       (ev) => {
         if (ev.type === "message.created") {
@@ -104,6 +109,10 @@ export default function ChatPage() {
         onReady: (seq) => {
           if (seq) lastSeqRef.current = Math.max(lastSeqRef.current, seq);
           setError(null);
+          // If this ready follows a non-trivial cursor the client was offline
+          // or the hub dropped frames; room metadata (unread badges, titles,
+          // last_read_seq) may have drifted, so re-fetch the room list.
+          if (hadSeqBefore > 0) void reloadRoomsRef.current();
         },
       },
     );
@@ -207,9 +216,11 @@ export default function ChatPage() {
         break;
     }
   }
-  // Keep the ref current so the SSE effect (mounted once) always invokes the
+    // Keep the ref current so the SSE effect (mounted once) always invokes the
   // latest applyEvent without re-subscribing.
   applyEventRef.current = applyEvent;
+  reloadRoomsRef.current = loadRooms;
+;
 
   async function sendMessage() {
     if (!activeRoom || !draft.trim() || sending) return;

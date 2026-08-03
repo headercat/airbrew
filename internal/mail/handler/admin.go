@@ -228,12 +228,7 @@ func testRecipientFromConfig(raw json.RawMessage) string {
 		Address string `json:"address"`
 	}
 	_ = json.Unmarshal(raw, &probe)
-	for _, v := range []string{probe.TestTo, probe.From, probe.Sender, probe.Address} {
-		if at := strings.IndexByte(v, '@'); at > 0 && at < len(v)-1 {
-			return v
-		}
-	}
-	return ""
+	return firstEmail(probe.TestTo, probe.From, probe.Sender, probe.Address)
 }
 
 // testSenderFromConfig picks an envelope sender that the driver is known to
@@ -243,10 +238,18 @@ func testSenderFromConfig(raw json.RawMessage) string {
 		From    string `json:"from"`
 		Sender  string `json:"sender_address"`
 		Address string `json:"address"`
-		APIKey  string `json:"api_key"`
 	}
 	_ = json.Unmarshal(raw, &probe)
-	for _, v := range []string{probe.From, probe.Sender, probe.Address} {
+	return firstEmail(probe.From, probe.Sender, probe.Address)
+}
+
+// firstEmail returns the first value among candidates that parses as an email
+// address (contains an "@", with text on both sides). Used to pick a probe
+// recipient/sender from a driver config without importing the typed config
+// structs of every driver.
+func firstEmail(candidates ...string) string {
+	for _, v := range candidates {
+		v = strings.TrimSpace(v)
 		if at := strings.IndexByte(v, '@'); at > 0 && at < len(v)-1 {
 			return v
 		}

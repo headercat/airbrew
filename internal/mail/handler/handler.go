@@ -443,14 +443,17 @@ func (h *Handler) deleteAttachment(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// --- send ------------------------------------------------------------------
+// --- compose (send + drafts) ----------------------------------------------
 
 type addressInput struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
 }
 
-type sendReq struct {
+// composeReq is the shared body shape for /api/mail/send and /api/mail/drafts.
+// The "send" field is only consulted by the drafts endpoints, where true
+// means "save then immediately hand the draft to the active outbound driver".
+type composeReq struct {
 	MailboxID     string         `json:"mailbox_id"`
 	To            []addressInput `json:"to"`
 	Cc            []addressInput `json:"cc"`
@@ -462,6 +465,23 @@ type sendReq struct {
 	InReplyTo     string         `json:"in_reply_to"`
 	References    []string       `json:"references"`
 	AttachmentIDs []string       `json:"attachment_ids"`
+	Send          bool           `json:"send"`
+}
+
+func (q composeReq) toInput() inbox.SendInput {
+	return inbox.SendInput{
+		MailboxID:     q.MailboxID,
+		To:            toAddresses(q.To),
+		Cc:            toAddresses(q.Cc),
+		Bcc:           toAddresses(q.Bcc),
+		ReplyTo:       toAddresses(q.ReplyTo),
+		Subject:       q.Subject,
+		Text:          q.Text,
+		HTML:          q.HTML,
+		InReplyTo:     q.InReplyTo,
+		References:    q.References,
+		AttachmentIDs: q.AttachmentIDs,
+	}
 }
 
 func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
@@ -469,7 +489,7 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req sendReq
+	var req composeReq
 	if err := decodeJSON(r, &req); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -479,20 +499,7 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	in := inbox.SendInput{
-		MailboxID:     req.MailboxID,
-		To:            toAddresses(req.To),
-		Cc:            toAddresses(req.Cc),
-		Bcc:           toAddresses(req.Bcc),
-		ReplyTo:       toAddresses(req.ReplyTo),
-		Subject:       req.Subject,
-		Text:          req.Text,
-		HTML:          req.HTML,
-		InReplyTo:     req.InReplyTo,
-		References:    req.References,
-		AttachmentIDs: req.AttachmentIDs,
-	}
-	msg, err := h.inbox.Send(r.Context(), sess.UserID, in, sender)
+	msg, err := h.inbox.Send(r.Context(), sess.UserID, req.toInput(), sender)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -514,39 +521,23 @@ func parseContentLength(n int64) string {
 
 // --- drafts ---------------------------------------------------------------
 
-type draftReq struct {
-	MailboxID     string         `json:"mailbox_id"`
-	To            []addressInput `json:"to"`
-	Cc            []addressInput `json:"cc"`
-	Bcc           []addressInput `json:"bcc"`
-	ReplyTo       []addressInput `json:"reply_to"`
-	Subject       string         `json:"subject"`
-	Text          string         `json:"text"`
-	HTML          string         `json:"html"`
-	InReplyTo     string         `json:"in_reply_to"`
-	References    []string       `json:"references"`
-	AttachmentIDs []string       `json:"attachment_ids"`
-	Send          bool           `json:"send"`
-}
-
 func (h *Handler) createDraft(w http.ResponseWriter, r *http.Request) {
 	sess, ok := requireSession(w, r)
 	if !ok {
 		return
 	}
-	var req draftReq
+	var req composeReq
 	if err := decodeJSON(r, &req); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	in := draftInput(req)
 	if req.Send {
 		sender, err := outbound.Resolve(r.Context(), h.repo)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, "", in)
+		draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, "", req.toInput())
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -559,7 +550,7 @@ func (h *Handler) createDraft(w http.ResponseWriter, r *http.Request) {
 		jsonResp(w, http.StatusCreated, toMessageResp(sent))
 		return
 	}
-	draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, "", in)
+	draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, "", req.toInput())
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -572,19 +563,18 @@ func (h *Handler) updateDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req draftReq
+	var req composeReq
 	if err := decodeJSON(r, &req); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	in := draftInput(req)
 	if req.Send {
 		sender, err := outbound.Resolve(r.Context(), h.repo)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		if _, err := h.inbox.SaveDraft(r.Context(), sess.UserID, r.PathValue("id"), in); err != nil {
+		if _, err := h.inbox.SaveDraft(r.Context(), sess.UserID, r.PathValue("id"), req.toInput()); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -596,7 +586,7 @@ func (h *Handler) updateDraft(w http.ResponseWriter, r *http.Request) {
 		jsonResp(w, http.StatusOK, toMessageResp(sent))
 		return
 	}
-	draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, r.PathValue("id"), in)
+	draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, r.PathValue("id"), req.toInput())
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -614,20 +604,4 @@ func (h *Handler) deleteDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func draftInput(req draftReq) inbox.SendInput {
-	return inbox.SendInput{
-		MailboxID:     req.MailboxID,
-		To:            toAddresses(req.To),
-		Cc:            toAddresses(req.Cc),
-		Bcc:           toAddresses(req.Bcc),
-		ReplyTo:       toAddresses(req.ReplyTo),
-		Subject:       req.Subject,
-		Text:          req.Text,
-		HTML:          req.HTML,
-		InReplyTo:     req.InReplyTo,
-		References:    req.References,
-		AttachmentIDs: req.AttachmentIDs,
-	}
 }

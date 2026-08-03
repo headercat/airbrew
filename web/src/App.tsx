@@ -17,6 +17,7 @@ import AdminBranding from "@/pages/admin/branding";
 import AdminOAuth from "@/pages/admin/oauth";
 import AdminSystem from "@/pages/admin/system";
 import AdminAI from "@/pages/admin/ai";
+import ChatPage from "@/pages/chat";
 import ContactsPage from "@/pages/contacts";
 import DashboardPage from "@/pages/dashboard";
 import DrivePage from "@/pages/drive";
@@ -109,6 +110,10 @@ export default function App() {
 
         {/* Contacts — address book with groups and vCard import/export. */}
         <Route path="/contacts" element={<ContactsPage />} />
+
+        {/* Chat — real-time direct and group messaging. */}
+        <Route path="/chat" element={<ChatPage />} />
+        <Route path="/chat/:roomId" element={<ChatPage />} />
 
         <Route path="/:module" element={<ModuleStubPage />} />
       </Route>

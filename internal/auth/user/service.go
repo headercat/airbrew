@@ -66,7 +66,10 @@ func (s *Service) RegisterAdmin(ctx context.Context, email, plainPassword, displ
 }
 
 func (s *Service) registerWithRole(ctx context.Context, email, plainPassword, displayName string, role Role) (*User, error) {
-	email = strings.TrimSpace(email)
+	// Normalise to lowercase so casing cannot create duplicate identities or
+	// split login from registration (SQLite's default collation is case-
+	// sensitive, so the stored value must be canonical).
+	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
 		return nil, errors.New("email required")
 	}
@@ -101,7 +104,7 @@ func (s *Service) registerWithRole(ctx context.Context, email, plainPassword, di
 // It deliberately returns ErrInvalidCredentials for any failure mode so
 // that callers cannot distinguish "no such user" from "wrong password".
 func (s *Service) Authenticate(ctx context.Context, email, plainPassword string) (*User, error) {
-	u, err := s.repo.GetByEmail(ctx, strings.TrimSpace(email))
+	u, err := s.repo.GetByEmail(ctx, strings.ToLower(strings.TrimSpace(email)))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return nil, ErrInvalidCredentials

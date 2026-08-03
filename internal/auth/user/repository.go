@@ -53,7 +53,7 @@ func (r *Repository) Create(ctx context.Context, u *User, passwordHash string) e
 	defer tx.Rollback()
 
 	var existing string
-	err = tx.QueryRowContext(ctx, "SELECT id FROM users WHERE email = ?", u.Email).Scan(&existing)
+	err = tx.QueryRowContext(ctx, "SELECT id FROM users WHERE email = ? COLLATE NOCASE", u.Email).Scan(&existing)
 	if err == nil {
 		return ErrEmailTaken
 	}
@@ -103,9 +103,12 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*User, error) {
 	return r.queryOne(ctx, `SELECT `+columnsRead+` FROM users WHERE id = ?`, id)
 }
 
-// GetByEmail returns the user with the given email (case-insensitive).
+// GetByEmail returns the user with the given email. The lookup is
+// case-insensitive (COLLATE NOCASE) so a user who registered as
+// "Alice@x.com" can sign in typing "alice@x.com". Register also lowercases
+// the stored value so the canonical form is consistent.
 func (r *Repository) GetByEmail(ctx context.Context, email string) (*User, error) {
-	return r.queryOne(ctx, `SELECT `+columnsRead+` FROM users WHERE email = ?`, email)
+	return r.queryOne(ctx, `SELECT `+columnsRead+` FROM users WHERE email = ? COLLATE NOCASE`, email)
 }
 
 // CountByRole returns non-deleted users with the given role.

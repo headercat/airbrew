@@ -7,6 +7,7 @@ import {
   MessageSquarePlus,
   Search,
   Send,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
@@ -174,6 +175,18 @@ export default function ChatPage() {
           void chat.markRead(ev.room_id, ev.message.seq);
         }
         break;
+      case "message.updated":
+        if (ev.room_id === activeID) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === ev.message.id ? { ...ev.message } : m)),
+          );
+        }
+        break;
+      case "message.deleted":
+        if (ev.room_id === activeID) {
+          setMessages((prev) => prev.filter((m) => m.id !== ev.message.id));
+        }
+        break;
       case "room.read":
         if (ev.room_id === activeID) {
           setMessages((prev) =>
@@ -252,6 +265,21 @@ export default function ChatPage() {
       );
     } finally {
       setSending(false);
+    }
+  }
+
+  async function deleteMessage(msg: DraftMessage) {
+    if (!activeRoom || msg.pending) return;
+    if (!confirm(t("chat.confirmDelete"))) return;
+    // Optimistic removal; restore on failure.
+    setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+    try {
+      await chat.deleteMessage(activeRoom.id, msg.id);
+    } catch (e) {
+      setMessages((prev) =>
+        mergeMessage(prev, msg).sort((a, b) => a.seq - b.seq),
+      );
+      setError(errMsg(e));
     }
   }
 
@@ -408,6 +436,7 @@ export default function ChatPage() {
                       key={msg.id}
                       message={msg}
                       mine={msg.sender_id === user?.id}
+                      onDelete={() => void deleteMessage(msg)}
                     />
                   ))
                 )}
@@ -547,12 +576,15 @@ function RoomRow({
 function MessageBubble({
   message,
   mine,
+  onDelete,
 }: {
   message: DraftMessage;
   mine: boolean;
+  onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   return (
-    <div className={cn("flex gap-2", mine && "justify-end")}>
+    <div className={cn("group flex gap-2", mine && "justify-end")}>
       {!mine && <UserAvatar user={message.sender} />}
       <div className={cn("max-w-[78%] space-y-1", mine && "items-end")}>
         {!mine && (
@@ -576,10 +608,22 @@ function MessageBubble({
           )}
         >
           <span>{formatTime(message.created_at)}</span>
+          {message.edited_at && (
+            <span className="italic">{t("chat.edited")}</span>
+          )}
           {message.pending && <Loader2 className="h-3 w-3 animate-spin" />}
           {message.failed && <span className="text-destructive">Failed</span>}
           {mine && (message.read_by_count ?? 0) > 1 && (
             <CheckCheck className="h-3 w-3" />
+          )}
+          {mine && !message.pending && !message.failed && (
+            <button
+              onClick={onDelete}
+              title={t("chat.delete")}
+              className="ml-1 opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
           )}
         </div>
       </div>

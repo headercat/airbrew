@@ -118,7 +118,33 @@
         "label": "Passwords",
         "description": "Zero-knowledge password vault with multi-device sync."
       },
-      "ai": {
+  "chat": {
+    "title": "Chat",
+    "subtitle": "Direct and group messaging, delivered in real time.",
+    "newRoom": "New chat",
+    "searchRooms": "Search conversations",
+    "noRooms": "No conversations yet.",
+    "selectRoom": "Select a conversation on the left, or start a new one.",
+    "members": "Members",
+    "owner": "Owner",
+    "direct": "Direct",
+    "group": "Group",
+    "groupTitle": "Group title",
+    "searchUsers": "Search users",
+    "create": "Create",
+    "rename": "Rename",
+    "leave": "Leave",
+    "confirmLeave": "Leave this conversation?",
+    "confirmDelete": "Delete this message?",
+    "delete": "Delete",
+    "edited": "edited",
+    "loadEarlier": "Load earlier messages",
+    "emptyRoom": "No messages yet. Say hello!",
+    "composerPlaceholder": "Type a message (Enter to send, Shift+Enter for newline)",
+    "send": "Send",
+    "connectionLost": "Connection lost. Reconnecting…"
+  },
+  "ai": {
         "label": "AI Agents",
         "description": "Tool-using LLM agents with streaming responses."
       },

@@ -48,6 +48,8 @@ export type ChatEvent =
       user_id?: string;
     }
   | { type: "message.created"; room_id: string; message: ChatMessage }
+  | { type: "message.updated"; room_id: string; message: ChatMessage }
+  | { type: "message.deleted"; room_id: string; message: { id: string } }
   | { type: "room.read"; room_id: string; user_id: string; seq: number };
 
 export const chat = {
@@ -85,6 +87,15 @@ export const chat = {
   },
   sendMessage: (roomID: string, body: string) =>
     api.post<ChatMessage>(`/api/chat/rooms/${roomID}/messages`, { body }),
+  editMessage: (roomID: string, messageID: string, body: string) =>
+    api.patch<ChatMessage>(
+      `/api/chat/rooms/${roomID}/messages/${messageID}`,
+      { body },
+    ),
+  deleteMessage: (roomID: string, messageID: string) =>
+    api.del<{ ok: boolean }>(
+      `/api/chat/rooms/${roomID}/messages/${messageID}`,
+    ),
   markRead: (roomID: string, seq = 0) =>
     api.post<{ ok: true; seq: number }>(`/api/chat/rooms/${roomID}/read`, {
       seq,
@@ -111,6 +122,8 @@ export function openChatEvents(
     "room.created",
     "room.updated",
     "message.created",
+    "message.updated",
+    "message.deleted",
     "room.read",
   ];
   const bind = (stream: EventSource) => {

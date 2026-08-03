@@ -186,6 +186,36 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusCreated, msg)
 }
 
+func (h *Handler) editMessage(w http.ResponseWriter, r *http.Request) {
+	userID, ok := currentUserID(w, r)
+	if !ok {
+		return
+	}
+	var req sendMessageReq
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	msg, err := h.svc.EditMessage(r.Context(), userID, r.PathValue("id"), r.PathValue("msg"), req.Body)
+	if err != nil {
+		h.respondErr(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, msg)
+}
+
+func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request) {
+	userID, ok := currentUserID(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteMessage(r.Context(), userID, r.PathValue("id"), r.PathValue("msg")); err != nil {
+		h.respondErr(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 type markReadReq struct {
 	Seq int64 `json:"seq"`
 }

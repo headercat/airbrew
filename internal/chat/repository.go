@@ -444,6 +444,83 @@ func (r *Repository) GetMessage(ctx context.Context, userID, roomID, messageID s
 	return scanMessage(row)
 }
 
+// EditMessage updates the body of one of the caller's own messages and stamps
+// edited_at. Only the original sender may edit; other participants get
+// ErrForbidden. Returns the edited message and the room's recipient ids so the
+// service can broadcast a message.updated event.
+func (r *Repository) EditMessage(ctx context.Context, userID, roomID, messageID, body string) (Message, []string, error) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return Message{}, nil, fmt.Errorf("%w: message required", ErrInvalidInput)
+	}
+	if _, _, err := r.participantRole(ctx, userID, roomID); err != nil {
+		return Message{}, nil, err
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE chat_messages
+		   SET body = ?, edited_at = ?
+		 WHERE id = ? AND room_id = ? AND sender_id = ? AND deleted_at IS NULL`,
+		body, now, messageID, roomID, userID,
+	)
+	if err != nil {
+		return Message{}, nil, fmt.Errorf("chat: edit message: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Distinguish "not found / deleted" from "not the sender" by checking
+		// the row's existence, so the caller maps to 404 vs 403.
+		var owner string
+		err := r.db.QueryRowContext(ctx,
+			`SELECT sender_id FROM chat_messages WHERE id = ? AND room_id = ?`,
+			messageID, roomID).Scan(&owner)
+		if errors.Is(err, sql.ErrNoRows) {
+			return Message{}, nil, ErrNotFound
+		}
+		if err == nil && owner != userID {
+			return Message{}, nil, ErrForbidden
+		}
+		return Message{}, nil, ErrNotFound
+	}
+	msg, err := r.GetMessage(ctx, userID, roomID, messageID)
+	if err != nil {
+		return Message{}, nil, err
+	}
+	recipients, err := r.RoomUserIDs(ctx, roomID)
+	return msg, recipients, err
+}
+
+// DeleteMessage soft-deletes one of the caller's own messages (sets
+// deleted_at). Deleted rows are excluded by ListMessages/GetMessage. Returns
+// the recipient ids so the service can broadcast message.deleted.
+func (r *Repository) DeleteMessage(ctx context.Context, userID, roomID, messageID string) ([]string, error) {
+	if _, _, err := r.participantRole(ctx, userID, roomID); err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE chat_messages SET deleted_at = ?
+		 WHERE id = ? AND room_id = ? AND sender_id = ? AND deleted_at IS NULL`,
+		now, messageID, roomID, userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("chat: delete message: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var owner string
+		qerr := r.db.QueryRowContext(ctx,
+			`SELECT sender_id FROM chat_messages WHERE id = ? AND room_id = ?`,
+			messageID, roomID).Scan(&owner)
+		if errors.Is(qerr, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		if qerr == nil && owner != userID {
+			return nil, ErrForbidden
+		}
+		return nil, ErrNotFound
+	}
+	return r.RoomUserIDs(ctx, roomID)
+}
+
 func (r *Repository) MarkRead(ctx context.Context, userID, roomID string, seq int64) (int64, []string, error) {
 	if seq < 0 {
 		return 0, nil, fmt.Errorf("%w: invalid read seq", ErrInvalidInput)

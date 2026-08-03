@@ -59,6 +59,27 @@ func TestSetRoleAndStatusPreserveLastActiveAdmin(t *testing.T) {
 	}
 }
 
+func TestGetByEmailIsCaseInsensitive(t *testing.T) {
+	ctx := context.Background()
+	db := newUserRepoTestDB(t, ctx)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO users (id, email, status, role, created_at, updated_at) VALUES
+			('u1', 'alice@example.test', 'active', 'user', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepository(db)
+	for _, in := range []string{"alice@example.test", "Alice@Example.Test", "ALICE@EXAMPLE.TEST"} {
+		u, err := repo.GetByEmail(ctx, in)
+		if err != nil {
+			t.Fatalf("GetByEmail(%q): %v", in, err)
+		}
+		if u.ID != "u1" {
+			t.Fatalf("GetByEmail(%q) = %s, want u1", in, u.ID)
+		}
+	}
+}
+
 func newUserRepoTestDB(t *testing.T, ctx context.Context) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file::memory:?cache=shared&_time_format=sqlite")

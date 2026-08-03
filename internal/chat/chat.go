@@ -34,6 +34,8 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/chat/rooms/{id}", m.h.leaveRoom)
 	mux.HandleFunc("GET /api/chat/rooms/{id}/messages", m.h.listMessages)
 	mux.HandleFunc("POST /api/chat/rooms/{id}/messages", m.h.sendMessage)
+	mux.HandleFunc("PATCH /api/chat/rooms/{id}/messages/{msg}", m.h.editMessage)
+	mux.HandleFunc("DELETE /api/chat/rooms/{id}/messages/{msg}", m.h.deleteMessage)
 	mux.HandleFunc("POST /api/chat/rooms/{id}/read", m.h.markRead)
 	mux.HandleFunc("GET /api/chat/events", m.h.events)
 }

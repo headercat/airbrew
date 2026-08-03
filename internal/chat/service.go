@@ -79,6 +79,31 @@ func (s *Service) SendMessage(ctx context.Context, userID, roomID, body string) 
 	return msg, nil
 }
 
+// EditMessage updates the body of one of the caller's own messages and fans a
+// message.updated event to the room's participants.
+func (s *Service) EditMessage(ctx context.Context, userID, roomID, messageID, body string) (Message, error) {
+	msg, users, err := s.repo.EditMessage(ctx, userID, roomID, messageID, body)
+	if err != nil {
+		return Message{}, err
+	}
+	s.hub.Publish(users, Event{Type: "message.updated", RoomID: roomID, Message: &msg})
+	return msg, nil
+}
+
+// DeleteMessage soft-deletes one of the caller's own messages and fans a
+// message.deleted event so participants' clients drop the row.
+func (s *Service) DeleteMessage(ctx context.Context, userID, roomID, messageID string) error {
+	users, err := s.repo.DeleteMessage(ctx, userID, roomID, messageID)
+	if err != nil {
+		return err
+	}
+	s.hub.Publish(users, Event{
+		Type: "message.deleted", RoomID: roomID,
+		Message: &Message{ID: messageID, RoomID: roomID},
+	})
+	return nil
+}
+
 func (s *Service) MarkRead(ctx context.Context, userID, roomID string, seq int64) (int64, error) {
 	seq, users, err := s.repo.MarkRead(ctx, userID, roomID, seq)
 	if err != nil {

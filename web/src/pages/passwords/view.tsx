@@ -51,6 +51,22 @@ export default function PasswordView() {
     if (status !== "unlocked") navigate("/passwords");
   }, [status, navigate]);
 
+  // Reset the reprompt/reveal state when navigating between items so a
+  // previously verified reprompt does not leak into the new item (React Router
+  // reuses the component across id changes without remounting).
+  useEffect(() => {
+    setRepromptVerified(false);
+    setRevealedItem(null);
+    setRepromptPw("");
+    setRepromptError(null);
+  }, [id]);
+
+  // Drop the revealed snapshot when the underlying item changes (revision
+  // restore, background sync) so stale decrypted data is never shown.
+  useEffect(() => {
+    setRevealedItem(null);
+  }, [item?.revision]);
+
   // Reprompt gate: items flagged reprompt hide the whole decrypted detail area
   // until the user re-enters the master password. Verified state is kept only
   // for this view session and resets on navigation away.
@@ -321,7 +337,7 @@ function FieldRow({ field }: { field: Field }) {
           <a
             href={href}
             target="_blank"
-            rel="noreferrer"
+            rel="noreferrer noopener"
             className="truncate text-sm text-primary hover:underline"
           >
             {field.value || <span className="text-muted-foreground">—</span>}

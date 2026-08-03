@@ -49,6 +49,7 @@ import {
 } from "@/lib/vault/cache";
 import { readVaultSecuritySettings } from "@/lib/vault/security";
 import type { CSVParsedItem } from "@/lib/vault/csv";
+import { useAuth } from "@/lib/auth";
 import * as VApi from "@/lib/vault/api";
 import type {
   AttachmentMeta,
@@ -1680,15 +1681,26 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         let folderId = "";
         if (csv.folder) {
           const cached = folderCache.get(csv.folder);
-          if (cached) {
+          if (cached !== undefined) {
             folderId = cached;
           } else {
-            try {
-              const f = await createFolder(csv.folder);
-              folderCache.set(csv.folder, f.id);
-              folderId = f.id;
-            } catch {
-              folderCache.set(csv.folder, "");
+            // Prefer an existing folder with the same decrypted name so a
+            // re-import does not create duplicates the server cannot detect
+            // (it only sees ciphertext).
+            const existing = foldersRef.current.find(
+              (f) => f.name === csv.folder,
+            );
+            if (existing) {
+              folderCache.set(csv.folder, existing.id);
+              folderId = existing.id;
+            } else {
+              try {
+                const f = await createFolder(csv.folder);
+                folderCache.set(csv.folder, f.id);
+                folderId = f.id;
+              } catch {
+                folderCache.set(csv.folder, "");
+              }
             }
           }
         }
@@ -1719,6 +1731,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  // Lock the vault when the user signs out or the session expires. The vault
+  // key lives only in memory; without this the key would survive a sign-out
+  // until the tab is closed, which is dangerous on a shared device.
+  const { user } = useAuth();
+  useEffect(() => {
+    if (!user && status === "unlocked") {
+      lock();
+    }
+  }, [user, status, lock]);
 
   // Auto-lock: when the vault is unlocked, lock it after a period of inactivity
   // or when the tab stays hidden for a while. This limits the window in which a
@@ -1752,6 +1774,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     };
     const onSettingsChanged = () => {
       settings = readVaultSecuritySettings();
+      hiddenSince = 0;
       resetIdle();
     };
     const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];

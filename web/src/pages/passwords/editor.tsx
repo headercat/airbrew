@@ -112,6 +112,14 @@ export default function PasswordEditor() {
     if (status !== "unlocked") navigate("/passwords");
   }, [status, navigate]);
 
+  // Reset the reprompt gate when navigating between items so a previously
+  // verified reprompt does not leak into the new item (React Router reuses the
+  // component across id changes without remounting).
+  useEffect(() => {
+    setUnlockedItem(null);
+    setRepromptVerified(false);
+  }, [id]);
+
   if (status !== "unlocked") return null;
 
   if (isEdit && !existing) {

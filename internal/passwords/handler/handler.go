@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1143,6 +1144,21 @@ var faviconClient = &http.Client{Timeout: 5 * time.Second}
 
 func isValidDomain(s string) bool {
 	if s == "" || len(s) > 253 {
+		return false
+	}
+	// Reject single-label hostnames (localhost, intranet) and private TLDs so
+	// internal hostnames are not leaked to the upstream favicon provider.
+	if !strings.Contains(s, ".") {
+		return false
+	}
+	lower := strings.ToLower(s)
+	for _, suffix := range []string{".local", ".internal", ".localhost", ".lan", ".home"} {
+		if strings.HasSuffix(lower, suffix) {
+			return false
+		}
+	}
+	// Reject IPv4 and IPv6 literals so a user's internal IP is not forwarded.
+	if net.ParseIP(s) != nil {
 		return false
 	}
 	for _, c := range s {

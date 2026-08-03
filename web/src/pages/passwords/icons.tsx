@@ -57,6 +57,7 @@ export function Favicon({
       alt=""
       width={size}
       height={size}
+      loading="lazy"
       className="rounded-sm"
       onError={() => setFailed(true)}
     />

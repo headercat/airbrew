@@ -255,6 +255,9 @@ function VaultListView() {
       if (!q) return true;
       if (it.name.toLowerCase().includes(q)) return true;
       if (it.notes.toLowerCase().includes(q)) return true;
+      if (t(`passwords.types.${it.type}`).toLowerCase().includes(q)) return true;
+      const folder = folders.find((f) => f.id === it.folderId);
+      if (folder && folder.name.toLowerCase().includes(q)) return true;
       if (it.reprompt) return false;
       return it.fields.some(
         (f) =>

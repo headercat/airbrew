@@ -93,11 +93,9 @@ func writeShareErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// sharePassword returns the share password from the X-Share-Password header
-// (preferred) or the legacy ?pw= query parameter.
+// sharePassword returns the share password from the X-Share-Password header.
+// Query-string (?pw=) is intentionally not accepted: it would leak the
+// password into access logs, browser history, and the Referer header.
 func sharePassword(r *http.Request) string {
-	if pw := r.Header.Get("X-Share-Password"); pw != "" {
-		return pw
-	}
-	return r.URL.Query().Get("pw")
+	return r.Header.Get("X-Share-Password")
 }

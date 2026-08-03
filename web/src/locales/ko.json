@@ -772,7 +772,8 @@
       "new": "새 비밀번호",
       "confirm": "새 비밀번호 확인",
       "submit": "비밀번호 변경",
-      "changed": "비밀번호가 변경되었습니다."
+      "changed": "비밀번호가 변경되었습니다.",
+      "changedAndSessionsRevoked": "비밀번호가 변경되었으며 다른 기기 {{count}}개의 세션이 로그아웃되었습니다."
     }
   },
   "header": {

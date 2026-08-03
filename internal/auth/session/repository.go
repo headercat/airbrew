@@ -60,6 +60,25 @@ func (r *Repository) Revoke(ctx context.Context, id string) error {
 	return err
 }
 
+// RevokeAllForUserExcept revokes every active, unexpired session for userID
+// other than keepSessionID. Returns the number of sessions revoked. Used after
+// a credential change so other devices are forced to re-authenticate while the
+// current session stays alive.
+func (r *Repository) RevokeAllForUserExcept(ctx context.Context, userID, keepSessionID string) (int64, error) {
+	now := time.Now().UTC().Truncate(time.Second)
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE sessions
+		SET revoked_at = ?
+		WHERE user_id = ? AND id <> ?
+		  AND revoked_at IS NULL AND expires_at > ?
+	`, now, userID, keepSessionID, now)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 func nullable(s string) any {
 	if s == "" {
 		return nil

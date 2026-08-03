@@ -121,9 +121,9 @@ export const contacts = {
     api.putRaw<ContactRecord>(`/api/contacts/${id}/groups`, { group_ids }),
   remove: (id: string) => api.del<{ ok: boolean }>(`/api/contacts/${id}`),
   uploadAvatar: (id: string, file: File) =>
-    api.upload<ContactRecord>(`/api/contacts/${id}/avatar`, file),
+    api.upload<ContactRecord>(`/api/contacts/avatars/${id}`, file),
   clearAvatar: (id: string) =>
-    api.del<ContactRecord>(`/api/contacts/${id}/avatar`),
+    api.del<ContactRecord>(`/api/contacts/avatars/${id}`),
   groups: () => api.get<{ groups: ContactGroup[] }>("/api/contacts/groups"),
   createGroup: (body: { name: string; color?: string }) =>
     api.post<ContactGroup>("/api/contacts/groups", body),

@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/headercat/airbrew/internal/blob"
 	"github.com/headercat/airbrew/internal/bootstrap"
@@ -97,7 +98,9 @@ func main() {
 
 	<-ctx.Done()
 	logger.Info("shutdown signal received")
-	if err := srv.Shutdown(context.Background()); err != nil {
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutCancel()
+	if err := srv.Shutdown(shutCtx); err != nil {
 		logger.Error("shutdown failed", "error", err)
 	}
 }

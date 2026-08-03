@@ -39,13 +39,17 @@ func New(d Deps) *Server {
 		middleware.Recover(d.Logger),
 		middleware.AccessLog(d.Logger),
 	)
+	// WriteTimeout is intentionally 0: it is an end-to-end deadline that would
+	// force-close long-lived streaming responses (SSE for chat/AI) after 30s.
+	// Slowloris protection is provided by ReadHeaderTimeout; per-handler write
+	// deadlines can be applied via http.NewResponseController where needed.
 	return &Server{
 		httpSrv: &http.Server{
 			Addr:              d.Addr,
 			Handler:           handler,
 			ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      30 * time.Second,
+			ReadTimeout:       60 * time.Second,
+			WriteTimeout:      0,
 			IdleTimeout:       120 * time.Second,
 		},
 		logger: d.Logger,

@@ -68,6 +68,12 @@ func (s *Service) Revoke(ctx context.Context, sessID string) error {
 	return s.repo.Revoke(ctx, sessID)
 }
 
+// RevokeAllForUserExcept revokes every active session for userID except the one
+// named by keepSessionID, returning how many were revoked.
+func (s *Service) RevokeAllForUserExcept(ctx context.Context, userID, keepSessionID string) (int64, error) {
+	return s.repo.RevokeAllForUserExcept(ctx, userID, keepSessionID)
+}
+
 // MaxAge returns the configured session lifetime (seconds), for cookie Max-Age.
 func (s *Service) MaxAge() int { return int(s.maxAge / time.Second) }
 

@@ -777,7 +777,8 @@
       "new": "New password",
       "confirm": "Confirm new password",
       "submit": "Change password",
-      "changed": "Password changed."
+      "changed": "Password changed.",
+      "changedAndSessionsRevoked": "Password changed. {{count}} other session(s) were signed out."
     }
   },
   "header": {

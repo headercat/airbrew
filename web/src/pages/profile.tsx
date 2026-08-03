@@ -311,11 +311,17 @@ function PasswordSection() {
     }
     setBusy(true);
     try {
-      await api.post("/api/auth/password", {
+      const res = await api.post<{ sessions_revoked?: number }>("/api/auth/password", {
         current_password: current,
         new_password: next,
       });
-      setMessage(t("profile.password.changed"));
+      setMessage(
+        res.sessions_revoked && res.sessions_revoked > 0
+          ? t("profile.password.changedAndSessionsRevoked", {
+              count: res.sessions_revoked,
+            })
+          : t("profile.password.changed"),
+      );
       setCurrent("");
       setNext("");
       setConfirm("");

@@ -396,14 +396,18 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	// Revoke every other session for this user so a compromised device that
+	// still holds a valid cookie is forced out alongside the password change.
+	revoked, _ := h.sessions.RevokeAllForUserExcept(r.Context(), sess.UserID, sess.ID)
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType:   "user.password_changed",
 		ActorUserID: sess.UserID,
 		TargetType:  "user", TargetID: sess.UserID,
 		IPAddress: h.clientIP(r),
 		UserAgent: r.UserAgent(),
+		Metadata:  map[string]any{"sessions_revoked": revoked},
 	})
-	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+	response.JSON(w, http.StatusOK, map[string]any{"ok": true, "sessions_revoked": revoked})
 }
 
 const maxAvatarBytes = 4 << 20 // 4 MiB

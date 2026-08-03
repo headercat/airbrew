@@ -48,6 +48,14 @@ type Deps struct {
 	CookieSecure bool
 }
 
+// publicBlobNamespaces are blob namespaces safe to serve from the unauthenticated
+// /api/files/ handler. Drive file bytes and vault attachments are intentionally
+// absent: they must only be reachable through session-scoped handlers, so a
+// leaked blob path (access log, referrer) cannot grant permanent public access.
+var publicBlobNamespaces = map[string]bool{
+	"avatars": true, // user avatars shown on shared surfaces (login, chat)
+}
+
 // Build returns the root *http.ServeMux wired with every module.
 func Build(d Deps) *http.ServeMux {
 	mux := http.NewServeMux()
@@ -231,10 +239,17 @@ func buildAIModule(d Deps, state *modules.State, auditSvc *audit.Service) *ai.Mo
 }
 
 // filesHandler serves files from a blob.Store at /api/files/<namespace>/<name>.
+// Only namespaces in publicBlobNamespaces are reachable here; private namespaces
+// (drive, vault-attachments) are served by their own session-scoped handlers.
 func filesHandler(store blob.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rel := strings.TrimPrefix(r.URL.Path, "/api/files/")
 		if rel == "" || strings.Contains(rel, "..") {
+			http.NotFound(w, r)
+			return
+		}
+		ns, _, _ := strings.Cut(rel, "/")
+		if !publicBlobNamespaces[ns] {
 			http.NotFound(w, r)
 			return
 		}

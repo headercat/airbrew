@@ -58,8 +58,7 @@ export default function AdminUsers() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [createForm, setCreateForm] =
-    useState<CreateUserForm>(blankCreateForm);
+  const [createForm, setCreateForm] = useState<CreateUserForm>(blankCreateForm);
   const [selected, setSelected] = useState<AdminUser | null>(null);
   const [detail, setDetail] = useState<{
     sessions: AdminSession[];
@@ -506,7 +505,10 @@ export default function AdminUsers() {
         {selected && (
           <div className="space-y-5">
             <div className="grid gap-3 text-sm sm:grid-cols-3">
-              <InfoPill label={t("admin.users.colRole")} value={selected.role} />
+              <InfoPill
+                label={t("admin.users.colRole")}
+                value={selected.role}
+              />
               <InfoPill
                 label={t("admin.users.colStatus")}
                 value={selected.status}
@@ -549,15 +551,15 @@ export default function AdminUsers() {
                 </div>
               ) : (
                 <p className="rounded-md border px-3 py-4 text-center text-xs text-muted-foreground">
-                  {detail ? t("admin.security.noSessions") : t("common.loading")}
+                  {detail
+                    ? t("admin.security.noSessions")
+                    : t("common.loading")}
                 </p>
               )}
             </div>
 
             <div className="space-y-2">
-              <p className="text-sm font-medium">
-                {t("admin.users.activity")}
-              </p>
+              <p className="text-sm font-medium">{t("admin.users.activity")}</p>
               {detail?.activity.length ? (
                 <div className="max-h-52 overflow-auto rounded-md border">
                   {detail.activity.map((a) => (

@@ -105,13 +105,7 @@ export default function AdminModules() {
   );
 }
 
-function ButtonLink({
-  to,
-  children,
-}: {
-  to: string;
-  children: ReactNode;
-}) {
+function ButtonLink({ to, children }: { to: string; children: ReactNode }) {
   return (
     <Link
       to={to}

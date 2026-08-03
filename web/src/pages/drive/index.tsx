@@ -250,7 +250,7 @@ export default function DrivePage() {
       const url = await drive.downloadBlob(n.id);
       const a = document.createElement("a");
       a.href = url;
-      a.download = n.name;
+      a.download = n.kind === "folder" ? `${n.name}.zip` : n.name;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -668,14 +668,12 @@ function NodeTable(props: {
                       )}
                     />
                   </IconBtn>
-                  {n.kind === "file" && (
-                    <IconBtn
-                      label={t("drive.download")}
-                      onClick={() => onDownload(n)}
-                    >
-                      <Download className="h-4 w-4" />
-                    </IconBtn>
-                  )}
+                  <IconBtn
+                    label={t("drive.download")}
+                    onClick={() => onDownload(n)}
+                  >
+                    <Download className="h-4 w-4" />
+                  </IconBtn>
                   <IconBtn
                     label={t("drive.rename")}
                     onClick={() => onRename(n)}
@@ -792,70 +790,70 @@ function SharedView() {
               unavailable && "opacity-60",
             )}
           >
-          <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-sm font-medium">
-                {s.node_name || t("drive.untitled")}
-              </span>
-              {s.node_trashed && (
-                <Badge variant="destructive" className="text-[10px]">
-                  {t("drive.inTrash")}
-                </Badge>
-              )}
-              {!s.is_active && !s.node_trashed && (
-                <Badge variant="secondary" className="text-[10px]">
-                  {t("drive.disabled")}
-                </Badge>
-              )}
-              {expired && s.is_active && !s.node_trashed && (
-                <Badge variant="secondary" className="text-[10px]">
-                  {t("drive.expired")}
-                </Badge>
-              )}
-              {s.has_password && (
-                <Badge variant="secondary" className="text-[10px]">
-                  PW
-                </Badge>
-              )}
-            </div>
-            <div className="flex gap-2 text-xs text-muted-foreground">
-              {s.expires_at && (
-                <span>
-                  {t("drive.expires")}{" "}
-                  {new Date(s.expires_at).toLocaleDateString()}
+            <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-medium">
+                  {s.node_name || t("drive.untitled")}
                 </span>
-              )}
-              <span>
-                {s.downloads} {t("drive.downloads")}
-              </span>
+                {s.node_trashed && (
+                  <Badge variant="destructive" className="text-[10px]">
+                    {t("drive.inTrash")}
+                  </Badge>
+                )}
+                {!s.is_active && !s.node_trashed && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    {t("drive.disabled")}
+                  </Badge>
+                )}
+                {expired && s.is_active && !s.node_trashed && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    {t("drive.expired")}
+                  </Badge>
+                )}
+                {s.has_password && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    PW
+                  </Badge>
+                )}
+              </div>
+              <div className="flex gap-2 text-xs text-muted-foreground">
+                {s.expires_at && (
+                  <span>
+                    {t("drive.expires")}{" "}
+                    {new Date(s.expires_at).toLocaleDateString()}
+                  </span>
+                )}
+                <span>
+                  {s.downloads} {t("drive.downloads")}
+                </span>
+              </div>
             </div>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={unavailable}
-            onClick={async () => {
-              await navigator.clipboard.writeText(
-                window.location.origin + s.url,
-              );
-              setCopied(s.id);
-              setTimeout(() => setCopied(null), 1500);
-            }}
-          >
-            {copied === s.id ? t("drive.copied") : t("drive.copyLink")}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={async () => {
-              if (!confirm(t("drive.confirmRevoke"))) return;
-              await drive.deleteShare(s.id);
-              drive.listShares().then((r) => setShares(r.shares ?? []));
-            }}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={unavailable}
+              onClick={async () => {
+                await navigator.clipboard.writeText(
+                  window.location.origin + s.url,
+                );
+                setCopied(s.id);
+                setTimeout(() => setCopied(null), 1500);
+              }}
+            >
+              {copied === s.id ? t("drive.copied") : t("drive.copyLink")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={async () => {
+                if (!confirm(t("drive.confirmRevoke"))) return;
+                await drive.deleteShare(s.id);
+                drive.listShares().then((r) => setShares(r.shares ?? []));
+              }}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
           </div>
         );
       })}

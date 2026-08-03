@@ -96,9 +96,7 @@ export default function AdminSecurity() {
         total: number;
         limit: number;
         offset: number;
-      }>(
-        `/api/admin/security/login-history?${params.toString()}`,
-      );
+      }>(`/api/admin/security/login-history?${params.toString()}`);
       setAttempts(res.entries);
       setLoginTotal(res.total);
     } catch (err) {

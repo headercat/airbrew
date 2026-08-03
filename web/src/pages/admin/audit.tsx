@@ -94,9 +94,7 @@ export default function AdminAudit() {
             <Input
               placeholder={t("admin.audit.filterPlaceholder")}
               value={eventType}
-              onChange={(e) =>
-                resetFilter(() => setEventType(e.target.value))
-              }
+              onChange={(e) => resetFilter(() => setEventType(e.target.value))}
               className="h-8 text-[13px]"
             />
             <Input
@@ -108,9 +106,7 @@ export default function AdminAudit() {
             <Input
               placeholder={t("admin.audit.targetTypePlaceholder")}
               value={targetType}
-              onChange={(e) =>
-                resetFilter(() => setTargetType(e.target.value))
-              }
+              onChange={(e) => resetFilter(() => setTargetType(e.target.value))}
               className="h-8 text-[13px]"
             />
             <Input
@@ -186,7 +182,9 @@ export default function AdminAudit() {
                         </pre>
                       </TableCell>
                       <TableCell className="text-[13px]">
-                        <div>{e.actor_email || e.actor_user_id || "system"}</div>
+                        <div>
+                          {e.actor_email || e.actor_user_id || "system"}
+                        </div>
                         {e.actor_client_id && (
                           <div className="font-mono text-xs text-muted-foreground">
                             {e.actor_client_id}
@@ -269,7 +267,8 @@ function auditParams(input: AuditParamInput) {
   });
   if (input.eventType.trim()) params.set("event_type", input.eventType.trim());
   if (input.actor.trim()) params.set("actor", input.actor.trim());
-  if (input.targetType.trim()) params.set("target_type", input.targetType.trim());
+  if (input.targetType.trim())
+    params.set("target_type", input.targetType.trim());
   if (input.targetID.trim()) params.set("target_id", input.targetID.trim());
   if (input.from) params.set("from", new Date(input.from).toISOString());
   if (input.to) params.set("to", new Date(input.to).toISOString());

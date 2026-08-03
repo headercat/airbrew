@@ -7,7 +7,8 @@
     "loading": "로딩 중…",
     "open": "열기",
     "search": "검색",
-    "error": "문제가 발생했습니다"
+    "error": "문제가 발생했습니다",
+    "close": "닫기"
   },
   "sidebar": {
     "workspace": "워크스페이스",
@@ -929,6 +930,11 @@
     "loadMore": "더 보기",
     "showing": "{{total}}개 중 {{count}}개 표시",
     "copied": "복사됨",
-    "nameRequired": "이름, 이메일, 전화번호, 회사 중 하나 이상 필요합니다."
+    "copy": "복사",
+    "noName": "(이름 없음)",
+    "nameRequired": "이름, 이메일, 전화번호, 회사 중 하나 이상 필요합니다.",
+    "addressTypeHome": "자택",
+    "addressTypeWork": "회사",
+    "addressTypeOther": "기타"
   }
 }

@@ -136,9 +136,12 @@ export default function ContactsPage() {
             : [...(prev ?? []), ...(list.contacts ?? [])],
         );
         setSelectedID((cur) => {
-          const pool = replace ? list.contacts : (items ?? []);
-          if (cur && pool.some((item) => item.id === cur)) return cur;
-          return (replace ? list.contacts : items)?.[0]?.id ?? "";
+          // On load-more keep the current selection; on a fresh filter fall
+          // back to the first item of the new page. This avoids closing over
+          // `items` so fetchPage's identity is stable across appends.
+          if (!replace && cur) return cur;
+          if (cur && list.contacts?.some((item) => item.id === cur)) return cur;
+          return list.contacts?.[0]?.id ?? "";
         });
       } catch (e) {
         setError(errorMessage(e));
@@ -146,7 +149,7 @@ export default function ContactsPage() {
         setLoading(false);
       }
     },
-    [activeGroup, favoritesOnly, query, items],
+    [activeGroup, favoritesOnly, query],
   );
 
   // Initial groups load — independent of search/group/filter.
@@ -455,7 +458,7 @@ export default function ContactsPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <p className="truncate text-sm font-medium">
-                        {displayName(item) || t("contacts.empty")}
+                        {displayName(item) || t("contacts.noName")}
                       </p>
                       {item.is_favorite && (
                         <Star className="h-3.5 w-3.5 fill-current text-amber-500" />
@@ -545,6 +548,7 @@ function Banner({
   message: string;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className={cn(
@@ -555,7 +559,11 @@ function Banner({
       )}
     >
       <span>{message}</span>
-      <button onClick={onClose} aria-label="close" className="ml-2 shrink-0">
+      <button
+        onClick={onClose}
+        aria-label={t("common.close")}
+        className="ml-2 shrink-0"
+      >
         <X className="h-4 w-4" />
       </button>
     </div>
@@ -644,7 +652,7 @@ function ContactDetails({
         <ContactAvatar contact={contact} large />
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-lg font-semibold">
-            {displayName(contact) || t("contacts.empty")}
+            {displayName(contact) || t("contacts.noName")}
           </h2>
           <p className="text-sm text-muted-foreground">{subtitle(contact)}</p>
         </div>
@@ -883,8 +891,8 @@ function CopyButton({ value }: { value: string }) {
       type="button"
       onClick={copy}
       className="text-muted-foreground hover:text-foreground"
-      aria-label={t("contacts.copied")}
-      title={t("contacts.copied")}
+      aria-label={copied ? t("contacts.copied") : t("contacts.copy")}
+      title={copied ? t("contacts.copied") : t("contacts.copy")}
     >
       {copied ? (
         <Check className="h-3.5 w-3.5 text-emerald-500" />
@@ -1119,6 +1127,7 @@ function GroupEditor({
   const [name, setName] = useState("");
   const [color, setColor] = useState("#2563eb");
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!value) return;
@@ -1129,6 +1138,8 @@ function GroupEditor({
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (saving) return;
+    setSaving(true);
     setError(null);
     try {
       if (value === "new") await contacts.createGroup({ name, color });
@@ -1136,18 +1147,24 @@ function GroupEditor({
       await onSaved();
     } catch (e) {
       setError(errorMessage(e));
+    } finally {
+      setSaving(false);
     }
   }
 
   async function remove() {
     if (!value || value === "new") return;
+    if (saving) return;
     if (!confirm(t("contacts.confirmDeleteGroup", { name: value.name })))
       return;
+    setSaving(true);
     try {
       await contacts.removeGroup(value.id);
       await onSaved();
     } catch (e) {
       setError(errorMessage(e));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -1180,17 +1197,23 @@ function GroupEditor({
               type="button"
               variant="ghost"
               onClick={() => void remove()}
-              disabled={busy}
+              disabled={busy || saving}
             >
               <Trash2 className="h-4 w-4" />
               {t("contacts.deleteGroup")}
             </Button>
           )}
           <div className="ml-auto flex gap-2">
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={busy || saving}
+            >
               {t("contacts.cancel")}
             </Button>
-            <Button type="submit" disabled={busy}>
+            <Button type="submit" disabled={busy || saving}>
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
               {t("contacts.save")}
             </Button>
           </div>
@@ -1316,7 +1339,13 @@ function AddressEditor({
             >
               {ADDRESS_TYPES.map((type) => (
                 <option key={type} value={type}>
-                  {type || t("contacts.type")}
+                  {type === "home"
+                    ? t("contacts.addressTypeHome")
+                    : type === "work"
+                      ? t("contacts.addressTypeWork")
+                      : type === "other"
+                        ? t("contacts.addressTypeOther")
+                        : t("contacts.type")}
                 </option>
               ))}
             </select>

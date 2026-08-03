@@ -56,6 +56,11 @@ func (c *openAIClient) ChatStream(ctx context.Context, req Request) <-chan Delta
 	out := make(chan Delta, 16)
 	go func() {
 		defer close(out)
+		defer func() {
+			if r := recover(); r != nil {
+				_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: fmt.Errorf("provider stream panic: %v", r)})
+			}
+		}()
 		body, err := c.buildBody(req)
 		if err != nil {
 			_ = sendDelta(ctx, out, Delta{Kind: DeltaError, Err: err})

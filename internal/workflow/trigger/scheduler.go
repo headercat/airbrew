@@ -38,7 +38,17 @@ func (s *Scheduler) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			s.tick(ctx, now.UTC().Truncate(time.Minute))
+			// Recover per-tick so a single bad schedule / DB query panic does
+			// not unwind the loop and silently halt every scheduled workflow
+			// until process restart.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						s.log.WarnContext(ctx, "workflow scheduler: tick panicked", "error", r)
+					}
+				}()
+				s.tick(ctx, now.UTC().Truncate(time.Minute))
+			}()
 		}
 	}
 }

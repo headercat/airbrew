@@ -283,12 +283,15 @@ export default function ChatPage() {
   reloadActiveMessagesRef.current = () => {
     // Re-fetch the active room's messages to reconcile edits/deletes that the
     // SSE replay (message.created only) does not re-emit. No-op when no room
-    // is open.
-    if (!activeID) return;
-    void chat.listMessages(activeID).then((msgs) => {
+    // is open. Capture the room so a switch during the await does not let a
+    // stale fetch overwrite the new active room's message list.
+    const room = activeID;
+    if (!room) return;
+    void chat.listMessages(room).then((msgs) => {
+      if (room !== activeIDRef.current) return;
       setMessages(msgs);
     });
-  };;
+  };
 ;
 
   async function sendMessage() {

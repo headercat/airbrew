@@ -256,6 +256,9 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Disable proxy buffering (nginx etc.) so live frames stream instead of
+	// batching up and making chat feel laggy.
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	// Subscribe BEFORE replaying. Events published in the gap between the
 	// replay snapshot and the subscription would otherwise be lost; buffering
@@ -332,6 +335,8 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	draining := true
 	for draining {
 		select {
+		case <-r.Context().Done():
+			return
 		case ev := <-ch:
 			writeSSE(w, ev.Type, ev)
 		default:

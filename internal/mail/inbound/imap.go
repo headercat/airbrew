@@ -135,7 +135,21 @@ func (p *imapPoller) Poll(ctx context.Context, ingest Ingester) error {
 
 	messages := make(chan *imap.Message, 10)
 	done := make(chan error, 1)
-	go func() { done <- c.UidFetch(set, items, messages) }()
+	go func() {
+		defer func() {
+			// A malformed server response can panic inside go-imap's fetch
+			// parser. UidFetch normally closes the messages channel itself
+			// when it returns; on a panic it did not, so close it here so
+			// the outer for-range unblocks (otherwise Poll never returns and
+			// the coordinator's per-iteration recover never fires). Surface
+			// the panic as a normal error.
+			if r := recover(); r != nil {
+				close(messages)
+				done <- fmt.Errorf("imap: uid fetch panicked: %v", r)
+			}
+		}()
+		done <- c.UidFetch(set, items, messages)
+	}()
 
 	for msg := range messages {
 		if ctx.Err() != nil {

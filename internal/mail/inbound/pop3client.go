@@ -2,6 +2,7 @@ package inbound
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -42,12 +43,28 @@ func (c *pop3Client) Quit() {
 	_ = c.conn.Close()
 }
 
+// noNewlines guards against POP3 command injection (an attacker who controls
+// the config could otherwise embed CRLF in USER/PASS). RFC 1939 arguments are
+// a single line; reject anything containing CR or LF.
+func noNewlines(s string) error {
+	if strings.ContainsAny(s, "\r\n") {
+		return fmt.Errorf("pop3: argument must not contain newlines")
+	}
+	return nil
+}
+
 func (c *pop3Client) User(user string) error {
+	if err := noNewlines(user); err != nil {
+		return err
+	}
 	_, err := c.cmd("USER %s", user)
 	return err
 }
 
 func (c *pop3Client) Pass(pass string) error {
+	if err := noNewlines(pass); err != nil {
+		return err
+	}
 	_, err := c.cmd("PASS %s", pass)
 	return err
 }
@@ -93,12 +110,15 @@ func (c *pop3Client) uidl() (map[int]string, error) {
 	return out, nil
 }
 
-// retr fetches the full RFC822 body of message number n.
+// retr fetches the full RFC822 body of message number n. The response is
+// capped at maxMessageBytes (shared with IMAP and webhook caps); on overflow
+// the remaining lines are drained so the POP3 session stays in sync and an
+// error is returned so the caller can skip the message.
 func (c *pop3Client) retr(n int) ([]byte, error) {
 	if err := c.multiline("RETR %d", n); err != nil {
 		return nil, err
 	}
-	var buf strings.Builder
+	var buf bytes.Buffer
 	for {
 		line, err := c.r.ReadString('\n')
 		if err != nil {
@@ -111,9 +131,18 @@ func (c *pop3Client) retr(n int) ([]byte, error) {
 		if strings.HasPrefix(line, "..") {
 			line = line[1:]
 		}
+		if int64(buf.Len())+int64(len(line)) > maxMessageBytes {
+			// Drain the remaining lines so the session stays usable.
+			for line != ".\r\n" && line != ".\n" {
+				if line, err = c.r.ReadString('\n'); err != nil {
+					return nil, err
+				}
+			}
+			return nil, fmt.Errorf("pop3: message exceeds size cap (%d bytes)", maxMessageBytes)
+		}
 		buf.WriteString(line)
 	}
-	return []byte(buf.String()), nil
+	return buf.Bytes(), nil
 }
 
 // dele marks message n for deletion on QUIT.

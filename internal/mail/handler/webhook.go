@@ -48,7 +48,7 @@ func (h *WebhookHandler) receive(w http.ResponseWriter, r *http.Request) {
 	}
 	want := inbound.PushDriverSecret(p.Driver, []byte(p.Config))
 	got := bearerToken(r)
-	if want == "" || len(got) != len(want) || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+	if want == "" || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
 		respondErr(w, http.StatusUnauthorized, "unauthorized", "invalid webhook secret")
 		return
 	}

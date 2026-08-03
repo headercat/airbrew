@@ -122,7 +122,7 @@ export default function MailPage() {
     setError(null);
     try {
       const res = await mail.messages({
-        folder: folder === "inbox" ? undefined : folder,
+        folder,
         mailbox: activeMailbox?.id,
         q: searchQuery || undefined,
         limit: 100,
@@ -282,18 +282,29 @@ export default function MailPage() {
     setComposeOpen(true);
   };
 
-  const editDraft = (m: MailMessage) => {
+  const editDraft = async (m: MailMessage) => {
+    // The list endpoint omits attachments; if the user clicked edit on a row
+    // whose detail has not been fetched yet, fetch it so we do not silently
+    // drop the draft's attachments on save.
+    let detail = m;
+    if (!detail.attachments) {
+      try {
+        detail = await mail.message(m.id);
+      } catch {
+        // fall back to the row we already have
+      }
+    }
     setCompose({
       ...emptyCompose,
-      draftId: m.id,
-      to: m.to.map(formatAddress).join(", "),
-      cc: (m.cc ?? []).map(formatAddress).join(", "),
-      bcc: (m.bcc ?? []).map(formatAddress).join(", "),
-      subject: m.subject,
-      text: m.body_text,
-      inReplyTo: m.in_reply_to,
-      references: m.references ?? [],
-      attachments: m.attachments ?? [],
+      draftId: detail.id,
+      to: detail.to.map(formatAddress).join(", "),
+      cc: (detail.cc ?? []).map(formatAddress).join(", "),
+      bcc: (detail.bcc ?? []).map(formatAddress).join(", "),
+      subject: detail.subject,
+      text: detail.body_text,
+      inReplyTo: detail.in_reply_to,
+      references: detail.references ?? [],
+      attachments: detail.attachments ?? [],
     });
     setComposeOpen(true);
   };
@@ -858,7 +869,7 @@ function MessageView({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => onEditDraft(message)}
+                onClick={() => void onEditDraft(message)}
               >
                 <FileEdit className="h-4 w-4" />
               </Button>

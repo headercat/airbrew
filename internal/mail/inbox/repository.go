@@ -506,6 +506,27 @@ func (r *Repository) MarkSent(ctx context.Context, userID, id string, sentAt tim
 	return nil
 }
 
+// MarkOutbox flips a draft into the outbox (is_draft=0, is_outbox=1), used
+// by SendDraft right before invoking the outbound driver. Combined with the
+// pre-written Message-ID, raw blob and size, this means a crash or DB outage
+// between send and persist leaves the row recoverable via RetrySend (and the
+// Message-ID is stable, so retries never produce duplicates).
+func (r *Repository) MarkOutbox(ctx context.Context, userID, id string) error {
+	now := time.Now().UTC().Truncate(time.Second)
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE mail_messages SET is_draft = 0, is_outbox = 1, updated_at = ?
+		WHERE id = ? AND user_id = ? AND is_draft = 1`,
+		now, id, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("inbox: mark outbox: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrMessageNotFound
+	}
+	return nil
+}
+
 // PatchFlags applies a flag patch.
 func (r *Repository) PatchFlags(ctx context.Context, userID, id string, patch FlagPatch) error {
 	sets := []string{}

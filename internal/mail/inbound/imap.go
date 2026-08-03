@@ -145,9 +145,13 @@ func (p *imapPoller) Poll(ctx context.Context, ingest Ingester) error {
 		if r == nil {
 			continue
 		}
-		raw, err := io.ReadAll(r)
+		raw, err := io.ReadAll(io.LimitReader(r, maxMessageBytes+1))
 		if err != nil {
 			p.log.Warn("imap: read body failed", "uid", msg.Uid, "error", err)
+			continue
+		}
+		if int64(len(raw)) > maxMessageBytes {
+			p.log.Warn("imap: message exceeds size cap, skipping", "uid", msg.Uid, "cap", maxMessageBytes)
 			continue
 		}
 		date := msg.InternalDate

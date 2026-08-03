@@ -436,6 +436,46 @@ func TestRetrySendRecoversOutbox(t *testing.T) {
 	}
 }
 
+// TestSendDraftFailureLeavesOutbox verifies that SendDraft moves a draft into
+// the outbox (not deleted, not still flagged as draft) with a stable Message-ID
+// when the driver fails, so the user can recover via RetrySend without
+// producing duplicates (the same Message-ID is preserved across the retry).
+func TestSendDraftFailureLeavesOutbox(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mb := mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	draft, err := s.SaveDraft(ctx, uid, "", inbox.SendInput{
+		MailboxID: mb.ID,
+		To:        []letter.Address{{Address: "bob@ext.com"}},
+		Subject:   "try",
+		Text:      "body",
+	})
+	if err != nil {
+		t.Fatalf("save draft: %v", err)
+	}
+	if _, err := s.SendDraft(ctx, uid, draft.ID, failingSender{name: "fail"}); err == nil {
+		t.Fatal("expected send error")
+	}
+	stuck, err := s.GetMessage(ctx, uid, draft.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if stuck.IsDraft || !stuck.IsOutbox || stuck.MessageID == "" {
+		t.Fatalf("stuck = %+v, want is_draft=false is_outbox=true with message-id", stuck)
+	}
+	sent, err := s.RetrySend(ctx, uid, stuck.ID, &captureSender{})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if sent.MessageID != stuck.MessageID {
+		t.Fatalf("retry produced new message-id %q, want %q", sent.MessageID, stuck.MessageID)
+	}
+	if sent.IsOutbox || sent.IsDraft {
+		t.Fatalf("sent = %+v, want fully delivered", sent)
+	}
+}
+
 func mustIngest(t *testing.T, s *inbox.Service, ctx context.Context, recipient string, raw []byte) {
 	t.Helper()
 	if _, err := s.Ingest(ctx, recipient, raw, time.Now()); err != nil {

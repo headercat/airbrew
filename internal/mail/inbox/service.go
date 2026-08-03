@@ -465,8 +465,12 @@ func (s *Service) SaveDraft(ctx context.Context, userID string, draftID string, 
 	return draft, nil
 }
 
-// SendDraft loads a stored draft, sends it via sender, then flips is_draft off
-// and records the sent metadata.
+// SendDraft loads a stored draft, sends it via sender, then flips is_draft
+// off and records the sent metadata. The draft row is flipped into the
+// outbox (is_draft=0, is_outbox=1) BEFORE the driver is called so a crash
+// or DB outage between send and persist leaves a recoverable row with a
+// stable Message-ID (RetrySend re-uses the same id, so retries never
+// duplicate).
 func (s *Service) SendDraft(ctx context.Context, userID, draftID string, sender OutboundSender) (*Message, error) {
 	draft, err := s.repo.GetMessage(ctx, userID, draftID)
 	if err != nil {
@@ -509,32 +513,40 @@ func (s *Service) SendDraft(ctx context.Context, userID, draftID string, sender 
 		return nil, err
 	}
 	out.MessageID = messageIDFromRaw(raw)
-	if err := sender.Send(ctx, out); err != nil {
-		return nil, fmt.Errorf("inbox: send via %s: %w", sender.Name(), err)
-	}
-	var rawPath string
+
+	// Pre-write: persist Message-ID, raw blob and size while the row is
+	// still a draft (UpdateDraft's WHERE clause requires is_draft=1), then
+	// flip the draft into the outbox before invoking the driver.
+	draft.MessageID = out.MessageID
 	if s.blobs != nil {
 		p, err := s.blobs.Save(ctx, "mail-raw", "message/rfc822", strings.NewReader(string(raw)))
 		if err != nil {
 			return nil, fmt.Errorf("inbox: save raw: %w", err)
 		}
-		rawPath = p
+		draft.RawPath = p
 	}
-	now := time.Now().UTC().Truncate(time.Second)
-	draft.MessageID = out.MessageID
-	// Recompute thread id now that we have a Message-ID; reply drafts were
-	// pre-grouped under their parent in SaveDraft, this keeps that group and
-	// makes standalone drafts join their own (new) conversation.
+	draft.SizeBytes = int64(len(raw))
 	if tid := letter.ThreadKey(out.MessageID, draft.InReplyTo, draft.References); tid != "" && tid != "no-id" {
 		draft.ThreadID = tid
 	}
-	draft.RawPath = rawPath
-	draft.SizeBytes = int64(len(raw))
-	draft.IsDraft = false
-	draft.IsOutbox = false
-	draft.SentAt = &now
-	draft.UpdatedAt = now
 	if err := s.repo.UpdateDraft(ctx, draft); err != nil {
+		return nil, err
+	}
+	if err := s.repo.MarkOutbox(ctx, userID, draft.ID); err != nil {
+		return nil, err
+	}
+	draft.IsDraft = false
+	draft.IsOutbox = true
+
+	// Hand to the driver. On failure leave the row in the outbox for
+	// RetrySend; surface the error so the caller can react.
+	if err := sender.Send(ctx, out); err != nil {
+		return draft, fmt.Errorf("inbox: send via %s: %w", sender.Name(), err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	draft.SentAt = &now
+	draft.IsOutbox = false
+	if err := s.repo.MarkSent(ctx, userID, draft.ID, now); err != nil {
 		return nil, err
 	}
 	return draft, nil

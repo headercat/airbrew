@@ -156,7 +156,13 @@ func sgHeaders(o letter.Outgoing) map[string]string {
 		h["In-Reply-To"] = "<" + strings.Trim(o.InReplyTo, "<> ") + ">"
 	}
 	if len(o.References) > 0 {
-		h["References"] = strings.Join(o.References, " ")
+		// Wrap each reference in angle brackets; storage strips them, but
+		// strict MUAs/threading expects RFC5322 "<id> <id>" form.
+		refs := make([]string, len(o.References))
+		for i, r := range o.References {
+			refs[i] = "<" + strings.Trim(r, "<> ") + ">"
+		}
+		h["References"] = strings.Join(refs, " ")
 	}
 	if len(h) == 0 {
 		return nil

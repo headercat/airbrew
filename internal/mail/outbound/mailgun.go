@@ -48,7 +48,10 @@ func (d *mailgunDriver) Name() string { return "mailgun" }
 
 func (d *mailgunDriver) Send(ctx context.Context, o letter.Outgoing) error {
 	endpoint := fmt.Sprintf("%s/%s/messages", d.base, d.cfg.Domain)
-	body, ct := mailgunBody(o)
+	body, ct, err := mailgunBody(o)
+	if err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
 		return err
@@ -68,8 +71,11 @@ func (d *mailgunDriver) Send(ctx context.Context, o letter.Outgoing) error {
 
 // mailgunBody builds a multipart/form-data body carrying the raw RFC822 as the
 // "message" field — Mailgun's most reliable path, preserving all headers.
-func mailgunBody(o letter.Outgoing) (io.Reader, string) {
-	raw, _ := letter.BuildRFC822(o)
+func mailgunBody(o letter.Outgoing) (io.Reader, string, error) {
+	raw, err := letter.BuildRFC822(o)
+	if err != nil {
+		return nil, "", fmt.Errorf("mailgun: build rfc822: %w", err)
+	}
 	pr, pw := io.Pipe()
 	mw := multipart.NewWriter(pw)
 	go func() {
@@ -92,7 +98,7 @@ func mailgunBody(o letter.Outgoing) (io.Reader, string) {
 		_ = mw.Close()
 		_ = pw.Close()
 	}()
-	return pr, mw.FormDataContentType()
+	return pr, mw.FormDataContentType(), nil
 }
 
 func joinComma(in []letter.Address) string {

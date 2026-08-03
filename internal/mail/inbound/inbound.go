@@ -67,6 +67,14 @@ func Build(driver string, config json.RawMessage) (Poller, error) {
 // Drivers returns all inbound driver names (push + poll) for listings.
 func Drivers() []string { return []string{"cloudflare", "ses", "imap", "pop3"} }
 
+// MaxMessageBytes caps a single fetched inbound message. It matches the
+// webhook inbound cap so a single oversized upstream message cannot OOM the
+// process; messages larger than this are skipped with a warning.
+const MaxMessageBytes int64 = 25 << 20
+
+// maxMessageBytes is the unexported alias used inside the package.
+const maxMessageBytes = MaxMessageBytes
+
 // IsPollDriver reports whether driver runs as a background poller (vs. webhook).
 func IsPollDriver(driver string) bool {
 	switch driver {

@@ -50,13 +50,19 @@ const SAFE_PROTOCOLS = new Set([
   "mailto:",
   "tel:",
   "ftp:",
-  "data:image/",
 ]);
 
 function isUnsafeUrl(value: string): boolean {
   const v = value.trim().toLowerCase();
   if (v.startsWith("javascript:") || v.startsWith("vbscript:")) {
     return true;
+  }
+  // data: URIs: allow inline images only (data:image/*), reject everything
+  // else (data:text/html, data:text/javascript, …). This preserves the
+  // common case of inline images in modern mail composers and marketing
+  // mail without opening an XSS vector through other media types.
+  if (v.startsWith("data:")) {
+    return !v.startsWith("data:image/");
   }
   // Allow explicit safe protocols; reject anything else with a scheme.
   const colon = v.indexOf(":");

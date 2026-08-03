@@ -23,7 +23,7 @@ export type User = {
 export type ModuleStatus = {
   module: string;
   status: string;
-  enabled?: string;
+  enabled?: boolean;
 };
 
 // ---- Admin ----

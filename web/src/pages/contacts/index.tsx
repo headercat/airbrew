@@ -8,10 +8,17 @@ import {
   type ChangeEvent,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 import {
+  Check,
+  Copy,
   Download,
+  Globe,
   Loader2,
   Mail,
+  MapPin,
+  MessageCircle,
   Pencil,
   Phone,
   Plus,
@@ -39,32 +46,49 @@ import {
   type ContactGroup,
   type ContactPayload,
   type ContactRecord,
-  type ContactValue,
 } from "@/lib/contacts";
 import { cn } from "@/lib/utils";
 import {
-  blankForm,
   contactToForm,
   displayName,
   emptyContact,
   errorMessage,
   formToPayload,
+  hasIdentity,
   initials,
+  newFormAddress,
+  newFormValue,
   subtitle,
   type ContactFormState,
+  type FormAddress,
+  type FormValue,
 } from "./helpers";
 
+const PAGE_SIZE = 100;
+
 export default function ContactsPage() {
+  const { t } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const query = searchParams.get("q") ?? "";
+  const activeGroup = searchParams.get("group") ?? "";
+  const favoritesOnly = searchParams.get("favorite") === "1";
+
+  function setParam(key: string, value: string | null) {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setSearchParams(next, { replace: true });
+  }
+
   const [status, setStatus] = useState<{ enabled: boolean } | null>(null);
-  const [items, setItems] = useState<ContactRecord[]>([]);
+  const [items, setItems] = useState<ContactRecord[] | null>(null);
   const [groups, setGroups] = useState<ContactGroup[]>([]);
+  const [total, setTotal] = useState(0);
   const [selectedID, setSelectedID] = useState("");
-  const [query, setQuery] = useState("");
-  const [activeGroup, setActiveGroup] = useState("");
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<ContactRecord | null>(null);
   const [groupEditor, setGroupEditor] = useState<ContactGroup | "new" | null>(
     null,
@@ -72,7 +96,10 @@ export default function ContactsPage() {
   const fileInput = useRef<HTMLInputElement>(null);
 
   const selected = useMemo(
-    () => items.find((item) => item.id === selectedID) ?? items[0] ?? null,
+    () =>
+      items
+        ? (items.find((item) => item.id === selectedID) ?? items[0] ?? null)
+        : null,
     [items, selectedID],
   );
   const groupMap = useMemo(
@@ -81,54 +108,69 @@ export default function ContactsPage() {
   );
 
   const refreshGroups = useCallback(async () => {
-    const res = await contacts.groups();
-    setGroups(res.groups ?? []);
+    try {
+      const res = await contacts.groups();
+      setGroups(res.groups ?? []);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
   }, []);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [list] = await Promise.all([
-        contacts.list({
+  const fetchPage = useCallback(
+    async (offset: number, replace: boolean) => {
+      if (offset === 0) setLoading(true);
+      setError(null);
+      try {
+        const list = await contacts.list({
           q: query,
           group: activeGroup,
           favorite: favoritesOnly,
           sort: "name",
-          limit: 100,
-        }),
-        refreshGroups(),
-      ]);
-      setItems(list.contacts ?? []);
-      setSelectedID((current) => {
-        if (current && list.contacts?.some((item) => item.id === current)) {
-          return current;
-        }
-        return list.contacts?.[0]?.id ?? "";
-      });
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [activeGroup, favoritesOnly, query, refreshGroups]);
+          limit: PAGE_SIZE,
+          offset,
+        });
+        setTotal(list.total ?? 0);
+        setItems((prev) =>
+          replace
+            ? (list.contacts ?? [])
+            : [...(prev ?? []), ...(list.contacts ?? [])],
+        );
+        setSelectedID((cur) => {
+          const pool = replace ? list.contacts : (items ?? []);
+          if (cur && pool.some((item) => item.id === cur)) return cur;
+          return (replace ? list.contacts : items)?.[0]?.id ?? "";
+        });
+      } catch (e) {
+        setError(errorMessage(e));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [activeGroup, favoritesOnly, query, items],
+  );
+
+  // Initial groups load — independent of search/group/filter.
+  useEffect(() => {
+    void refreshGroups();
+  }, [refreshGroups]);
+
+  // Reload list (debounced) whenever the filter params change.
+  useEffect(() => {
+    const handle = window.setTimeout(() => void fetchPage(0, true), 180);
+    return () => window.clearTimeout(handle);
+  }, [fetchPage]);
 
   useEffect(() => {
     contacts
       .status()
-      .then((s) =>
-        setStatus({
-          enabled:
-            (s.enabled as unknown) !== false && String(s.enabled) !== "false",
-        }),
-      )
+      .then((s) => setStatus({ enabled: s.enabled !== false }))
       .catch(() => setStatus({ enabled: true }));
   }, []);
 
-  useEffect(() => {
-    const handle = window.setTimeout(() => void refresh(), 180);
-    return () => window.clearTimeout(handle);
-  }, [refresh]);
+  function flash(message: string | null) {
+    setNotice(message);
+    if (message) window.setTimeout(() => setNotice(null), 4000);
+  }
 
   async function saveContact(payload: ContactPayload) {
     setBusy(true);
@@ -138,7 +180,7 @@ export default function ContactsPage() {
         ? await contacts.update(editing.id, payload)
         : await contacts.create(payload);
       setEditing(null);
-      await refresh();
+      await fetchPage(0, true);
       setSelectedID(saved.id);
     } catch (e) {
       setError(errorMessage(e));
@@ -152,18 +194,21 @@ export default function ContactsPage() {
       const next = await contacts.patch(item.id, {
         is_favorite: !item.is_favorite,
       });
-      setItems((prev) => prev.map((row) => (row.id === next.id ? next : row)));
+      setItems((prev) =>
+        (prev ?? []).map((row) => (row.id === next.id ? next : row)),
+      );
     } catch (e) {
       setError(errorMessage(e));
     }
   }
 
   async function removeContact(item: ContactRecord) {
-    if (!confirm(`${displayName(item)} 연락처를 삭제할까요?`)) return;
+    if (!confirm(t("contacts.confirmDelete", { name: displayName(item) })))
+      return;
     setBusy(true);
     try {
       await contacts.remove(item.id);
-      await refresh();
+      await fetchPage(0, true);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -177,7 +222,9 @@ export default function ContactsPage() {
     setError(null);
     try {
       const next = await contacts.uploadAvatar(item.id, file);
-      setItems((prev) => prev.map((row) => (row.id === next.id ? next : row)));
+      setItems((prev) =>
+        (prev ?? []).map((row) => (row.id === next.id ? next : row)),
+      );
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -190,7 +237,9 @@ export default function ContactsPage() {
     setError(null);
     try {
       const next = await contacts.clearAvatar(item.id);
-      setItems((prev) => prev.map((row) => (row.id === next.id ? next : row)));
+      setItems((prev) =>
+        (prev ?? []).map((row) => (row.id === next.id ? next : row)),
+      );
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -204,8 +253,15 @@ export default function ContactsPage() {
     setError(null);
     try {
       const res = await contacts.importVCF(file);
-      await refresh();
-      setError(`${res.imported}개 연락처를 가져왔습니다.`);
+      await fetchPage(0, true);
+      flash(
+        res.failed
+          ? t("contacts.importedWithFailures", {
+              count: res.imported,
+              failed: res.failed,
+            })
+          : t("contacts.imported", { count: res.imported }),
+      );
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -235,9 +291,9 @@ export default function ContactsPage() {
   if (status && !status.enabled) {
     return (
       <PageWrapper>
-        <PageHeader title="주소록" />
+        <PageHeader title={t("contacts.title")} />
         <Card className="p-6 text-sm text-muted-foreground">
-          주소록 모듈이 비활성화되어 있습니다.
+          {t("contacts.disabled")}
         </Card>
       </PageWrapper>
     );
@@ -246,8 +302,8 @@ export default function ContactsPage() {
   return (
     <PageWrapper className="h-full overflow-hidden">
       <PageHeader
-        title="주소록"
-        description="연락처, 그룹, 즐겨찾기와 vCard 가져오기/내보내기를 관리합니다."
+        title={t("contacts.title")}
+        description={t("contacts.description")}
         actions={
           <div className="flex items-center gap-2">
             <input
@@ -262,46 +318,52 @@ export default function ContactsPage() {
               size="sm"
               onClick={() => fileInput.current?.click()}
               disabled={busy}
-              title="vCard 가져오기"
+              title={t("contacts.importBtn")}
             >
               <Upload className="h-4 w-4" />
-              가져오기
+              <span className="hidden sm:inline">
+                {t("contacts.importBtn")}
+              </span>
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={() => void exportFile()}
               disabled={busy}
-              title="vCard 내보내기"
+              title={t("contacts.exportBtn")}
             >
               <Download className="h-4 w-4" />
-              내보내기
+              <span className="hidden sm:inline">
+                {t("contacts.exportBtn")}
+              </span>
             </Button>
             <Button size="sm" onClick={() => setEditing(emptyContact())}>
               <Plus className="h-4 w-4" />
-              연락처
+              {t("contacts.addContact")}
             </Button>
           </div>
         }
       />
 
       {error && (
-        <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-sm">
-          <span>{error}</span>
-          <button onClick={() => setError(null)} aria-label="닫기">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        <Banner tone="error" message={error} onClose={() => setError(null)} />
+      )}
+      {notice && (
+        <Banner
+          tone="success"
+          message={notice}
+          onClose={() => setNotice(null)}
+        />
       )}
 
-      <div className="grid min-h-[620px] gap-4 lg:grid-cols-[260px_minmax(320px,1fr)_320px]">
+      <div className="grid min-h-[620px] gap-4 lg:grid-cols-[260px_minmax(320px,1fr)_340px]">
         <Card className="flex min-h-0 flex-col p-3">
           <div className="relative mb-3">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="이름, 회사, 이메일 검색"
+              onChange={(e) => setParam("q", e.target.value || null)}
+              placeholder={t("contacts.searchPlaceholder")}
               className="pl-9"
             />
           </div>
@@ -309,29 +371,29 @@ export default function ContactsPage() {
             <FilterButton
               active={!activeGroup && !favoritesOnly}
               icon={<Users className="h-4 w-4" />}
-              label="모든 연락처"
-              count={items.length}
+              label={t("contacts.allContacts")}
+              count={total}
               onClick={() => {
-                setActiveGroup("");
-                setFavoritesOnly(false);
+                setParam("group", null);
+                setParam("favorite", null);
               }}
             />
             <FilterButton
               active={favoritesOnly}
               icon={<Star className="h-4 w-4" />}
-              label="즐겨찾기"
+              label={t("contacts.favorites")}
               onClick={() => {
-                setActiveGroup("");
-                setFavoritesOnly(true);
+                setParam("group", null);
+                setParam("favorite", "1");
               }}
             />
           </div>
           <div className="mt-4 flex items-center justify-between px-1 text-xs font-medium uppercase text-muted-foreground">
-            <span>그룹</span>
+            <span>{t("contacts.groups")}</span>
             <button
               className="rounded p-1 hover:bg-accent"
               onClick={() => setGroupEditor("new")}
-              aria-label="그룹 추가"
+              aria-label={t("contacts.addGroup")}
             >
               <Plus className="h-3.5 w-3.5" />
             </button>
@@ -345,8 +407,8 @@ export default function ContactsPage() {
                     activeGroup === group.id && "bg-accent",
                   )}
                   onClick={() => {
-                    setActiveGroup(group.id);
-                    setFavoritesOnly(false);
+                    setParam("group", group.id);
+                    setParam("favorite", null);
                   }}
                 >
                   <span
@@ -361,7 +423,7 @@ export default function ContactsPage() {
                 <button
                   className="rounded p-1 text-muted-foreground opacity-0 hover:bg-accent group-hover:opacity-100"
                   onClick={() => setGroupEditor(group)}
-                  aria-label="그룹 편집"
+                  aria-label={t("contacts.editGroup")}
                 >
                   <Pencil className="h-3.5 w-3.5" />
                 </button>
@@ -371,7 +433,7 @@ export default function ContactsPage() {
         </Card>
 
         <Card className="min-h-0 overflow-hidden p-0">
-          {loading ? (
+          {loading || items === null ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
@@ -383,6 +445,7 @@ export default function ContactsPage() {
                 <button
                   key={item.id}
                   onClick={() => setSelectedID(item.id)}
+                  aria-current={selected?.id === item.id ? "true" : undefined}
                   className={cn(
                     "flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-accent/60",
                     selected?.id === item.id && "bg-accent",
@@ -392,7 +455,7 @@ export default function ContactsPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <p className="truncate text-sm font-medium">
-                        {displayName(item)}
+                        {displayName(item) || t("contacts.empty")}
                       </p>
                       {item.is_favorite && (
                         <Star className="h-3.5 w-3.5 fill-current text-amber-500" />
@@ -415,6 +478,19 @@ export default function ContactsPage() {
                   </div>
                 </button>
               ))}
+              {items.length < total && (
+                <div className="p-3">
+                  <Button
+                    variant="ghost"
+                    className="w-full"
+                    onClick={() => void fetchPage(items.length, false)}
+                    disabled={busy}
+                  >
+                    {t("contacts.loadMore")} (
+                    {t("contacts.showing", { count: items.length, total })})
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </Card>
@@ -432,7 +508,7 @@ export default function ContactsPage() {
             />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              연락처를 선택하세요.
+              {t("contacts.selectPrompt")}
             </div>
           )}
         </Card>
@@ -453,10 +529,36 @@ export default function ContactsPage() {
         onSaved={async () => {
           setGroupEditor(null);
           await refreshGroups();
-          await refresh();
+          await fetchPage(0, true);
         }}
       />
     </PageWrapper>
+  );
+}
+
+function Banner({
+  tone,
+  message,
+  onClose,
+}: {
+  tone: "error" | "success";
+  message: string;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-between rounded-md border px-3 py-2 text-sm",
+        tone === "error"
+          ? "border-destructive/40 bg-destructive/10 text-destructive"
+          : "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+      )}
+    >
+      <span>{message}</span>
+      <button onClick={onClose} aria-label="close" className="ml-2 shrink-0">
+        <X className="h-4 w-4" />
+      </button>
+    </div>
   );
 }
 
@@ -491,18 +593,19 @@ function FilterButton({
 }
 
 function EmptyContacts({ onCreate }: { onCreate: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
       <UserRound className="h-8 w-8 text-muted-foreground" />
       <div>
-        <p className="text-sm font-medium">아직 연락처가 없습니다.</p>
+        <p className="text-sm font-medium">{t("contacts.empty")}</p>
         <p className="mt-1 text-sm text-muted-foreground">
-          직접 추가하거나 vCard 파일을 가져와 시작하세요.
+          {t("contacts.emptyHint")}
         </p>
       </div>
       <Button size="sm" onClick={onCreate}>
         <Plus className="h-4 w-4" />
-        연락처 추가
+        {t("contacts.addContact")}
       </Button>
     </div>
   );
@@ -525,30 +628,35 @@ function ContactDetails({
   onAvatar: (file?: File) => void;
   onClearAvatar: () => void;
 }) {
-  const groupMap = new Map(groups.map((group) => [group.id, group]));
+  const { t } = useTranslation();
+  const groupMap = useMemo(
+    () => new Map(groups.map((group) => [group.id, group])),
+    [groups],
+  );
   const avatarInput = useRef<HTMLInputElement>(null);
   function changeAvatar(e: ChangeEvent<HTMLInputElement>) {
     onAvatar(e.target.files?.[0]);
     e.target.value = "";
   }
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" role="region" aria-label={t("contacts.title")}>
       <div className="flex items-start gap-3">
         <ContactAvatar contact={contact} large />
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-lg font-semibold">
-            {displayName(contact)}
+            {displayName(contact) || t("contacts.empty")}
           </h2>
           <p className="text-sm text-muted-foreground">{subtitle(contact)}</p>
         </div>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <input
           ref={avatarInput}
           type="file"
           accept="image/*"
           className="hidden"
           onChange={changeAvatar}
+          aria-label={t("contacts.photo")}
         />
         <Button
           variant="outline"
@@ -556,58 +664,132 @@ function ContactDetails({
           onClick={() => avatarInput.current?.click()}
         >
           <Upload className="h-4 w-4" />
-          사진
+          {t("contacts.photo")}
         </Button>
         {contact.avatar_url && (
           <Button variant="ghost" size="sm" onClick={onClearAvatar}>
             <X className="h-4 w-4" />
           </Button>
         )}
-        <Button variant="outline" size="sm" onClick={onFavorite}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onFavorite}
+          aria-pressed={contact.is_favorite}
+        >
           <Star
             className={cn(
               "h-4 w-4",
               contact.is_favorite && "fill-current text-amber-500",
             )}
           />
-          즐겨찾기
+          {t("contacts.favorite")}
         </Button>
         <Button variant="outline" size="sm" onClick={onEdit}>
           <Pencil className="h-4 w-4" />
-          편집
+          {t("contacts.edit")}
         </Button>
         <Button variant="ghost" size="sm" onClick={onDelete}>
           <Trash2 className="h-4 w-4" />
         </Button>
       </div>
-      <DetailSection icon={<Mail className="h-4 w-4" />} title="이메일">
+
+      <DetailSection
+        icon={<Mail className="h-4 w-4" />}
+        title={t("contacts.email")}
+      >
         {contact.emails.length ? (
-          contact.emails.map((email, idx) => (
-            <DetailLine key={`${email.value}-${idx}`} label={email.type}>
+          contact.emails.map((email) => (
+            <DetailLine key={`e-${email.value}`} label={email.type}>
               <a className="hover:underline" href={`mailto:${email.value}`}>
                 {email.value}
               </a>
+              <CopyButton value={email.value} />
             </DetailLine>
           ))
         ) : (
-          <Muted>등록된 이메일이 없습니다.</Muted>
+          <Muted>{t("contacts.noEmail")}</Muted>
         )}
       </DetailSection>
-      <DetailSection icon={<Phone className="h-4 w-4" />} title="전화">
+
+      <DetailSection
+        icon={<Phone className="h-4 w-4" />}
+        title={t("contacts.phone")}
+      >
         {contact.phones.length ? (
-          contact.phones.map((phone, idx) => (
-            <DetailLine key={`${phone.value}-${idx}`} label={phone.type}>
+          contact.phones.map((phone) => (
+            <DetailLine key={`p-${phone.value}`} label={phone.type}>
               <a className="hover:underline" href={`tel:${phone.value}`}>
                 {phone.value}
               </a>
+              <CopyButton value={phone.value} />
             </DetailLine>
           ))
         ) : (
-          <Muted>등록된 전화번호가 없습니다.</Muted>
+          <Muted>{t("contacts.noPhone")}</Muted>
         )}
       </DetailSection>
+
+      {contact.addresses.length > 0 && (
+        <DetailSection
+          icon={<MapPin className="h-4 w-4" />}
+          title={t("contacts.addresses")}
+        >
+          {contact.addresses.map((addr, idx) => (
+            <DetailLine key={`a-${idx}`} label={addr.type}>
+              <span className="break-words">
+                {[
+                  addr.street,
+                  [addr.locality, addr.region].filter(Boolean).join(" "),
+                  addr.postal_code,
+                  addr.country,
+                ]
+                  .filter(Boolean)
+                  .join(", ")}
+              </span>
+            </DetailLine>
+          ))}
+        </DetailSection>
+      )}
+
+      {contact.urls.length > 0 && (
+        <DetailSection
+          icon={<Globe className="h-4 w-4" />}
+          title={t("contacts.urls")}
+        >
+          {contact.urls.map((url, idx) => (
+            <DetailLine key={`u-${idx}`}>
+              <a
+                className="hover:underline"
+                href={url.value}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {url.value}
+              </a>
+            </DetailLine>
+          ))}
+        </DetailSection>
+      )}
+
+      {contact.ims.length > 0 && (
+        <DetailSection
+          icon={<MessageCircle className="h-4 w-4" />}
+          title={t("contacts.ims")}
+        >
+          {contact.ims.map((im, idx) => (
+            <DetailLine key={`i-${idx}`} label={im.type}>
+              {im.value}
+            </DetailLine>
+          ))}
+        </DetailSection>
+      )}
+
       {contact.group_ids.length > 0 && (
-        <DetailSection icon={<Tags className="h-4 w-4" />} title="그룹">
+        <DetailSection
+          icon={<Tags className="h-4 w-4" />}
+          title={t("contacts.groupLabel")}
+        >
           <div className="flex flex-wrap gap-1.5">
             {contact.group_ids.map((gid) => {
               const group = groupMap.get(gid);
@@ -621,10 +803,16 @@ function ContactDetails({
           </div>
         </DetailSection>
       )}
+
       {(contact.birthday || contact.notes) && (
-        <DetailSection icon={<UserRound className="h-4 w-4" />} title="메모">
+        <DetailSection
+          icon={<UserRound className="h-4 w-4" />}
+          title={t("contacts.notes")}
+        >
           {contact.birthday && (
-            <DetailLine label="생일">{contact.birthday}</DetailLine>
+            <DetailLine label={t("contacts.birthday")}>
+              {contact.birthday}
+            </DetailLine>
           )}
           {contact.notes && (
             <p className="whitespace-pre-wrap text-sm">{contact.notes}</p>
@@ -665,7 +853,7 @@ function DetailLine({
   return (
     <div className="flex items-center gap-2 text-sm">
       {label && (
-        <span className="w-14 shrink-0 text-xs text-muted-foreground">
+        <span className="w-14 shrink-0 text-xs capitalize text-muted-foreground">
           {label}
         </span>
       )}
@@ -676,6 +864,35 @@ function DetailLine({
 
 function Muted({ children }: { children: ReactNode }) {
   return <p className="text-sm text-muted-foreground">{children}</p>;
+}
+
+function CopyButton({ value }: { value: string }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore — clipboard may be unavailable
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="text-muted-foreground hover:text-foreground"
+      aria-label={t("contacts.copied")}
+      title={t("contacts.copied")}
+    >
+      {copied ? (
+        <Check className="h-3.5 w-3.5 text-emerald-500" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" />
+      )}
+    </button>
+  );
 }
 
 function ContactEditor({
@@ -693,11 +910,14 @@ function ContactEditor({
   onClose: () => void;
   onSave: (payload: ContactPayload) => void;
 }) {
-  const [form, setForm] = useState<ContactFormState>(blankForm);
+  const { t } = useTranslation();
+  const [form, setForm] = useState<ContactFormState>(() => contactToForm(null));
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setForm(contactToForm(contact));
+    setFormError(null);
   }, [contact, open]);
 
   function set<K extends keyof ContactFormState>(
@@ -709,6 +929,10 @@ function ContactEditor({
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (!hasIdentity(form)) {
+      setFormError(t("contacts.nameRequired"));
+      return;
+    }
     onSave(formToPayload(form));
   }
 
@@ -716,61 +940,73 @@ function ContactEditor({
     <Modal
       open={open}
       onClose={onClose}
-      title={contact?.id ? "연락처 편집" : "연락처 추가"}
+      title={contact?.id ? t("contacts.editContact") : t("contacts.newContact")}
       className="max-w-2xl"
     >
       <form onSubmit={submit} className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="표시 이름">
+          <Field label={t("contacts.displayName")}>
             <Input
               value={form.displayName}
               onChange={(e) => set("displayName", e.target.value)}
               placeholder="Ada Lovelace"
             />
           </Field>
-          <Field label="별명">
+          <Field label={t("contacts.nickname")}>
             <Input
               value={form.nickname}
               onChange={(e) => set("nickname", e.target.value)}
             />
           </Field>
-          <Field label="이름">
+          <Field label={t("contacts.namePrefix")}>
+            <Input
+              value={form.namePrefix}
+              onChange={(e) => set("namePrefix", e.target.value)}
+            />
+          </Field>
+          <Field label={t("contacts.givenName")}>
             <Input
               value={form.givenName}
               onChange={(e) => set("givenName", e.target.value)}
             />
           </Field>
-          <Field label="성">
+          <Field label={t("contacts.middleName")}>
+            <Input
+              value={form.middleName}
+              onChange={(e) => set("middleName", e.target.value)}
+            />
+          </Field>
+          <Field label={t("contacts.familyName")}>
             <Input
               value={form.familyName}
               onChange={(e) => set("familyName", e.target.value)}
             />
           </Field>
-          <Field label="회사">
+          <Field label={t("contacts.nameSuffix")}>
+            <Input
+              value={form.nameSuffix}
+              onChange={(e) => set("nameSuffix", e.target.value)}
+            />
+          </Field>
+          <Field label={t("contacts.company")}>
             <Input
               value={form.company}
               onChange={(e) => set("company", e.target.value)}
             />
           </Field>
-          <Field label="직함">
+          <Field label={t("contacts.jobTitle")}>
             <Input
               value={form.title}
               onChange={(e) => set("title", e.target.value)}
             />
           </Field>
-          <ValueListEditor
-            label="이메일"
-            placeholder="name@example.com"
-            values={form.emails}
-            onChange={(values) => set("emails", values)}
-          />
-          <ValueListEditor
-            label="전화"
-            placeholder="+82 10 0000 0000"
-            values={form.phones}
-            onChange={(values) => set("phones", values)}
-          />
-          <Field label="생일">
+          <Field label={t("contacts.department")}>
+            <Input
+              value={form.department}
+              onChange={(e) => set("department", e.target.value)}
+            />
+          </Field>
+          <Field label={t("contacts.birthday")}>
             <Input
               type="date"
               value={form.birthday}
@@ -778,9 +1014,39 @@ function ContactEditor({
             />
           </Field>
         </div>
+
+        <ValueListEditor
+          label={t("contacts.emails")}
+          placeholder="name@example.com"
+          values={form.emails}
+          onChange={(values) => set("emails", values)}
+        />
+        <ValueListEditor
+          label={t("contacts.phone")}
+          placeholder="+82 10 0000 0000"
+          values={form.phones}
+          onChange={(values) => set("phones", values)}
+        />
+        <ValueListEditor
+          label={t("contacts.ims")}
+          placeholder="user@example"
+          values={form.ims}
+          onChange={(values) => set("ims", values)}
+        />
+        <ValueListEditor
+          label={t("contacts.urls")}
+          placeholder="https://"
+          values={form.urls}
+          onChange={(values) => set("urls", values)}
+        />
+        <AddressEditor
+          values={form.addresses}
+          onChange={(values) => set("addresses", values)}
+        />
+
         {groups.length > 0 && (
           <div className="space-y-2">
-            <Label>그룹</Label>
+            <Label>{t("contacts.groupLabel")}</Label>
             <div className="flex flex-wrap gap-2">
               {groups.map((group) => {
                 const active = form.groupIDs.includes(group.id);
@@ -808,7 +1074,7 @@ function ContactEditor({
             </div>
           </div>
         )}
-        <Field label="메모">
+        <Field label={t("contacts.notes")}>
           <Textarea
             value={form.notes}
             onChange={(e) => set("notes", e.target.value)}
@@ -821,15 +1087,16 @@ function ContactEditor({
             checked={form.isFavorite}
             onChange={(e) => set("isFavorite", e.target.checked)}
           />
-          즐겨찾기에 추가
+          {t("contacts.addToFavorites")}
         </label>
+        {formError && <p className="text-sm text-destructive">{formError}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="outline" onClick={onClose}>
-            취소
+            {t("contacts.cancel")}
           </Button>
           <Button type="submit" disabled={busy}>
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            저장
+            {t("contacts.save")}
           </Button>
         </div>
       </form>
@@ -848,6 +1115,7 @@ function GroupEditor({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState("");
   const [color, setColor] = useState("#2563eb");
   const [error, setError] = useState<string | null>(null);
@@ -873,11 +1141,8 @@ function GroupEditor({
 
   async function remove() {
     if (!value || value === "new") return;
-    if (
-      !confirm(`${value.name} 그룹을 삭제할까요? 연락처는 삭제되지 않습니다.`)
-    ) {
+    if (!confirm(t("contacts.confirmDeleteGroup", { name: value.name })))
       return;
-    }
     try {
       await contacts.removeGroup(value.id);
       await onSaved();
@@ -890,19 +1155,20 @@ function GroupEditor({
     <Modal
       open={value !== null}
       onClose={onClose}
-      title={value === "new" ? "그룹 추가" : "그룹 편집"}
+      title={value === "new" ? t("contacts.newGroup") : t("contacts.editGroup")}
     >
       <form onSubmit={submit} className="space-y-4">
-        <Field label="이름">
+        <Field label={t("contacts.groupName")}>
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="색상">
+        <Field label={t("contacts.color")}>
           <div className="flex items-center gap-2">
             <input
               type="color"
               value={color}
               onChange={(e) => setColor(e.target.value)}
               className="h-10 w-12 rounded-md border bg-background"
+              aria-label={t("contacts.color")}
             />
             <Input value={color} onChange={(e) => setColor(e.target.value)} />
           </div>
@@ -917,15 +1183,15 @@ function GroupEditor({
               disabled={busy}
             >
               <Trash2 className="h-4 w-4" />
-              삭제
+              {t("contacts.deleteGroup")}
             </Button>
           )}
           <div className="ml-auto flex gap-2">
             <Button type="button" variant="outline" onClick={onClose}>
-              취소
+              {t("contacts.cancel")}
             </Button>
             <Button type="submit" disabled={busy}>
-              저장
+              {t("contacts.save")}
             </Button>
           </div>
         </div>
@@ -951,60 +1217,149 @@ function ValueListEditor({
 }: {
   label: string;
   placeholder: string;
-  values: ContactValue[];
-  onChange: (values: ContactValue[]) => void;
+  values: FormValue[];
+  onChange: (values: FormValue[]) => void;
 }) {
-  const rows = values.length ? values : [{ value: "", type: "" }];
+  const { t } = useTranslation();
+  const rows = values.length ? values : [newFormValue()];
 
-  function update(index: number, patch: Partial<ContactValue>) {
-    onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  function update(id: string, patch: Partial<FormValue>) {
+    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   }
 
-  function remove(index: number) {
-    const next = rows.filter((_, i) => i !== index);
-    onChange(next.length ? next : [{ value: "", type: "" }]);
+  function remove(id: string) {
+    const next = rows.filter((row) => row.id !== id);
+    onChange(next.length ? next : [newFormValue()]);
   }
 
   return (
-    <div className="space-y-2 sm:col-span-2">
+    <div className="space-y-2">
       <div className="flex items-center justify-between">
         <Label>{label}</Label>
         <button
           type="button"
           className="rounded p-1 text-muted-foreground hover:bg-accent"
-          onClick={() => onChange([...rows, { value: "", type: "" }])}
-          aria-label={`${label} 추가`}
+          onClick={() => onChange([...rows, newFormValue()])}
+          aria-label={`${label} ${t("contacts.addValue")}`}
         >
           <Plus className="h-3.5 w-3.5" />
         </button>
       </div>
       <div className="space-y-2">
-        {rows.map((row, index) => (
-          <div key={index} className="grid grid-cols-[1fr_96px_32px] gap-2">
+        {rows.map((row) => (
+          <div key={row.id} className="grid grid-cols-[1fr_110px_32px] gap-2">
             <Input
               value={row.value}
-              onChange={(e) => update(index, { value: e.target.value })}
+              onChange={(e) => update(row.id, { value: e.target.value })}
               placeholder={placeholder}
             />
             <Input
               value={row.type ?? ""}
-              onChange={(e) => update(index, { type: e.target.value })}
-              placeholder="type"
+              onChange={(e) => update(row.id, { type: e.target.value })}
+              placeholder={t("contacts.type")}
             />
             <Button
               type="button"
               variant="ghost"
               size="icon"
               className="h-10 w-8"
-              onClick={() => remove(index)}
+              onClick={() => remove(row.id)}
               disabled={rows.length === 1 && !row.value}
-              aria-label={`${label} 삭제`}
+              aria-label={`${label} ${t("contacts.delete")}`}
             >
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+const ADDRESS_TYPES = ["", "home", "work", "other"];
+
+function AddressEditor({
+  values,
+  onChange,
+}: {
+  values: FormAddress[];
+  onChange: (values: FormAddress[]) => void;
+}) {
+  const { t } = useTranslation();
+  const rows = values;
+
+  function update(id: string, patch: Partial<FormAddress>) {
+    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label>{t("contacts.addresses")}</Label>
+        <button
+          type="button"
+          className="rounded p-1 text-muted-foreground hover:bg-accent"
+          onClick={() => onChange([...rows, newFormAddress()])}
+          aria-label={`${t("contacts.addresses")} ${t("contacts.addValue")}`}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      {rows.map((row) => (
+        <div key={row.id} className="space-y-2 rounded-md border p-3">
+          <div className="grid grid-cols-[110px_1fr_32px] gap-2">
+            <select
+              className="h-10 rounded-md border bg-background px-2 text-sm"
+              value={row.type ?? ""}
+              onChange={(e) => update(row.id, { type: e.target.value })}
+              aria-label={t("contacts.type")}
+            >
+              {ADDRESS_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type || t("contacts.type")}
+                </option>
+              ))}
+            </select>
+            <Input
+              value={row.street ?? ""}
+              onChange={(e) => update(row.id, { street: e.target.value })}
+              placeholder={t("contacts.street")}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-10 w-8"
+              onClick={() => onChange(rows.filter((r) => r.id !== row.id))}
+              aria-label={`${t("contacts.addresses")} ${t("contacts.delete")}`}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Input
+              value={row.locality ?? ""}
+              onChange={(e) => update(row.id, { locality: e.target.value })}
+              placeholder={t("contacts.locality")}
+            />
+            <Input
+              value={row.region ?? ""}
+              onChange={(e) => update(row.id, { region: e.target.value })}
+              placeholder={t("contacts.region")}
+            />
+            <Input
+              value={row.postal_code ?? ""}
+              onChange={(e) => update(row.id, { postal_code: e.target.value })}
+              placeholder={t("contacts.postalCode")}
+            />
+            <Input
+              value={row.country ?? ""}
+              onChange={(e) => update(row.id, { country: e.target.value })}
+              placeholder={t("contacts.country")}
+            />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

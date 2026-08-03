@@ -108,13 +108,17 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
 export const contacts = {
   status: () => api.get<ModuleStatus>("/api/contacts/status"),
   list: (args?: ContactListArgs) =>
-    api.get<{ contacts: ContactRecord[] }>(`/api/contacts${query(args)}`),
+    api.get<{ contacts: ContactRecord[]; total: number }>(
+      `/api/contacts${query(args)}`,
+    ),
   create: (body: ContactPayload) =>
     api.post<ContactRecord>("/api/contacts", body),
   update: (id: string, body: ContactPayload) =>
     api.putRaw<ContactRecord>(`/api/contacts/${id}`, body),
   patch: (id: string, body: ContactPayload) =>
     api.patch<ContactRecord>(`/api/contacts/${id}`, body),
+  setGroups: (id: string, group_ids: string[]) =>
+    api.putRaw<ContactRecord>(`/api/contacts/${id}/groups`, { group_ids }),
   remove: (id: string) => api.del<{ ok: boolean }>(`/api/contacts/${id}`),
   uploadAvatar: (id: string, file: File) =>
     api.upload<ContactRecord>(`/api/contacts/${id}/avatar`, file),
@@ -128,20 +132,31 @@ export const contacts = {
   removeGroup: (id: string) =>
     api.del<{ ok: boolean }>(`/api/contacts/groups/${id}`),
   importVCF: (file: File) => {
-    return fetchJSON<{ imported: number }>("/api/contacts/import", {
-      method: "POST",
-      body: file,
-      headers: { "Content-Type": file.type || "text/vcard" },
-    });
+    return fetchJSON<{ imported: number; failed?: number; error?: string }>(
+      "/api/contacts/import",
+      {
+        method: "POST",
+        body: file,
+        headers: { "Content-Type": file.type || "text/vcard" },
+      },
+    );
   },
   exportVCF: async () => {
     const res = await fetch("/api/contacts/export", {
       credentials: "same-origin",
     });
     if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      let desc = res.statusText;
+      try {
+        const body = text ? JSON.parse(text) : null;
+        desc = body?.error_description ?? body?.error ?? res.statusText;
+      } catch {
+        // keep statusText
+      }
       throw {
         error: "http_error",
-        error_description: res.statusText,
+        error_description: desc,
         status: res.status,
       };
     }

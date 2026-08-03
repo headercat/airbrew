@@ -37,6 +37,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mail/mailboxes", h.createMailbox)
 	mux.HandleFunc("DELETE /api/mail/mailboxes/{id}", h.deleteMailbox)
 
+	mux.HandleFunc("GET /api/mail/counts", h.counts)
 	mux.HandleFunc("GET /api/mail/threads", h.listThreads)
 	mux.HandleFunc("GET /api/mail/messages", h.listMessages)
 	mux.HandleFunc("GET /api/mail/messages/{id}", h.getMessage)
@@ -46,6 +47,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mail/messages/{id}/attachments", h.listMessageAttachments)
 
 	mux.HandleFunc("POST /api/mail/send", h.send)
+	mux.HandleFunc("POST /api/mail/drafts", h.createDraft)
+	mux.HandleFunc("PATCH /api/mail/drafts/{id}", h.updateDraft)
+	mux.HandleFunc("DELETE /api/mail/drafts/{id}", h.deleteDraft)
+
 	mux.HandleFunc("POST /api/mail/attachments", h.uploadAttachment)
 	mux.HandleFunc("GET /api/mail/attachments/{id}", h.downloadAttachment)
 	mux.HandleFunc("DELETE /api/mail/attachments/{id}", h.deleteAttachment)
@@ -211,6 +216,7 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 		MailboxID: r.URL.Query().Get("mailbox"),
 		Folder:    r.URL.Query().Get("folder"),
 		ThreadID:  r.URL.Query().Get("thread"),
+		Query:     r.URL.Query().Get("q"),
 		Limit:     parseInt(r.URL.Query().Get("limit")),
 		Offset:    parseInt(r.URL.Query().Get("offset")),
 	}
@@ -224,6 +230,19 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toMessageResp(m))
 	}
 	jsonResp(w, http.StatusOK, map[string]any{"messages": out})
+}
+
+func (h *Handler) counts(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	c, err := h.inbox.Counts(r.Context(), sess.UserID, r.URL.Query().Get("mailbox"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, c)
 }
 
 type threadResp struct {
@@ -491,4 +510,124 @@ func toAddresses(in []addressInput) []letter.Address {
 
 func parseContentLength(n int64) string {
 	return strconv.FormatInt(n, 10)
+}
+
+// --- drafts ---------------------------------------------------------------
+
+type draftReq struct {
+	MailboxID     string         `json:"mailbox_id"`
+	To            []addressInput `json:"to"`
+	Cc            []addressInput `json:"cc"`
+	Bcc           []addressInput `json:"bcc"`
+	ReplyTo       []addressInput `json:"reply_to"`
+	Subject       string         `json:"subject"`
+	Text          string         `json:"text"`
+	HTML          string         `json:"html"`
+	InReplyTo     string         `json:"in_reply_to"`
+	References    []string       `json:"references"`
+	AttachmentIDs []string       `json:"attachment_ids"`
+	Send          bool           `json:"send"`
+}
+
+func (h *Handler) createDraft(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	var req draftReq
+	if err := decodeJSON(r, &req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	in := draftInput(req)
+	if req.Send {
+		sender, err := outbound.Resolve(r.Context(), h.repo)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, "", in)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		sent, err := h.inbox.SendDraft(r.Context(), sess.UserID, draft.ID, sender)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		jsonResp(w, http.StatusCreated, toMessageResp(sent))
+		return
+	}
+	draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, "", in)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	jsonResp(w, http.StatusCreated, toMessageResp(draft))
+}
+
+func (h *Handler) updateDraft(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	var req draftReq
+	if err := decodeJSON(r, &req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	in := draftInput(req)
+	if req.Send {
+		sender, err := outbound.Resolve(r.Context(), h.repo)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if _, err := h.inbox.SaveDraft(r.Context(), sess.UserID, r.PathValue("id"), in); err != nil {
+			writeErr(w, err)
+			return
+		}
+		sent, err := h.inbox.SendDraft(r.Context(), sess.UserID, r.PathValue("id"), sender)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		jsonResp(w, http.StatusOK, toMessageResp(sent))
+		return
+	}
+	draft, err := h.inbox.SaveDraft(r.Context(), sess.UserID, r.PathValue("id"), in)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, toMessageResp(draft))
+}
+
+func (h *Handler) deleteDraft(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	if err := h.inbox.DeleteMessage(r.Context(), sess.UserID, r.PathValue("id")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func draftInput(req draftReq) inbox.SendInput {
+	return inbox.SendInput{
+		MailboxID:     req.MailboxID,
+		To:            toAddresses(req.To),
+		Cc:            toAddresses(req.Cc),
+		Bcc:           toAddresses(req.Bcc),
+		ReplyTo:       toAddresses(req.ReplyTo),
+		Subject:       req.Subject,
+		Text:          req.Text,
+		HTML:          req.HTML,
+		InReplyTo:     req.InReplyTo,
+		References:    req.References,
+		AttachmentIDs: req.AttachmentIDs,
+	}
 }

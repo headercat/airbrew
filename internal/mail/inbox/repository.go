@@ -165,6 +165,7 @@ type ListFilter struct {
 	Direction Direction
 	Folder    string // "inbox", "sent", "draft", "starred", "unread"
 	ThreadID  string // restrict to one conversation
+	Query     string // free-text search across subject/from/to/body
 	Limit     int
 	Offset    int
 }
@@ -203,6 +204,7 @@ func (r *Repository) ListMessages(ctx context.Context, f ListFilter) ([]*Message
 		q += " AND thread_id = ?"
 		args = append(args, f.ThreadID)
 	}
+	q, args = applySearch(q, args, f.Query)
 	q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
 	args = append(args, f.Limit, f.Offset)
 
@@ -220,6 +222,55 @@ func (r *Repository) ListMessages(ctx context.Context, f ListFilter) ([]*Message
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// applySearch appends a case-insensitive LIKE clause across subject, from, to
+// and body_text when query is non-empty. It returns the augmented SQL fragment
+// and args slice.
+func applySearch(q string, args []any, query string) (string, []any) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return q, args
+	}
+	// Escape LIKE wildcards in the user input so a literal "%" or "_" in the
+	// search string does not act as a pattern.
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
+	like := "%" + escaped + "%"
+	q += " AND (subject LIKE ? ESCAPE '\\' OR from_addr LIKE ? ESCAPE '\\' OR to_addrs LIKE ? ESCAPE '\\' OR cc_addrs LIKE ? ESCAPE '\\' OR body_text LIKE ? ESCAPE '\\')"
+	args = append(args, like, like, like, like, like)
+	return q, args
+}
+
+// Counts returns per-folder totals for the user (optionally scoped to one
+// mailbox). A single query scans the user's messages so the SPA sidebar can
+// render unread/draft/starred badges without N round-trips.
+func (r *Repository) Counts(ctx context.Context, userID, mailboxID string) (FolderCounts, error) {
+	q := `
+		SELECT
+		  SUM(CASE WHEN direction='inbound'                       THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN direction='outbound' AND is_draft = 0      THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN is_draft = 1                               THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN is_starred = 1                             THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN is_read = 0 AND direction = 'inbound'      THEN 1 ELSE 0 END)
+		FROM mail_messages WHERE user_id = ?`
+	args := []any{userID}
+	if mailboxID != "" {
+		q += " AND mailbox_id = ?"
+		args = append(args, mailboxID)
+	}
+	var c FolderCounts
+	var inbox, sent, draft, starred, unread sql.NullInt64
+	if err := r.db.QueryRowContext(ctx, q, args...).Scan(
+		&inbox, &sent, &draft, &starred, &unread,
+	); err != nil {
+		return FolderCounts{}, fmt.Errorf("inbox: counts: %w", err)
+	}
+	c.Inbox = int(inbox.Int64)
+	c.Sent = int(sent.Int64)
+	c.Draft = int(draft.Int64)
+	c.Starred = int(starred.Int64)
+	c.Unread = int(unread.Int64)
+	return c, nil
 }
 
 // ListThreads returns one summary row per conversation (thread_id) for the
@@ -460,6 +511,64 @@ func (r *Repository) PatchFlags(ctx context.Context, userID, id string, patch Fl
 		return ErrMessageNotFound
 	}
 	return nil
+}
+
+// UpdateDraft writes the editable fields of an existing draft (subject, bodies,
+// addresses, references, raw path, size, draft/sent flags). It is ownership-
+// scoped and rejects non-draft messages upstream in the service layer.
+func (r *Repository) UpdateDraft(ctx context.Context, m *Message) error {
+	to, _ := letter.MarshalAddresses(m.To)
+	cc, _ := letter.MarshalAddresses(m.Cc)
+	bcc, _ := letter.MarshalAddresses(m.Bcc)
+	rt, _ := letter.MarshalAddresses(m.ReplyTo)
+	from, _ := letter.MarshalAddresses([]letter.Address{m.From})
+	if from == "" {
+		from = "{}"
+	}
+	refs, _ := json.Marshal(m.References)
+	if m.ThreadID == "" {
+		m.ThreadID = letter.ThreadKey(m.MessageID, m.InReplyTo, m.References)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	m.UpdatedAt = now
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE mail_messages SET
+		  mailbox_id = ?, message_id = ?, thread_id = ?, in_reply_to = ?, refs = ?,
+		  subject = ?, from_addr = ?, to_addrs = ?, cc_addrs = ?, bcc_addrs = ?,
+		  reply_to_addrs = ?, raw_path = ?, body_text = ?, body_html = ?,
+		  is_draft = ?, is_outbox = ?, size_bytes = ?,
+		  sent_at = ?, updated_at = ?
+		WHERE id = ? AND user_id = ? AND is_draft = 1
+	`,
+		m.MailboxID, nullable(m.MessageID), nullable(m.ThreadID), nullable(m.InReplyTo), string(refs),
+		nullable(m.Subject), from, to, cc, bcc, rt,
+		nullable(m.RawPath), nullable(m.BodyText), nullable(m.BodyHTML),
+		boolToInt(m.IsDraft), boolToInt(m.IsOutbox), m.SizeBytes,
+		nullableTime(m.SentAt), now,
+		m.ID, m.UserID,
+	)
+	if err != nil {
+		return fmt.Errorf("inbox: update draft: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrMessageNotFound
+	}
+	return nil
+}
+
+// RebindAttachments replaces the attachment set bound to a draft. Pending
+// attachments (message_id NULL) listed in keepIDs are linked; attachments that
+// were previously linked to this draft but are no longer in keepIDs are
+// unlinked back to the pending pool so they remain owned by the user until
+// explicit cleanup.
+func (r *Repository) RebindAttachments(ctx context.Context, userID, messageID string, keepIDs []string) error {
+	if _, err := r.db.ExecContext(ctx,
+		"UPDATE mail_attachments SET message_id = NULL WHERE user_id = ? AND message_id = ?",
+		userID, messageID,
+	); err != nil {
+		return fmt.Errorf("inbox: clear draft attachments: %w", err)
+	}
+	return r.LinkAttachments(ctx, userID, messageID, keepIDs)
 }
 
 // DeleteMessage hard-deletes a message.

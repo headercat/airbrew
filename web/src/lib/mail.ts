@@ -76,6 +76,29 @@ export type SendMailInput = {
   attachment_ids?: string[];
 };
 
+export type DraftInput = {
+  mailbox_id: string;
+  to?: MailAddress[];
+  cc?: MailAddress[];
+  bcc?: MailAddress[];
+  reply_to?: MailAddress[];
+  subject?: string;
+  text?: string;
+  html?: string;
+  in_reply_to?: string;
+  references?: string[];
+  attachment_ids?: string[];
+  send?: boolean;
+};
+
+export type FolderCounts = {
+  inbox: number;
+  sent: number;
+  draft: number;
+  starred: number;
+  unread: number;
+};
+
 export const mail = {
   status: () =>
     api.get<{
@@ -108,6 +131,7 @@ export const mail = {
     mailbox?: string;
     folder?: string;
     thread?: string;
+    q?: string;
     limit?: number;
     offset?: number;
   }) => {
@@ -115,11 +139,18 @@ export const mail = {
     if (args.mailbox) qs.set("mailbox", args.mailbox);
     if (args.folder) qs.set("folder", args.folder);
     if (args.thread) qs.set("thread", args.thread);
+    if (args.q) qs.set("q", args.q);
     if (args.limit) qs.set("limit", String(args.limit));
     if (args.offset) qs.set("offset", String(args.offset));
     return api.get<{ messages: MailMessage[] }>(
       `/api/mail/messages${qs.size ? `?${qs}` : ""}`,
     );
+  },
+
+  counts: (mailbox?: string) => {
+    const qs = new URLSearchParams();
+    if (mailbox) qs.set("mailbox", mailbox);
+    return api.get<FolderCounts>(`/api/mail/counts${qs.size ? `?${qs}` : ""}`);
   },
 
   message: (id: string) => api.get<MailMessage>(`/api/mail/messages/${id}`),
@@ -137,6 +168,14 @@ export const mail = {
 
   deleteAttachment: (id: string) =>
     api.del<{ ok: boolean }>(`/api/mail/attachments/${id}`),
+
+  saveDraft: (body: DraftInput) =>
+    api.post<MailMessage>("/api/mail/drafts", body),
+
+  updateDraft: (id: string, body: DraftInput) =>
+    api.patch<MailMessage>(`/api/mail/drafts/${id}`, body),
+
+  deleteDraft: (id: string) => api.del<{ ok: boolean }>(`/api/mail/drafts/${id}`),
 
   send: (body: SendMailInput) => api.post<MailMessage>("/api/mail/send", body),
 };

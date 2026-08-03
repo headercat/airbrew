@@ -360,6 +360,141 @@ func (s *Service) readAttachmentData(ctx context.Context, a Attachment) ([]byte,
 	return io.ReadAll(io.LimitReader(body, 25<<20+1))
 }
 
+// SaveDraft stores a message as a draft (direction=outbound, is_draft=1)
+// without invoking any outbound driver. When draftID is empty a new draft is
+// created; otherwise the existing draft owned by the user is updated. Returns
+// the stored draft.
+func (s *Service) SaveDraft(ctx context.Context, userID string, draftID string, in SendInput) (*Message, error) {
+	mb, err := s.repo.GetMailbox(ctx, userID, in.MailboxID)
+	if err != nil {
+		return nil, err
+	}
+	var rawPath string
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if draftID != "" {
+		existing, err := s.repo.GetMessage(ctx, userID, draftID)
+		if err != nil {
+			return nil, err
+		}
+		if !existing.IsDraft {
+			return nil, fmt.Errorf("%w: message is not a draft", ErrInvalidInput)
+		}
+		existing.Subject = in.Subject
+		existing.To = in.To
+		existing.Cc = in.Cc
+		existing.Bcc = in.Bcc
+		existing.ReplyTo = in.ReplyTo
+		existing.BodyText = in.Text
+		existing.BodyHTML = in.HTML
+		existing.InReplyTo = in.InReplyTo
+		existing.References = in.References
+		existing.UpdatedAt = now
+		existing.MailboxID = mb.ID
+		if err := s.repo.UpdateDraft(ctx, existing); err != nil {
+			return nil, err
+		}
+		if in.AttachmentIDs != nil {
+			if err := s.repo.RebindAttachments(ctx, userID, existing.ID, in.AttachmentIDs); err != nil {
+				return nil, err
+			}
+		}
+		return existing, nil
+	}
+
+	draft := &Message{
+		ID: nextID(), MailboxID: mb.ID, UserID: userID,
+		MessageID: "", InReplyTo: in.InReplyTo, References: in.References,
+		Subject: in.Subject,
+		From:    letter.Address{Name: mb.DisplayName, Address: mb.Address},
+		To:      in.To, Cc: in.Cc, Bcc: in.Bcc, ReplyTo: in.ReplyTo,
+		Direction: DirectionOutbound,
+		RawPath:   rawPath, BodyText: in.Text, BodyHTML: in.HTML,
+		IsDraft: true,
+	}
+	if draft.ThreadID == "" {
+		draft.ThreadID = draft.ID
+	}
+	if err := s.repo.CreateMessage(ctx, draft); err != nil {
+		return nil, err
+	}
+	if len(in.AttachmentIDs) > 0 {
+		if err := s.repo.LinkAttachments(ctx, userID, draft.ID, in.AttachmentIDs); err != nil {
+			return nil, err
+		}
+	}
+	return draft, nil
+}
+
+// SendDraft loads a stored draft, sends it via sender, then flips is_draft off
+// and records the sent metadata.
+func (s *Service) SendDraft(ctx context.Context, userID, draftID string, sender OutboundSender) (*Message, error) {
+	draft, err := s.repo.GetMessage(ctx, userID, draftID)
+	if err != nil {
+		return nil, err
+	}
+	if !draft.IsDraft {
+		return nil, fmt.Errorf("%w: message is not a draft", ErrInvalidInput)
+	}
+	if len(draft.To) == 0 {
+		return nil, fmt.Errorf("%w: at least one recipient required", ErrInvalidInput)
+	}
+	if sender == nil {
+		return nil, ErrNoOutbound
+	}
+	if draft.BodyText == "" && draft.BodyHTML == "" {
+		return nil, fmt.Errorf("%w: message body required", ErrInvalidInput)
+	}
+	out := letter.Outgoing{
+		From: draft.From, To: draft.To, Cc: draft.Cc, Bcc: draft.Bcc,
+		ReplyTo: draft.ReplyTo, Subject: draft.Subject,
+		Text: draft.BodyText, HTML: draft.BodyHTML,
+		InReplyTo: draft.InReplyTo, References: draft.References,
+	}
+	atts, err := s.repo.ListAttachmentsByMessage(ctx, userID, draft.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range atts {
+		data, err := s.readAttachmentData(ctx, a)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		out.Attachments = append(out.Attachments, letter.Attachment{
+			Filename: a.Filename, ContentType: a.ContentType,
+			ContentID: a.ContentID, Inline: a.Inline, Data: data,
+		})
+	}
+	raw, err := letter.BuildRFC822(out)
+	if err != nil {
+		return nil, err
+	}
+	out.MessageID = messageIDFromRaw(raw)
+	if err := sender.Send(ctx, out); err != nil {
+		return nil, fmt.Errorf("inbox: send via %s: %w", sender.Name(), err)
+	}
+	var rawPath string
+	if s.blobs != nil {
+		p, err := s.blobs.Save(ctx, "mail-raw", "message/rfc822", strings.NewReader(string(raw)))
+		if err != nil {
+			return nil, fmt.Errorf("inbox: save raw: %w", err)
+		}
+		rawPath = p
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	draft.MessageID = out.MessageID
+	draft.RawPath = rawPath
+	draft.SizeBytes = int64(len(raw))
+	draft.IsDraft = false
+	draft.IsOutbox = false
+	draft.SentAt = &now
+	draft.UpdatedAt = now
+	if err := s.repo.UpdateDraft(ctx, draft); err != nil {
+		return nil, err
+	}
+	return draft, nil
+}
+
 // ListThreads returns conversation summaries for the user.
 func (s *Service) ListThreads(ctx context.Context, userID, mailboxID string, limit, offset int) ([]Thread, error) {
 	return s.repo.ListThreads(ctx, userID, mailboxID, limit, offset)
@@ -368,6 +503,12 @@ func (s *Service) ListThreads(ctx context.Context, userID, mailboxID string, lim
 // ListMessages returns messages for a mailbox/folder.
 func (s *Service) ListMessages(ctx context.Context, f ListFilter) ([]*Message, error) {
 	return s.repo.ListMessages(ctx, f)
+}
+
+// Counts returns per-folder totals for the user (optionally scoped to one
+// mailbox), used for sidebar unread/draft/starred badges.
+func (s *Service) Counts(ctx context.Context, userID, mailboxID string) (FolderCounts, error) {
+	return s.repo.Counts(ctx, userID, mailboxID)
 }
 
 // GetMessage returns one message (ownership-scoped).

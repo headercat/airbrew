@@ -77,6 +77,15 @@ type Message struct {
 	UpdatedAt  time.Time
 }
 
+// FolderCounts holds per-folder message totals for a mailbox or user.
+type FolderCounts struct {
+	Inbox   int `json:"inbox"`
+	Sent    int `json:"sent"`
+	Draft   int `json:"draft"`
+	Starred int `json:"starred"`
+	Unread  int `json:"unread"`
+}
+
 // Thread is a conversation summary: the latest message in the group plus counts.
 type Thread struct {
 	ThreadID    string

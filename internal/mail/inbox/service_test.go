@@ -215,3 +215,126 @@ func (s *captureSender) Send(ctx context.Context, o letter.Outgoing) error {
 	s.raw = raw
 	return nil
 }
+
+// TestSearch verifies the q= filter matches subject, from and body and that
+// LIKE wildcards in the search string are escaped.
+func TestSearch(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	mustIngest(t, s, ctx, "alice@airbrew.local", []byte(
+		"From: bob@ext.com\r\nTo: alice@airbrew.local\r\n"+
+			"Message-ID: <m-s1>\r\nSubject: quarterly 50% report\r\n"+
+			"Content-Type: text/plain; charset=utf-8\r\n\r\nlaunch blockers"))
+	mustIngest(t, s, ctx, "alice@airbrew.local", []byte(
+		"From: carol@ext.com\r\nTo: alice@airbrew.local\r\n"+
+			"Message-ID: <m-s2>\r\nSubject: lunch?\r\n"+
+			"Content-Type: text/plain; charset=utf-8\r\n\r\nlet us eat at 50% off"))
+
+	for _, tc := range []struct {
+		name string
+		q    string
+		want int
+	}{
+		{"matches subject word", "quarterly", 1},
+		{"matches from", "carol", 1},
+		{"matches body", "blockers", 1},
+		{"literal percent is not a wildcard", "50%", 2},
+		{"no hit", "missing-term", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := s.ListMessages(ctx, inbox.ListFilter{UserID: uid, Query: tc.q})
+			if err != nil {
+				t.Fatalf("ListMessages: %v", err)
+			}
+			if len(got) != tc.want {
+				t.Fatalf("got %d, want %d", len(got), tc.want)
+			}
+		})
+	}
+}
+
+// TestCounts checks per-folder totals after a representative mix of messages.
+func TestCounts(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mb := mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	mustIngest(t, s, ctx, "alice@airbrew.local", rawMsg("c1", "", "alice@airbrew.local"))
+	mustIngest(t, s, ctx, "alice@airbrew.local", rawMsg("c2", "", "alice@airbrew.local"))
+	if _, err := s.Send(ctx, uid, inbox.SendInput{
+		MailboxID: mb.ID, To: []letter.Address{{Address: "x@ext.com"}},
+		Subject: "out", Text: "going",
+	}, stubSender{}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if _, err := s.SaveDraft(ctx, uid, "", inbox.SendInput{
+		MailboxID: mb.ID, To: []letter.Address{{Address: "x@ext.com"}},
+		Subject: "draft", Text: "wip",
+	}); err != nil {
+		t.Fatalf("draft: %v", err)
+	}
+	starID := func() string {
+		msgs, _ := s.ListMessages(ctx, inbox.ListFilter{UserID: uid})
+		return msgs[0].ID
+	}()
+	if err := s.PatchFlags(ctx, uid, starID, inbox.FlagPatch{IsStarred: boolPtr(true)}); err != nil {
+		t.Fatalf("star: %v", err)
+	}
+
+	c, err := s.Counts(ctx, uid, "")
+	if err != nil {
+		t.Fatalf("Counts: %v", err)
+	}
+	if c.Inbox != 2 || c.Sent != 1 || c.Draft != 1 || c.Starred != 1 || c.Unread != 2 {
+		t.Fatalf("counts = %+v, want inbox=2 sent=1 draft=1 starred=1 unread=2", c)
+	}
+}
+
+// TestDraftSaveUpdateSend covers the draft lifecycle: create, edit, then send.
+func TestDraftSaveUpdateSend(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mb := mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	draft, err := s.SaveDraft(ctx, uid, "", inbox.SendInput{
+		MailboxID: mb.ID, To: []letter.Address{{Address: "bob@ext.com"}},
+		Subject:   "first", Text: "v1",
+	})
+	if err != nil {
+		t.Fatalf("save draft: %v", err)
+	}
+	if !draft.IsDraft || draft.Direction != inbox.DirectionOutbound {
+		t.Fatalf("draft stored wrong: %+v", draft)
+	}
+	updated, err := s.SaveDraft(ctx, uid, draft.ID, inbox.SendInput{
+		MailboxID: mb.ID, To: []letter.Address{{Address: "bob@ext.com"}},
+		Subject:   "second", Text: "v2",
+	})
+	if err != nil {
+		t.Fatalf("update draft: %v", err)
+	}
+	if updated.Subject != "second" || updated.BodyText != "v2" || updated.ID != draft.ID {
+		t.Fatalf("update did not stick: %+v", updated)
+	}
+	sent, err := s.SendDraft(ctx, uid, draft.ID, &captureSender{})
+	if err != nil {
+		t.Fatalf("send draft: %v", err)
+	}
+	if sent.IsDraft {
+		t.Fatalf("sent draft still flagged as draft")
+	}
+	if sent.SentAt == nil {
+		t.Fatalf("sent_at missing")
+	}
+}
+
+func mustIngest(t *testing.T, s *inbox.Service, ctx context.Context, recipient string, raw []byte) {
+	t.Helper()
+	if _, err := s.Ingest(ctx, recipient, raw, time.Now()); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }

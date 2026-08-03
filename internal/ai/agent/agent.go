@@ -21,6 +21,7 @@ import (
 	"github.com/headercat/airbrew/internal/ai/conv"
 	"github.com/headercat/airbrew/internal/ai/provider"
 	"github.com/headercat/airbrew/internal/id"
+	"github.com/headercat/airbrew/internal/logging"
 )
 
 // Event is one streamed frame the handler forwards to the SSE client.
@@ -158,12 +159,12 @@ type RunInput struct {
 //     emit EventDone.
 func (rt *Runtime) Run(ctx context.Context, in RunInput) <-chan Event {
 	out := make(chan Event, 32)
-	go func() {
+	logging.Go("ai.runtime", func() {
 		defer close(out)
 		if err := rt.run(ctx, in, out); err != nil {
 			_ = sendEvent(ctx, out, Event{Kind: EventError, Err: toEventError(err)})
 		}
-	}()
+	})
 	return out
 }
 
@@ -347,7 +348,7 @@ func (rt *Runtime) startRunLeaseHeartbeat(ctx context.Context, conversationID, r
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})
 	var once sync.Once
-	go func() {
+	logging.Go("ai.runLeaseHeartbeat", func() {
 		defer ticker.Stop()
 		for {
 			select {
@@ -362,7 +363,7 @@ func (rt *Runtime) startRunLeaseHeartbeat(ctx context.Context, conversationID, r
 				}
 			}
 		}
-	}()
+	})
 	return func() {
 		once.Do(func() { close(done) })
 	}

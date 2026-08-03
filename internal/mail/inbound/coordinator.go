@@ -3,6 +3,7 @@ package inbound
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -85,7 +86,27 @@ func (c *Coordinator) sync(ctx context.Context) {
 	c.cancel = cancel
 	c.mu.Unlock()
 	c.log.Info("mail: starting inbound poller", "driver", p.Driver, "interval", poller.Interval())
-	logging.Go("mail.inboundPoller:"+p.Driver, func() { c.loop(pollCtx, poller) })
+	logging.Go("mail.inboundPoller:"+p.Driver, func() {
+		defer func() {
+			if r := recover(); r != nil {
+				c.log.Error("mail: inbound poller panicked; will restart on next sync",
+					"driver", p.Driver, "panic", r)
+			}
+			// Clear the "running" marker so the next 30s sync() re-spawns the
+			// poller instead of believing it is still alive.
+			c.mu.Lock()
+			if c.current == p.Driver && c.config == p.Config {
+				c.current = ""
+				c.config = ""
+				if c.cancel != nil {
+					c.cancel()
+					c.cancel = nil
+				}
+			}
+			c.mu.Unlock()
+		}()
+		c.loop(pollCtx, poller)
+	})
 }
 
 func (c *Coordinator) loop(ctx context.Context, p Poller) {
@@ -95,7 +116,17 @@ func (c *Coordinator) loop(ctx context.Context, p Poller) {
 		if ctx.Err() != nil {
 			return
 		}
-		err := p.Poll(ctx, c.ingest)
+		// Recover per-Poll so a single malformed response / nil deref does
+		// not unwind the whole loop (which sync() would not restart on its
+		// own, since current/config still mark it "running").
+		err := func() (e error) {
+			defer func() {
+				if r := recover(); r != nil {
+					e = fmt.Errorf("poller panic: %v", r)
+				}
+			}()
+			return p.Poll(ctx, c.ingest)
+		}()
 		wait := base
 		if err != nil {
 			c.log.Warn("mail: inbound poll", "driver", p.Name(), "error", err)

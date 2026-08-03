@@ -479,14 +479,19 @@ func (h *Handler) uploadAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	url := "/api/files/" + storedPath
-	// Best-effort: delete the previous avatar blob so uploads do not leak
-	// orphaned files in the avatars/ namespace on every change.
-	if old := h.currentUserAvatarPath(r.Context(), sess.UserID); old != "" && old != storedPath {
-		_ = h.blobs.Delete(r.Context(), old)
-	}
+	// Capture the previous avatar path BEFORE overwriting the user row.
+	prevPath := h.currentUserAvatarPath(r.Context(), sess.UserID)
 	if err := h.userSvc.SetAvatarURL(r.Context(), sess.UserID, url); err != nil {
+		// Setting the new URL failed: delete the just-saved blob so it does
+		// not orphan, and leave the previous avatar intact.
+		_ = h.blobs.Delete(r.Context(), storedPath)
 		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
+	}
+	// Best-effort: delete the previous avatar blob now that the new URL is
+	// persisted, so uploads do not leak orphaned files on every change.
+	if prevPath != "" && prevPath != storedPath {
+		_ = h.blobs.Delete(r.Context(), prevPath)
 	}
 	h.audit.Log(r.Context(), audit.Entry{
 		EventType:   "avatar.uploaded",

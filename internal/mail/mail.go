@@ -132,7 +132,16 @@ func (m *Module) runOutboxSweeper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			m.sweepOutbox(ctx, log)
+			// Recover per-tick so a single bad row / driver panic does not
+			// unwind the whole loop and silently halt retries until restart.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Error("mail: outbox sweep panicked", "error", r)
+					}
+				}()
+				m.sweepOutbox(ctx, log)
+			}()
 		}
 	}
 }

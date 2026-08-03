@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/headercat/airbrew/internal/audit"
+	"github.com/headercat/airbrew/internal/logging"
 	"github.com/headercat/airbrew/internal/modules"
 	wfexec "github.com/headercat/airbrew/internal/workflow/exec"
 	"github.com/headercat/airbrew/internal/workflow/handler"
@@ -66,7 +67,7 @@ func (m *Module) Start(ctx context.Context) {
 	} else if n > 0 {
 		slog.InfoContext(ctx, "workflow: marked interrupted runs as failed", "count", n)
 	}
-	go m.scheduler.Start(ctx)
+	logging.Go("workflow.scheduler", func() { m.scheduler.Start(ctx) })
 }
 
 func (m *Module) status(w http.ResponseWriter, r *http.Request) {

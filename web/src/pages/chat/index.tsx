@@ -75,6 +75,11 @@ export default function ChatPage() {
   const loadRooms = useCallback(async () => {
     try {
       const next = await chat.listRooms();
+      // Seed the seen-id set from each room's last_message so a subsequent
+      // SSE message.created for one of them does not double-count unread.
+      for (const r of next) {
+        if (r.last_message) rememberMessage(r.last_message.id, r.last_message.created_at);
+      }
       setRooms(next);
       setActiveID((cur) => cur || next[0]?.id || "");
     } catch (e) {
@@ -86,6 +91,22 @@ export default function ChatPage() {
 
   const lastCursorRef = useRef("");
   const lastCursorRowIDRef = useRef(0);
+  // Bounded set of recently-processed message ids, used to make the
+  // message.created room-level mutation idempotent against same-second
+  // re-replay bursts (the created_at cursor ties on the second). Kept small;
+  // cleared once it overflows so memory stays bounded over a long session.
+  const seenMessageIDsRef = useRef<Map<string, string>>(new Map());
+  const rememberMessage = (id: string, createdAt: string) => {
+    const m = seenMessageIDsRef.current;
+    m.set(id, createdAt);
+    if (m.size > 500) {
+      // Keep the newest 250 by created_at order.
+      const keep = [...m.entries()]
+        .sort((a, b) => (a[1] < b[1] ? 1 : -1))
+        .slice(0, 250);
+      seenMessageIDsRef.current = new Map(keep);
+    }
+  };
   // applyEvent closes over live state (activeID, user, ...); route it through a
   // ref so the SSE subscription effect can depend on [] and is not torn down
   // and re-opened on every locale change (which would gap the stream and burst
@@ -154,6 +175,7 @@ export default function ChatPage() {
     Promise.all([chat.getRoom(activeID), chat.listMessages(activeID)])
       .then(([room, msgs]) => {
         if (!alive) return;
+        for (const m of msgs) rememberMessage(m.id, m.created_at);
         setRooms((prev) => upsertRoom(prev, room));
         setMessages(msgs);
         if (msgs.length > 0) {
@@ -186,35 +208,36 @@ export default function ChatPage() {
       case "message.created": {
         // Idempotency guard: a reconnect re-replays frames the client already
         // saw (the cursor is created_at, which ties on the second). Skip the
-        // room-level mutation when the incoming message is not newer than the
-        // room's current last_message, so unread counts and ordering are not
-        // double-applied. The active room is deduped by id via mergeMessage.
-        const target = rooms.find((r) => r.id === ev.room_id);
-        const seen =
-          target?.last_message &&
-          ev.message.created_at <= target.last_message.created_at &&
-          target.last_message.id === ev.message.id;
-        if (!seen) {
-          setRooms((prev) =>
-            moveRoomToTop(
-              prev.map((room) =>
-                room.id === ev.room_id
-                  ? {
-                      ...room,
-                      last_message: ev.message,
-                      unread_count:
-                        ev.room_id === activeID ||
-                        ev.message.sender_id === user?.id
-                          ? 0
-                          : room.unread_count + 1,
-                      updated_at: ev.message.created_at,
-                    }
-                  : room,
-              ),
-              ev.room_id,
-            ),
-          );
+        // room-level mutation when the message id was already processed, so
+        // unread counts and ordering are not double-applied (this matters for
+        // same-second bursts in non-active rooms). The active room is deduped
+        // by id via mergeMessage.
+        if (seenMessageIDsRef.current.has(ev.message.id)) {
+          if (ev.room_id === activeID) {
+            setMessages((prev) => mergeMessage(prev, ev.message));
+          }
+          break;
         }
+        rememberMessage(ev.message.id, ev.message.created_at);
+        setRooms((prev) =>
+          moveRoomToTop(
+            prev.map((room) =>
+              room.id === ev.room_id
+                ? {
+                    ...room,
+                    last_message: ev.message,
+                    unread_count:
+                      ev.room_id === activeID ||
+                      ev.message.sender_id === user?.id
+                        ? 0
+                        : room.unread_count + 1,
+                    updated_at: ev.message.created_at,
+                  }
+                : room,
+            ),
+            ev.room_id,
+          ),
+        );
         if (ev.room_id === activeID) {
           setMessages((prev) => mergeMessage(prev, ev.message));
           void chat.markRead(ev.room_id, ev.message.seq);

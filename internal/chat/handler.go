@@ -323,6 +323,21 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 		"cursor_rowid": cursorRowID,
 		"has_more":     more,
 	})
+	// Drain anything that buffered on the subscriber channel DURING the replay
+	// (live events published in the gap). Without this a backlog replay that
+	// holds off reading ch for a while would let the 128-deep buffer overflow
+	// and Publish would drop frames — silently losing message.updated /
+	// message.deleted (which have no replay path) and message.created. The SPA
+	// dedups message.created by id; edits/deletes are idempotent.
+	draining := true
+	for draining {
+		select {
+		case ev := <-ch:
+			writeSSE(w, ev.Type, ev)
+		default:
+			draining = false
+		}
+	}
 	flusher.Flush()
 
 	tick := time.NewTicker(25 * time.Second)

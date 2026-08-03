@@ -135,6 +135,48 @@ func TestParseVCardsHandlesLineFoldingAndMultipleCards(t *testing.T) {
 	}
 }
 
+func TestParseVCardsStripsAppleGroupPrefix(t *testing.T) {
+	// Apple Contacts (macOS/iOS) emits properties with a group prefix like
+	// "item1.TEL"; these must be parsed as TEL, not dropped as unknown.
+	in := "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Jane\r\nN:;;;\r\n" +
+		"item1.TEL;TYPE=cell:+15551234\r\n" +
+		"item1.EMAIL;TYPE=home:jane@example.com\r\n" +
+		"item2.ADR;TYPE=work:;;2 Main St;London;;;;\r\n" +
+		"END:VCARD\r\n"
+	inputs, err := ParseVCards(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("ParseVCards: %v", err)
+	}
+	if len(inputs) != 1 {
+		t.Fatalf("got %d cards, want 1", len(inputs))
+	}
+	c := inputs[0]
+	if len(c.Phones) != 1 || c.Phones[0].Value != "+15551234" {
+		t.Errorf("grouped TEL lost: %#v", c.Phones)
+	}
+	if len(c.Emails) != 1 || c.Emails[0].Value != "jane@example.com" {
+		t.Errorf("grouped EMAIL lost: %#v", c.Emails)
+	}
+	if len(c.Addresses) != 1 || c.Addresses[0].Street != "2 Main St" {
+		t.Errorf("grouped ADR lost: %#v", c.Addresses)
+	}
+}
+
+func TestParseCategoriesHandlesEscapedComma(t *testing.T) {
+	in := "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Pat\r\nN:;;;\r\n" +
+		"CATEGORIES:Foo\\,Bar,Baz\r\nEND:VCARD\r\n"
+	inputs, err := ParseVCards(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("ParseVCards: %v", err)
+	}
+	if len(inputs) != 1 || len(inputs[0].GroupNames) != 2 {
+		t.Fatalf("expected 2 categories, got %#v", inputs[0].GroupNames)
+	}
+	if inputs[0].GroupNames[0] != "Foo,Bar" || inputs[0].GroupNames[1] != "Baz" {
+		t.Errorf("escaped comma split wrong: %#v", inputs[0].GroupNames)
+	}
+}
+
 func TestEscapeAndUnescape(t *testing.T) {
 	cases := []string{"plain", "with,comma", "with;semi", `back\slash`, "line\nbreak"}
 	for _, raw := range cases {

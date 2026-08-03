@@ -28,11 +28,6 @@ const contactColumns = `id, user_id, COALESCE(uid,''),
 	birthday, COALESCE(notes,''), COALESCE(avatar_path,''), is_favorite,
 	created_at, updated_at`
 
-// CreateContact inserts a contact row.
-func (r *Repository) CreateContact(ctx context.Context, c *Contact) error {
-	return insertContactTx(ctx, r.db, c)
-}
-
 // CreateWithGroups inserts a contact and assigns its group memberships in one
 // transaction, so a failure rolls back the contact row too. groupIDs == nil
 // means "no membership change" (still inserts the contact).

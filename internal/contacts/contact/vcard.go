@@ -125,7 +125,7 @@ func parseOneCard(lines []string) (CreateContactInput, bool) {
 			c.NameSuffix = safe(4)
 			hasData = true
 		case "NICKNAME":
-			for _, n := range strings.Split(value, ",") {
+			for _, n := range splitCommas(value) {
 				n = strings.TrimSpace(unescape(n))
 				if n != "" {
 					c.Nickname = n
@@ -179,7 +179,7 @@ func parseOneCard(lines []string) (CreateContactInput, bool) {
 		case "UID":
 			c.UID = unescape(value)
 		case "CATEGORIES":
-			for _, n := range strings.Split(value, ",") {
+			for _, n := range splitCommas(value) {
 				if n = strings.TrimSpace(unescape(n)); n != "" {
 					c.GroupNames = append(c.GroupNames, n)
 				}
@@ -204,6 +204,12 @@ func splitProperty(line string) (name string, params map[string]string, value st
 	params = map[string]string{}
 	parts := strings.Split(left, ";")
 	name = strings.ToUpper(strings.TrimSpace(parts[0]))
+	// Strip a vCard 2.1/3.0 group prefix (e.g. "item1.TEL" → "TEL"), as used
+	// by Apple Contacts and some Google/Outlook exports. The leading group is
+	// a dot-delimited label; only the final segment is the property name.
+	if dot := strings.Index(name, "."); dot >= 0 {
+		name = name[dot+1:]
+	}
 	for _, p := range parts[1:] {
 		if eq := strings.Index(p, "="); eq >= 0 {
 			k := strings.ToUpper(strings.TrimSpace(p[:eq]))
@@ -225,7 +231,28 @@ func typeParam(params map[string]string) Type {
 	return ""
 }
 
-// splitSemicolons splits a value on unescaped semicolons.
+// splitCommas splits a value on unescaped commas (used for list-valued
+// properties like CATEGORIES and NICKNAME). Mirrors splitSemicolons.
+func splitCommas(s string) []string {
+	var out []string
+	var cur strings.Builder
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch == '\\' && i+1 < len(s) {
+			cur.WriteByte(s[i+1])
+			i++
+			continue
+		}
+		if ch == ',' {
+			out = append(out, cur.String())
+			cur.Reset()
+			continue
+		}
+		cur.WriteByte(ch)
+	}
+	out = append(out, cur.String())
+	return out
+}
 func splitSemicolons(s string) []string {
 	var out []string
 	var cur strings.Builder

@@ -180,6 +180,17 @@ func (s *Service) ImportContacts(ctx context.Context, userID string, inputs []Cr
 	var sum ImportSummary
 	for _, in := range inputs {
 		in.UserID = userID
+		// Validate before resolving group names so a card that fails never
+		// leaves behind orphan category groups.
+		in = normalizeCreateInput(in)
+		if !hasAnyIdentity(in) {
+			sum.record(ErrNameRequired)
+			continue
+		}
+		if err := validateInput(in); err != nil {
+			sum.record(err)
+			continue
+		}
 		if len(in.GroupNames) > 0 {
 			in.GroupIDs = append(in.GroupIDs, s.resolveGroupNames(ctx, userID, in.GroupNames)...)
 		}

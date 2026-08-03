@@ -808,7 +808,12 @@ func (h *Handler) importVCards(w http.ResponseWriter, r *http.Request) {
 			resp["error"] = summary.FirstError
 		}
 	}
-	jsonResp(w, http.StatusCreated, resp)
+	// Nothing imported at all (empty/invalid file) → 200, not 201 Created.
+	status := http.StatusCreated
+	if summary.Created+summary.Updated == 0 {
+		status = http.StatusOK
+	}
+	jsonResp(w, status, resp)
 }
 
 func (h *Handler) exportVCards(w http.ResponseWriter, r *http.Request) {

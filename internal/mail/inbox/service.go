@@ -101,7 +101,7 @@ func (s *Service) DeleteMailbox(ctx context.Context, userID, id string) error {
 func (s *Service) Ingest(ctx context.Context, recipientAddress string, raw []byte, receivedAt time.Time) (*Message, error) {
 	parsed, err := letter.Parse(raw)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrParseFailed, err)
 	}
 	mb, err := s.resolveMailbox(ctx, recipientAddress, parsed)
 	if err != nil {

@@ -320,12 +320,13 @@ export default function ChatPage() {
   async function sendMessage() {
     if (!activeRoom || !draft.trim() || sending) return;
     const body = draft.trim();
+    const roomID = activeRoom.id;
     setDraft("");
     setSending(true);
     setError(null);
     const tmp: DraftMessage = {
       id: `tmp-${Date.now()}`,
-      room_id: activeRoom.id,
+      room_id: roomID,
       sender_id: user?.id ?? "",
       sender: {
         id: user?.id ?? "",
@@ -340,17 +341,18 @@ export default function ChatPage() {
     };
     setMessages((prev) => [...prev, tmp]);
     try {
-      const saved = await chat.sendMessage(activeRoom.id, body);
-      setMessages((prev) =>
-        mergeMessage(
+      const saved = await chat.sendMessage(roomID, body);
+      setMessages((prev) => {
+        if (roomID !== activeIDRef.current) return prev; // user switched rooms
+        return mergeMessage(
           prev.filter((m) => m.id !== tmp.id),
           saved,
-        ),
-      );
+        );
+      });
       setRooms((prev) =>
         moveRoomToTop(
           prev.map((r) =>
-            r.id === activeRoom.id
+            r.id === roomID
               ? {
                   ...r,
                   last_message: saved,
@@ -359,7 +361,7 @@ export default function ChatPage() {
                 }
               : r,
           ),
-          activeRoom.id,
+          roomID,
         ),
       );
     } catch (e) {
@@ -377,14 +379,16 @@ export default function ChatPage() {
   async function deleteMessage(msg: DraftMessage) {
     if (!activeRoom || msg.pending) return;
     if (!confirm(t("chat.confirmDelete"))) return;
+    const roomID = activeRoom.id;
     // Optimistic removal; restore on failure.
     setMessages((prev) => prev.filter((m) => m.id !== msg.id));
     try {
-      await chat.deleteMessage(activeRoom.id, msg.id);
+      await chat.deleteMessage(roomID, msg.id);
     } catch (e) {
-      setMessages((prev) =>
-        mergeMessage(prev, msg).sort((a, b) => a.seq - b.seq),
-      );
+      setMessages((prev) => {
+        if (roomID !== activeIDRef.current) return prev; // user switched rooms
+        return mergeMessage(prev, msg).sort((a, b) => a.seq - b.seq);
+      });
       setError(errMsg(e));
     }
   }

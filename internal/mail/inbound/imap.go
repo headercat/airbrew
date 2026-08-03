@@ -201,12 +201,21 @@ func (p *imapPoller) Poll(ctx context.Context, ingest Ingester) error {
 			// cycle. Treat it as success so the UID is marked seen and we do
 			// not re-fetch it on every tick after a coordinator restart.
 			if !errors.Is(err, inbox.ErrDuplicate) {
-				p.log.Warn("imap: ingest failed; marking UID seen to avoid a re-fetch loop",
-					"uid", msg.Uid, "error", err)
-				// A persistent failure (malformed MIME, destination mailbox
-				// not found, ...) would otherwise re-fetch and re-parse this
-				// same message on every poll cycle forever. Mark it seen so
-				// we move on, matching the corrupt/oversize path above.
+				// Distinguish persistent failures (parse / destination
+				// mailbox not found) from transient ones (DB / IO hiccup).
+				// A persistent failure would otherwise re-fetch and re-parse
+				// this same message on every poll cycle forever, so mark it
+				// seen and move on. A transient failure MUST NOT mark seen —
+				// the next poll retries once the underlying issue clears.
+				persistent := errors.Is(err, inbox.ErrParseFailed) || errors.Is(err, inbox.ErrMailboxNotFound)
+				if persistent {
+					p.log.Warn("imap: persistent ingest failure; marking UID seen to avoid a re-fetch loop",
+						"uid", msg.Uid, "error", err)
+				} else {
+					p.log.Warn("imap: transient ingest failure; will retry on next poll",
+						"uid", msg.Uid, "error", err)
+					continue
+				}
 			}
 		}
 		p.mu.Lock()

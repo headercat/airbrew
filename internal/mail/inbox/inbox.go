@@ -21,6 +21,10 @@ var (
 	ErrAddressTaken = errors.New("inbox: address already taken")
 	// ErrInvalidInput is returned on shape-validation failure.
 	ErrInvalidInput = errors.New("inbox: invalid input")
+	// ErrParseFailed wraps a MIME parse failure. Inbound pollers treat it as
+	// persistent (mark the upstream message seen so it is not re-fetched and
+	// re-parsed forever), unlike a transient DB/IO error which they retry.
+	ErrParseFailed = errors.New("inbox: message parse failed")
 	// ErrRetryInProgress is returned by RetrySend when another worker (the
 	// background sweeper or a concurrent manual retry) has already claimed the
 	// outbox row. Callers should treat it as "try later", not a hard failure.

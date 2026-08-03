@@ -126,13 +126,17 @@ func (p *pop3Poller) Poll(ctx context.Context, ingest Ingester) error {
 			// stored in a previous cycle. Mark it seen and honour
 			// delete_after_fetch without re-ingesting.
 			if !errors.Is(ingestErr, inbox.ErrDuplicate) {
-				// A persistent failure (malformed MIME, destination mailbox
-				// not found, ...) would otherwise re-fetch and re-parse this
-				// same message on every poll cycle forever. Mark it seen so
-				// we move on, matching the corrupt/oversize retr path above.
-				// Do NOT DELE: leave the message upstream so the user can
-				// recover it via another client if the failure was real.
-				p.log.Warn("pop3: ingest failed; marking UID seen to avoid a re-fetch loop (not deleting upstream)",
+				// Persistent (parse / mailbox-not-found) → mark seen so we do
+				// not re-fetch forever; do NOT DELE so the user can recover
+				// the message from another client. Transient (DB/IO) → retry
+				// on the next poll.
+				persistent := errors.Is(ingestErr, inbox.ErrParseFailed) || errors.Is(ingestErr, inbox.ErrMailboxNotFound)
+				if !persistent {
+					p.log.Warn("pop3: transient ingest failure; will retry on next poll",
+						"uid", uid, "error", ingestErr)
+					continue
+				}
+				p.log.Warn("pop3: persistent ingest failure; marking UID seen (not deleting upstream)",
 					"uid", uid, "error", ingestErr)
 				p.mu.Lock()
 				p.seen[uid] = struct{}{}

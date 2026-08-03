@@ -1,4 +1,4 @@
--- 0012_mail_attachments.sql
+-- 0020_mail_attachments.sql
 -- Per-message attachments. Backs both inbound (parsed from MIME parts during
 -- ingest) and outbound (uploaded by the composer, then linked to the sent
 -- message). The binary payload lives in the blob store (internal/blob) under

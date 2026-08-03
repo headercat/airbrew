@@ -836,6 +836,33 @@ function MessageView({
     () => (message.body_html ? sanitizeMailHtml(message.body_html) : ""),
     [message.body_html],
   );
+  const renderedHTML = useMemo(() => {
+    if (!message.body_html) return "";
+    let html = sanitizeMailHtml(message.body_html);
+    // Rewrite cid: references to real attachment download URLs so inline
+    // images in transactional mail / newsletters actually render. We run
+    // this AFTER sanitization (cid: itself is allowed through) and use only
+    // the already-sanitized href=/src= attributes, so no new injection
+    // surface opens.
+    const atts = message.attachments ?? [];
+    if (atts.length) {
+      const cidMap = new Map<string, string>();
+      for (const a of atts) {
+        if (a.content_id) cidMap.set(a.content_id, a.download_url);
+      }
+      if (cidMap.size) {
+        html = html.replace(
+          /\bsrc=(["'])cid:([^"']+)\1/gi,
+          (match, quote, cid) => {
+            const url = cidMap.get(cid);
+            return url ? `src=${quote}${url}${quote}` : match;
+          },
+        );
+      }
+    }
+    return html;
+  }, [message.body_html, message.attachments]);
+
   return (
     <article className="flex h-full min-w-0 flex-col">
       <header className="border-b p-4">
@@ -914,7 +941,7 @@ function MessageView({
         </div>
       </header>
       <div className="flex-1 overflow-auto p-5">
-        {sanitizedHTML ? (
+        {renderedHTML ? (
           <iframe
             title="Mail body"
             sandbox="allow-popups allow-popups-to-escape-sandbox"

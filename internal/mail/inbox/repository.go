@@ -105,7 +105,16 @@ func (r *Repository) CreateMessage(ctx context.Context, m *Message) error {
 	}
 	refs, _ := json.Marshal(m.References)
 	if m.ThreadID == "" {
-		m.ThreadID = letter.ThreadKey(m.MessageID, m.InReplyTo, m.References)
+		tid := letter.ThreadKey(m.MessageID, m.InReplyTo, m.References)
+		// Messages without a Message-ID and without any References chain
+		// (cron output, some automated mail, headerless spam) all hash to
+		// the literal "no-id"; if we stored that they would collapse into a
+		// single fake thread. Fall back to the message's own row id so each
+		// headerless message starts its own singleton conversation.
+		if tid == "" || tid == "no-id" {
+			tid = m.ID
+		}
+		m.ThreadID = tid
 	}
 	if _, err := r.db.ExecContext(ctx, `
 		INSERT INTO mail_messages
@@ -574,7 +583,11 @@ func (r *Repository) UpdateDraft(ctx context.Context, m *Message) error {
 	}
 	refs, _ := json.Marshal(m.References)
 	if m.ThreadID == "" {
-		m.ThreadID = letter.ThreadKey(m.MessageID, m.InReplyTo, m.References)
+		tid := letter.ThreadKey(m.MessageID, m.InReplyTo, m.References)
+		if tid == "" || tid == "no-id" {
+			tid = m.ID
+		}
+		m.ThreadID = tid
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	m.UpdatedAt = now

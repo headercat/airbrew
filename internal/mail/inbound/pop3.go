@@ -96,7 +96,14 @@ func (p *pop3Poller) Poll(ctx context.Context, ingest Ingester) error {
 		}
 		raw, err := c.retr(n)
 		if err != nil {
-			p.log.Warn("pop3: retr failed", "uid", uid, "error", err)
+			// Mark seen even on failure so we don't re-fetch the same
+			// oversized or corrupt message on every poll cycle forever.
+			// A transient network error losing one message is preferable
+			// to an infinite tight loop that never makes progress.
+			p.log.Warn("pop3: retr failed, skipping on future polls", "uid", uid, "error", err)
+			p.mu.Lock()
+			p.seen[uid] = struct{}{}
+			p.mu.Unlock()
 			continue
 		}
 		if err := ingest.Ingest(ctx, p.cfg.Address, raw, time.Now().UTC()); err != nil {

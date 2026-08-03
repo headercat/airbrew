@@ -476,6 +476,68 @@ func TestSendDraftFailureLeavesOutbox(t *testing.T) {
 	}
 }
 
+// TestHeaderlessMessagesDoNotCollapseIntoOneThread verifies that two inbound
+// messages with no Message-ID and no References each start their own thread
+// instead of sharing the literal "no-id" thread_id.
+func TestHeaderlessMessagesDoNotCollapseIntoOneThread(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	raw1 := []byte("From: a@x\r\nTo: alice@airbrew.local\r\nSubject: 1\r\n\r\nbody1")
+	raw2 := []byte("From: b@x\r\nTo: alice@airbrew.local\r\nSubject: 2\r\n\r\nbody2")
+
+	if _, err := s.Ingest(ctx, "alice@airbrew.local", raw1, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Ingest(ctx, "alice@airbrew.local", raw2, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	threads, err := s.ListThreads(ctx, uid, "", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(threads) != 2 {
+		t.Fatalf("expected 2 threads, got %d", len(threads))
+	}
+}
+
+// TestSaveDraftClearingReplyChainResetsThread verifies that editing a reply
+// draft to remove In-Reply-To / References re-parents it into its own thread
+// instead of staying stranded in the previous parent.
+func TestSaveDraftClearingReplyChainResetsThread(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mb := mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	draft, err := s.SaveDraft(ctx, uid, "", inbox.SendInput{
+		MailboxID:  mb.ID,
+		To:         []letter.Address{{Address: "x@ext.com"}},
+		Subject:    "Re: topic",
+		Text:       "v1",
+		InReplyTo:  "parent-1",
+		References: []string{"parent-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draft.ThreadID != "parent-1" {
+		t.Fatalf("draft thread = %q, want parent-1", draft.ThreadID)
+	}
+	cleared, err := s.SaveDraft(ctx, uid, draft.ID, inbox.SendInput{
+		MailboxID: mb.ID,
+		To:        []letter.Address{{Address: "x@ext.com"}},
+		Subject:   "new topic",
+		Text:      "v2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.ThreadID != cleared.ID {
+		t.Fatalf("cleared thread = %q, want %q", cleared.ThreadID, cleared.ID)
+	}
+}
+
 func mustIngest(t *testing.T, s *inbox.Service, ctx context.Context, recipient string, raw []byte) {
 	t.Helper()
 	if _, err := s.Ingest(ctx, recipient, raw, time.Now()); err != nil {

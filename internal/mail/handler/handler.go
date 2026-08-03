@@ -353,6 +353,10 @@ func (h *Handler) retryMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	msg, err := h.inbox.RetrySend(r.Context(), sess.UserID, r.PathValue("id"), sender)
 	if err != nil {
+		if msg != nil && msg.IsOutbox {
+			jsonResp(w, http.StatusAccepted, toMessageResp(msg))
+			return
+		}
 		writeErr(w, err)
 		return
 	}
@@ -380,7 +384,8 @@ func (h *Handler) getRaw(w http.ResponseWriter, r *http.Request) {
 	}
 	defer body.Close()
 	w.Header().Set("Content-Type", "message/rfc822")
-	w.Header().Set("Content-Disposition", "attachment")
+	w.Header().Set("Content-Disposition",
+		mime.FormatMediaType("attachment", map[string]string{"filename": m.ID + ".eml"}))
 	if _, err := io.Copy(w, body); err != nil {
 		return
 	}
@@ -548,6 +553,13 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 	}
 	msg, err := h.inbox.Send(r.Context(), sess.UserID, in, sender)
 	if err != nil {
+		// A failed send still leaves a persisted outbox row; return it so
+		// the SPA can show which message failed and offer retry instead of
+		// surfacing a bare error and forcing the user to dig.
+		if msg != nil && msg.IsOutbox {
+			jsonResp(w, http.StatusAccepted, toMessageResp(msg))
+			return
+		}
 		writeErr(w, err)
 		return
 	}
@@ -612,6 +624,10 @@ func (h *Handler) createDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		sent, err := h.inbox.SendDraft(r.Context(), sess.UserID, draft.ID, sender)
 		if err != nil {
+			if draft.IsOutbox {
+				jsonResp(w, http.StatusAccepted, toMessageResp(draft))
+				return
+			}
 			writeErr(w, err)
 			return
 		}

@@ -57,6 +57,12 @@ function isUnsafeUrl(value: string): boolean {
   if (v.startsWith("javascript:") || v.startsWith("vbscript:")) {
     return true;
   }
+  // cid: references inline MIME parts by Content-ID. They cannot
+  // exfiltrate or execute inside the sandboxed iframe, and the SPA rewrites
+  // them to /api/mail/attachments/<id> before render. Allowed as-is.
+  if (v.startsWith("cid:")) {
+    return false;
+  }
   // data: URIs: allow inline raster images only (data:image/png|jpeg|…),
   // reject everything else. SVG is intentionally excluded because it can
   // carry <script> and exfiltrate via XSS in some browser rendering paths,

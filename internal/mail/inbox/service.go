@@ -431,9 +431,14 @@ func (s *Service) SaveDraft(ctx context.Context, userID string, draftID string, 
 		existing.References = in.References
 		// Recompute thread id when the reply chain changed so the draft
 		// re-parents under its parent conversation immediately, not only
-		// when it is eventually sent.
-		if tid := letter.ThreadKey("", in.InReplyTo, in.References); tid != "" && tid != "no-id" {
+		// when it is eventually sent. When the chain is cleared the draft
+		// must become its own singleton conversation (not stay stranded in
+		// the previous parent).
+		tid := letter.ThreadKey("", in.InReplyTo, in.References)
+		if tid != "" && tid != "no-id" {
 			existing.ThreadID = tid
+		} else {
+			existing.ThreadID = existing.ID
 		}
 		existing.UpdatedAt = now
 		existing.MailboxID = mb.ID
@@ -647,7 +652,8 @@ func (s *Service) RetrySend(ctx context.Context, userID, id string, sender Outbo
 // DeleteMessage removes a message, its raw RFC822 blob and every attachment
 // blob. Per-attachment rows cascade on the row delete but the blob store has
 // no such trigger, so we sweep here.
-func (s *Service) DeleteMessage(ctx context.Context, userID, id string) error {	m, err := s.repo.GetMessage(ctx, userID, id)
+func (s *Service) DeleteMessage(ctx context.Context, userID, id string) error {
+	m, err := s.repo.GetMessage(ctx, userID, id)
 	if err != nil {
 		return err
 	}

@@ -40,6 +40,7 @@ import {
 import { evaluateMasterPassword } from "@/lib/vault/security";
 import { VaultActions } from "./actions";
 import { PasswordStrengthHint } from "./password-strength";
+import { TrashButton } from "./trash";
 
 export default function PasswordsPage() {
   const { status, error } = useVault();
@@ -268,6 +269,7 @@ function VaultListView() {
             >
               <Lock className="h-4 w-4" />
             </Button>
+            <TrashButton />
             <Button onClick={() => navigate("/passwords/new")}>
               <Plus className="h-4 w-4" />
               {t("passwords.list.add")}

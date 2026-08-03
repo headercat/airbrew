@@ -375,6 +375,67 @@ func (s *Service) DeleteAttachment(ctx context.Context, userID, itemID, attachID
 	return s.repo.DeleteAttachment(ctx, userID, itemID, attachID)
 }
 
+// --- trash (recycle bin) ---------------------------------------------------
+
+// TrashResult is the decrypted-row view of the trash returned to the client.
+type TrashResult struct {
+	Folders []Folder
+	Items   []Item
+}
+
+// ListTrash returns the soft-deleted folders and items for a user. The rows
+// carry their ciphertext so the client can decrypt names for display.
+func (s *Service) ListTrash(ctx context.Context, userID string) (TrashResult, error) {
+	folders, err := s.repo.ListTrashedFolders(ctx, userID)
+	if err != nil {
+		return TrashResult{}, err
+	}
+	items, err := s.repo.ListTrashedItems(ctx, userID)
+	if err != nil {
+		return TrashResult{}, err
+	}
+	return TrashResult{Folders: folders, Items: items}, nil
+}
+
+// RestoreItem undeletes a tombstoned item and bumps the sync cursor.
+func (s *Service) RestoreItem(ctx context.Context, userID, id string) (Item, error) {
+	if id == "" {
+		return Item{}, fmt.Errorf("%w: id required", ErrInvalidInput)
+	}
+	return s.repo.RestoreItem(ctx, userID, id)
+}
+
+// RestoreFolder undeletes a tombstoned folder and bumps the sync cursor.
+func (s *Service) RestoreFolder(ctx context.Context, userID, id string) (Folder, error) {
+	if id == "" {
+		return Folder{}, fmt.Errorf("%w: id required", ErrInvalidInput)
+	}
+	return s.repo.RestoreFolder(ctx, userID, id)
+}
+
+// PurgeItem permanently deletes a tombstoned item and returns any attachment
+// blob paths so the handler can purge the blobs.
+func (s *Service) PurgeItem(ctx context.Context, userID, id string) ([]string, error) {
+	if id == "" {
+		return nil, fmt.Errorf("%w: id required", ErrInvalidInput)
+	}
+	return s.repo.PurgeItem(ctx, userID, id)
+}
+
+// PurgeFolder permanently deletes a tombstoned folder.
+func (s *Service) PurgeFolder(ctx context.Context, userID, id string) error {
+	if id == "" {
+		return fmt.Errorf("%w: id required", ErrInvalidInput)
+	}
+	return s.repo.PurgeFolder(ctx, userID, id)
+}
+
+// EmptyTrash permanently deletes every tombstoned item and folder for a user,
+// returning the attachment blob paths to purge.
+func (s *Service) EmptyTrash(ctx context.Context, userID string) ([]string, error) {
+	return s.repo.EmptyTrash(ctx, userID)
+}
+
 // ExportBundle returns the full encrypted vault (folders + items, including
 // tombstones), attachments, and the key envelope, so the client can download a
 // self-contained ciphertext backup. The server cannot decrypt any of it.

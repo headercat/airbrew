@@ -1022,6 +1022,265 @@ func (r *Repository) PurgeOldTombstones(ctx context.Context, olderThan time.Time
 	return folders, items, nil
 }
 
+// --- trash (recycle bin) ---------------------------------------------------
+//
+// Soft-deleted rows (tombstones) are kept for tombstoneTTL so the client can
+// sync the deletion. Until the janitor purges them they are still on disk and
+// can be restored: the trash endpoints undelete a row (clearing deleted_at and
+// bumping the sync cursor so every device re-sees it) or hard-delete it on
+// demand (PurgeItem / EmptyTrash). A hard purge never bumps the cursor: the
+// tombstone was already synced, so removing the row physically is invisible to
+// clients (they already dropped it locally).
+
+// ListTrashedItems returns the soft-deleted items for a user, newest deletion
+// first. The rows still carry their ciphertext so the client can decrypt the
+// name for display in the trash view.
+func (r *Repository) ListTrashedItems(ctx context.Context, userID string) ([]Item, error) {
+	rows, err := r.db.QueryContext(ctx, itemSelect+`
+		WHERE user_id = ? AND deleted_at IS NOT NULL
+		ORDER BY updated_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("vault: list trashed items: %w", err)
+	}
+	defer rows.Close()
+	var out []Item
+	for rows.Next() {
+		it, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// ListTrashedFolders returns the soft-deleted folders for a user.
+func (r *Repository) ListTrashedFolders(ctx context.Context, userID string) ([]Folder, error) {
+	rows, err := r.db.QueryContext(ctx, folderSelect+`
+		WHERE user_id = ? AND deleted_at IS NOT NULL
+		ORDER BY updated_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("vault: list trashed folders: %w", err)
+	}
+	defer rows.Close()
+	var out []Folder
+	for rows.Next() {
+		f, err := scanFolder(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// RestoreItem clears deleted_at on a tombstoned item and bumps the sync cursor
+// so every device re-sees the row. If the item's folder_id points at a folder
+// that no longer exists (or is itself deleted), the folder_id is cleared so the
+// restored item lands in "no folder" rather than dangling. ifRevision is not
+// required here because a tombstone is immutable — only one client can restore
+// a given id, and a concurrent hard-purge surfaces as ErrNotFound.
+func (r *Repository) RestoreItem(ctx context.Context, userID, id string) (Item, error) {
+	var out Item
+	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
+		row := tx.QueryRowContext(ctx, itemSelect+` WHERE id = ? AND user_id = ?`, id, userID)
+		it, err := scanItem(row)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if it.DeletedAt == nil {
+			return ErrNotTrashed
+		}
+		// If the folder is gone (or still deleted), drop the link so the
+		// restored item is reachable instead of orphaned under a tombstone.
+		folderID := it.FolderID
+		if folderID != "" {
+			if err := ensureFolderOwned(ctx, tx, userID, folderID); err != nil {
+				folderID = ""
+			}
+		}
+		rev, err := bumpRev(ctx, tx, userID)
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC().Truncate(time.Second)
+		res, err := tx.ExecContext(ctx, `
+			UPDATE vault_items
+			SET deleted_at = NULL, folder_id = ?, revision = ?, updated_at = ?
+			WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL
+		`, nullable(folderID), rev, now, id, userID)
+		if err != nil {
+			return fmt.Errorf("vault: restore item: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		out = it
+		out.FolderID = folderID
+		out.DeletedAt = nil
+		out.Revision = rev
+		out.UpdatedAt = now
+		return nil
+	})
+	if err != nil {
+		return Item{}, err
+	}
+	return out, nil
+}
+
+// RestoreFolder clears deleted_at on a tombstoned folder and bumps the sync
+// cursor. Items that referenced the folder had their folder_id cleared at
+// delete time and stay unfiled — restoring the folder does not re-parent them.
+func (r *Repository) RestoreFolder(ctx context.Context, userID, id string) (Folder, error) {
+	var out Folder
+	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
+		row := tx.QueryRowContext(ctx, folderSelect+` WHERE id = ? AND user_id = ?`, id, userID)
+		f, err := scanFolder(row)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if f.DeletedAt == nil {
+			return ErrNotTrashed
+		}
+		rev, err := bumpRev(ctx, tx, userID)
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC().Truncate(time.Second)
+		res, err := tx.ExecContext(ctx, `
+			UPDATE vault_folders
+			SET deleted_at = NULL, revision = ?, updated_at = ?
+			WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL
+		`, rev, now, id, userID)
+		if err != nil {
+			return fmt.Errorf("vault: restore folder: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		out = f
+		out.DeletedAt = nil
+		out.Revision = rev
+		out.UpdatedAt = now
+		return nil
+	})
+	if err != nil {
+		return Folder{}, err
+	}
+	return out, nil
+}
+
+// PurgeItem hard-deletes one tombstoned item. It returns the blob paths of any
+// attachments that were still linked so the caller can purge them from the blob
+// store. The sync cursor is NOT bumped: the tombstone was already delivered to
+// every client, so physically removing the row changes nothing they can observe.
+func (r *Repository) PurgeItem(ctx context.Context, userID, id string) ([]string, error) {
+	var blobPaths []string
+	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
+		// Verify ownership + that the row is trashed (a live item cannot be
+		// purged — the client must soft-delete first).
+		var deleted sql.NullTime
+		err := tx.QueryRowContext(ctx,
+			`SELECT deleted_at FROM vault_items WHERE id = ? AND user_id = ?`,
+			id, userID,
+		).Scan(&deleted)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("vault: purge item lookup: %w", err)
+		}
+		if !deleted.Valid {
+			return ErrNotTrashed
+		}
+		rows, err := tx.QueryContext(ctx,
+			`SELECT blob_path FROM vault_attachments WHERE item_id = ?`, id)
+		if err != nil {
+			return fmt.Errorf("vault: read attachment paths: %w", err)
+		}
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				rows.Close()
+				return err
+			}
+			blobPaths = append(blobPaths, p)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM vault_items WHERE id = ? AND user_id = ?`, id, userID); err != nil {
+			return fmt.Errorf("vault: purge item: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return blobPaths, nil
+}
+
+// PurgeFolder hard-deletes one tombstoned folder.
+func (r *Repository) PurgeFolder(ctx context.Context, userID, id string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM vault_folders WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL`,
+		id, userID)
+	if err != nil {
+		return fmt.Errorf("vault: purge folder: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// EmptyTrash hard-deletes every tombstoned item and folder for a user and
+// returns the attachment blob paths that were dropped so the caller can purge
+// the blobs. The sync cursor is not bumped (see PurgeItem).
+func (r *Repository) EmptyTrash(ctx context.Context, userID string) ([]string, error) {
+	var blobPaths []string
+	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT a.blob_path FROM vault_attachments a
+			JOIN vault_items i ON i.id = a.item_id
+			WHERE i.user_id = ? AND i.deleted_at IS NOT NULL`, userID)
+		if err != nil {
+			return fmt.Errorf("vault: read trash blob paths: %w", err)
+		}
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				rows.Close()
+				return err
+			}
+			blobPaths = append(blobPaths, p)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM vault_items WHERE user_id = ? AND deleted_at IS NOT NULL`, userID); err != nil {
+			return fmt.Errorf("vault: empty trash items: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM vault_folders WHERE user_id = ? AND deleted_at IS NOT NULL`, userID); err != nil {
+			return fmt.Errorf("vault: empty trash folders: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return blobPaths, nil
+}
+
 // AllAttachmentBlobPaths returns every blob_path stored in vault_attachments.
 // The janitor diffs this set against the blob store listing to find and delete
 // orphaned blobs (e.g. from a crash between Save and the DB insert, or a failed

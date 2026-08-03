@@ -65,6 +65,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/vault/items/{id}/attachments", h.uploadAttachment)
 	mux.HandleFunc("GET /api/vault/items/{id}/attachments/{aid}", h.downloadAttachment)
 	mux.HandleFunc("DELETE /api/vault/items/{id}/attachments/{aid}", h.deleteAttachment)
+
+	mux.HandleFunc("GET /api/vault/trash", h.listTrash)
+	mux.HandleFunc("POST /api/vault/trash/empty", h.emptyTrash)
+	mux.HandleFunc("POST /api/vault/items/{id}/restore", h.restoreItem)
+	mux.HandleFunc("POST /api/vault/folders/{id}/restore", h.restoreFolder)
+	mux.HandleFunc("DELETE /api/vault/items/{id}/purge", h.purgeItem)
+	mux.HandleFunc("DELETE /api/vault/folders/{id}/purge", h.purgeFolder)
 }
 
 // --- envelope ---------------------------------------------------------------
@@ -789,6 +796,8 @@ func writeVaultError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, vault.ErrNotFound):
 		response.Error(w, http.StatusNotFound, "not_found", "vault entry not found")
+	case errors.Is(err, vault.ErrNotTrashed):
+		response.Error(w, http.StatusConflict, "not_trashed", "row is not in the trash")
 	case errors.Is(err, vault.ErrInvalidInput):
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 	default:
@@ -992,5 +1001,115 @@ func (h *Handler) deleteAttachment(w http.ResponseWriter, r *http.Request) {
 	if h.blobs != nil {
 		_ = h.blobs.Delete(r.Context(), att.BlobPath)
 	}
+	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// --- trash (recycle bin) ---------------------------------------------------
+
+type trashResp struct {
+	Folders []folderResp `json:"folders"`
+	Items   []itemResp   `json:"items"`
+}
+
+func (h *Handler) listTrash(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.svc.ListTrash(r.Context(), sess.UserID)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	out := trashResp{Folders: []folderResp{}, Items: []itemResp{}}
+	for _, f := range res.Folders {
+		out.Folders = append(out.Folders, toFolderResp(f))
+	}
+	for _, it := range res.Items {
+		out.Items = append(out.Items, toItemResp(it))
+	}
+	response.JSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) restoreItem(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	it, err := h.svc.RestoreItem(r.Context(), sess.UserID, id)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	h.auditVault(r, "vault.item_restored_from_trash", it.ID, nil)
+	response.JSON(w, http.StatusOK, toItemResp(it))
+}
+
+func (h *Handler) restoreFolder(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	f, err := h.svc.RestoreFolder(r.Context(), sess.UserID, id)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	h.auditVault(r, "vault.folder_restored_from_trash", f.ID, nil)
+	response.JSON(w, http.StatusOK, toFolderResp(f))
+}
+
+func (h *Handler) purgeItem(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	blobPaths, err := h.svc.PurgeItem(r.Context(), sess.UserID, id)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	if h.blobs != nil {
+		for _, p := range blobPaths {
+			_ = h.blobs.Delete(r.Context(), p)
+		}
+	}
+	h.auditVault(r, "vault.item_purged", id, nil)
+	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (h *Handler) purgeFolder(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if err := h.svc.PurgeFolder(r.Context(), sess.UserID, id); err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	h.auditVault(r, "vault.folder_purged", id, nil)
+	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (h *Handler) emptyTrash(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	blobPaths, err := h.svc.EmptyTrash(r.Context(), sess.UserID)
+	if err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	if h.blobs != nil {
+		for _, p := range blobPaths {
+			_ = h.blobs.Delete(r.Context(), p)
+		}
+	}
+	h.auditVault(r, "vault.trash_emptied", sess.UserID, map[string]any{"blobs": len(blobPaths)})
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

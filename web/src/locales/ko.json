@@ -615,7 +615,7 @@
       "reprompt": "마스터 비밀번호 재확인",
       "save": "저장",
       "delete": "삭제",
-      "confirmDelete": "이 항목을 삭제하시겠습니까? 되돌릴 수 없습니다.",
+      "confirmDelete": "이 항목을 삭제합니다. 휴지통으로 이동하며 30일간 복원할 수 있습니다.",
       "notFound": "항목을 찾을 수 없습니다. 다른 기기에서 삭제되었을 수 있습니다.",
       "conflict": "이 항목이 다른 곳에서 변경되었습니다. 새로고침 후 다시 시도하세요.",
       "fields": "필드",
@@ -659,6 +659,19 @@
       "minutes_other": "{{count}}분",
       "seconds_one": "{{count}}초",
       "seconds_other": "{{count}}초"
+    },
+    "trash": {
+      "open": "휴지통",
+      "title": "휴지통",
+      "description": "삭제된 항목은 30일간 보관된 후 완전히 삭제됩니다.",
+      "empty": "휴지통이 비어 있습니다.",
+      "restore": "복원",
+      "purge": "완전히 삭제",
+      "emptyAll": "휴지통 비우기",
+      "confirmPurge": "이 항목을 완전히 삭제합니다. 되돌릴 수 없습니다.",
+      "confirmEmpty": "휴지통의 모든 항목을 완전히 삭제합니다.",
+      "folder": "폴더",
+      "retentionHint": "항목은 30일 후 자동으로 완전히 삭제됩니다."
     }
   },
   "profile": {

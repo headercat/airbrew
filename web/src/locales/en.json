@@ -615,7 +615,7 @@
       "reprompt": "Re-prompt master password",
       "save": "Save",
       "delete": "Delete",
-      "confirmDelete": "Delete this item? This cannot be undone.",
+      "confirmDelete": "Delete this item? It moves to the trash and can be restored for 30 days.",
       "notFound": "Item not found. It may have been deleted on another device.",
       "conflict": "This item was changed elsewhere. Refresh and try again.",
       "fields": "Fields",
@@ -659,6 +659,19 @@
       "minutes_other": "{{count}} minutes",
       "seconds_one": "{{count}} second",
       "seconds_other": "{{count}} seconds"
+    },
+    "trash": {
+      "open": "Trash",
+      "title": "Trash",
+      "description": "Deleted items are kept here for 30 days before being permanently removed.",
+      "empty": "Trash is empty.",
+      "restore": "Restore",
+      "purge": "Delete permanently",
+      "emptyAll": "Empty trash",
+      "confirmPurge": "Delete this permanently? This cannot be undone.",
+      "confirmEmpty": "Permanently delete everything in the trash?",
+      "folder": "Folder",
+      "retentionHint": "Items are purged automatically after 30 days."
     }
   },
   "profile": {

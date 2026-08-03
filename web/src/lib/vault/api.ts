@@ -332,3 +332,34 @@ export type ImportBundleInput = {
 export function importVault(input: ImportBundleInput): Promise<ImportCounts> {
   return api.post<ImportCounts>("/api/vault/import", input);
 }
+
+// ---- trash (recycle bin) ----
+
+export type TrashResponse = {
+  folders: VaultFolder[];
+  items: VaultItem[];
+};
+
+export function listTrash(): Promise<TrashResponse> {
+  return api.get<TrashResponse>("/api/vault/trash");
+}
+
+export function restoreItem(id: string): Promise<VaultItem> {
+  return api.post<VaultItem>(`/api/vault/items/${id}/restore`);
+}
+
+export function restoreFolder(id: string): Promise<VaultFolder> {
+  return api.post<VaultFolder>(`/api/vault/folders/${id}/restore`);
+}
+
+export function purgeItem(id: string): Promise<{ ok: true }> {
+  return api.del(`/api/vault/items/${id}/purge`);
+}
+
+export function purgeFolder(id: string): Promise<{ ok: true }> {
+  return api.del(`/api/vault/folders/${id}/purge`);
+}
+
+export function emptyTrash(): Promise<{ ok: true }> {
+  return api.post(`/api/vault/trash/empty`);
+}

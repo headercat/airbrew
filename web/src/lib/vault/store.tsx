@@ -85,6 +85,18 @@ export type DecryptedFolder = {
   revision: number;
 };
 
+// TrashEntry is a unified view of a soft-deleted folder or item. "kind"
+// distinguishes them so the trash UI can render and route restore/purge calls
+// without re-importing the API types.
+export type TrashEntry = {
+  id: string;
+  kind: "folder" | "item";
+  name: string;
+  type?: VaultItemType;
+  revision: number;
+  deletedAt: string;
+};
+
 // Attachment is the decrypted client view: the name is decrypted with the
 // vault key, while fileKeyCipher/Nonce stay wrapped until download (when the
 // file key is unwrapped and used to decrypt the blob).
@@ -487,6 +499,15 @@ type VaultContextValue = {
     }[]
   >;
   restoreItemRevision: (itemId: string, revId: string) => Promise<void>;
+  // Trash (recycle bin): list soft-deleted rows, restore, or permanently
+  // delete. Restoring bumps the sync cursor so the row reappears on every
+  // device; purging is invisible (the tombstone was already synced).
+  listTrash: () => Promise<TrashEntry[]>;
+  restoreTrashItem: (id: string) => Promise<void>;
+  restoreTrashFolder: (id: string) => Promise<void>;
+  purgeTrashItem: (id: string) => Promise<void>;
+  purgeTrashFolder: (id: string) => Promise<void>;
+  emptyTrash: () => Promise<void>;
 };
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -1518,6 +1539,89 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     [commitItems, commitCursor, persistCiphertextCache],
   );
 
+  // --- trash (recycle bin) -------------------------------------------------
+
+  const listTrash = useCallback(async (): Promise<TrashEntry[]> => {
+    const key = keyRef.current;
+    if (!key) throw new Error("vault locked");
+    const res = await VApi.listTrash();
+    const out: TrashEntry[] = [];
+    for (const f of res.folders) {
+      let name = "•••";
+      try {
+        name = await decryptStringCompat(
+          key,
+          f.name_cipher,
+          f.name_nonce,
+          folderAAD(f.id, "name", f.crypto_version),
+          f.crypto_version,
+        );
+      } catch {
+        // keep placeholder
+      }
+      out.push({
+        id: f.id,
+        kind: "folder",
+        name,
+        revision: f.revision,
+        deletedAt: f.deleted_at ?? f.updated_at,
+      });
+    }
+    for (const it of res.items) {
+      let name = "•••";
+      try {
+        name = await decryptStringCompat(
+          key,
+          it.name_cipher,
+          it.name_nonce,
+          itemAAD(it.id, "name", it.crypto_version),
+          it.crypto_version,
+        );
+      } catch {
+        // keep placeholder
+      }
+      out.push({
+        id: it.id,
+        kind: "item",
+        name,
+        type: it.type,
+        revision: it.revision,
+        deletedAt: it.deleted_at ?? it.updated_at,
+      });
+    }
+    // Newest deletions first.
+    out.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+    return out;
+  }, []);
+
+  const restoreTrashItem = useCallback(
+    async (id: string): Promise<void> => {
+      await VApi.restoreItem(id);
+      await syncAndDecrypt();
+    },
+    [syncAndDecrypt],
+  );
+
+  const restoreTrashFolder = useCallback(
+    async (id: string): Promise<void> => {
+      await VApi.restoreFolder(id);
+      await syncAndDecrypt();
+    },
+    [syncAndDecrypt],
+  );
+
+  const purgeTrashItem = useCallback(async (id: string): Promise<void> => {
+    await VApi.purgeItem(id);
+  }, []);
+
+  const purgeTrashFolder = useCallback(async (id: string): Promise<void> => {
+    await VApi.purgeFolder(id);
+  }, []);
+
+  const emptyTrash = useCallback(async (): Promise<void> => {
+    await VApi.emptyTrash();
+  }, []);
+
   // Auto-bootstrap on first mount so the page knows which gate to show.
   useEffect(() => {
     void bootstrap();
@@ -1608,6 +1712,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       changeMasterPassword,
       listItemRevisions,
       restoreItemRevision,
+      listTrash,
+      restoreTrashItem,
+      restoreTrashFolder,
+      purgeTrashItem,
+      purgeTrashFolder,
+      emptyTrash,
     }),
     [
       status,
@@ -1638,6 +1748,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       changeMasterPassword,
       listItemRevisions,
       restoreItemRevision,
+      listTrash,
+      restoreTrashItem,
+      restoreTrashFolder,
+      purgeTrashItem,
+      purgeTrashFolder,
+      emptyTrash,
     ],
   );
 

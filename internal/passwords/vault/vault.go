@@ -20,6 +20,10 @@ var (
 	ErrEnvelopeExists = errors.New("vault: envelope already set up")
 	// ErrInvalidInput is returned when ciphertext/nonces are missing.
 	ErrInvalidInput = errors.New("vault: invalid input")
+	// ErrNotTrashed is returned when a trash operation targets a row that is
+	// not soft-deleted (e.g. restoring an item that is still live, or purging
+	// an item that has not been soft-deleted first).
+	ErrNotTrashed = errors.New("vault: row is not trashed")
 )
 
 // ConflictError signals an optimistic-concurrency mismatch. The server's

@@ -590,3 +590,172 @@ func TestPurgeOldTombstonesRespectsCutoff(t *testing.T) {
 		t.Fatalf("future cutoff purged items=%d, want 1", i)
 	}
 }
+
+// --- trash (recycle bin) tests ---------------------------------------------
+
+func TestRestoreItemClearsDeletedAtAndBumpsRevision(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	it, _ := repo.CreateItem(ctx, "u1", itemInputFixture())
+	_, err := repo.SoftDeleteItem(ctx, "u1", it.ID, it.Revision)
+	if err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+
+	trash, err := repo.ListTrashedItems(ctx, "u1")
+	if err != nil {
+		t.Fatalf("list trash: %v", err)
+	}
+	if len(trash) != 1 || trash[0].ID != it.ID {
+		t.Fatalf("trash = %v, want the soft-deleted item", trash)
+	}
+
+	restored, err := repo.RestoreItem(ctx, "u1", it.ID)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if restored.DeletedAt != nil {
+		t.Fatalf("restored deleted_at = %v, want nil", restored.DeletedAt)
+	}
+	if restored.Revision <= it.Revision {
+		t.Fatalf("restored revision = %d, want > %d", restored.Revision, it.Revision)
+	}
+
+	// Trash is empty again.
+	trash, _ = repo.ListTrashedItems(ctx, "u1")
+	if len(trash) != 0 {
+		t.Fatalf("trash after restore = %d items, want 0", len(trash))
+	}
+	// Live row is reachable via GetItem.
+	got, err := repo.GetItem(ctx, "u1", it.ID)
+	if err != nil {
+		t.Fatalf("get item after restore: %v", err)
+	}
+	if got.DeletedAt != nil {
+		t.Fatalf("get item after restore: deleted_at = %v, want nil", got.DeletedAt)
+	}
+}
+
+func TestRestoreItemIsVisibleInSync(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	it, _ := repo.CreateItem(ctx, "u1", itemInputFixture())
+	_, _ = repo.SoftDeleteItem(ctx, "u1", it.ID, it.Revision)
+	restored, err := repo.RestoreItem(ctx, "u1", it.ID)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	res, err := repo.Sync(ctx, "u1", 0, 0)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("sync items = %d, want 1 (restored row)", len(res.Items))
+	}
+	if res.Items[0].ID != restored.ID || res.Items[0].DeletedAt != nil {
+		t.Fatalf("sync returned %v, want the restored live row", res.Items[0])
+	}
+}
+
+func TestRestoreItemDropsMissingFolderLink(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	f, _ := repo.CreateFolder(ctx, "u1", "", cipherFixture(24, 1), nonceFixture(2), CryptoVersionLegacy)
+	in := itemInputFixture()
+	in.FolderID = f.ID
+	it, _ := repo.CreateItem(ctx, "u1", in)
+	// Delete the folder, which clears folder_id on live items and bumps their
+	// revisions. Re-read the item so we soft-delete with the current revision.
+	if err := repo.SoftDeleteFolder(ctx, "u1", f.ID, f.Revision); err != nil {
+		t.Fatalf("delete folder: %v", err)
+	}
+	current, err := repo.GetItem(ctx, "u1", it.ID)
+	if err != nil {
+		t.Fatalf("reload item: %v", err)
+	}
+	_, _ = repo.SoftDeleteItem(ctx, "u1", it.ID, current.Revision)
+
+	restored, err := repo.RestoreItem(ctx, "u1", it.ID)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if restored.FolderID != "" {
+		t.Fatalf("restored folder_id = %q, want empty (folder is deleted)", restored.FolderID)
+	}
+}
+
+func TestRestoreFolderClearsDeletedAt(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	f, _ := repo.CreateFolder(ctx, "u1", "", cipherFixture(24, 1), nonceFixture(2), CryptoVersionLegacy)
+	if err := repo.SoftDeleteFolder(ctx, "u1", f.ID, f.Revision); err != nil {
+		t.Fatalf("delete folder: %v", err)
+	}
+	restored, err := repo.RestoreFolder(ctx, "u1", f.ID)
+	if err != nil {
+		t.Fatalf("restore folder: %v", err)
+	}
+	if restored.DeletedAt != nil {
+		t.Fatalf("restored folder deleted_at = %v, want nil", restored.DeletedAt)
+	}
+}
+
+func TestRestoreItemRejectsLiveRow(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	it, _ := repo.CreateItem(ctx, "u1", itemInputFixture())
+	if _, err := repo.RestoreItem(ctx, "u1", it.ID); !errors.Is(err, ErrNotTrashed) {
+		t.Fatalf("restore live item = %v, want ErrNotTrashed", err)
+	}
+}
+
+func TestPurgeItemPermanentlyDeletes(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	it, _ := repo.CreateItem(ctx, "u1", itemInputFixture())
+	_, _ = repo.SoftDeleteItem(ctx, "u1", it.ID, it.Revision)
+
+	if _, err := repo.PurgeItem(ctx, "u1", it.ID); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	trash, _ := repo.ListTrashedItems(ctx, "u1")
+	if len(trash) != 0 {
+		t.Fatalf("trash after purge = %d items, want 0", len(trash))
+	}
+	// The row is gone for good.
+	if _, err := repo.GetItem(ctx, "u1", it.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get purged item = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPurgeItemRejectsLiveRow(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	it, _ := repo.CreateItem(ctx, "u1", itemInputFixture())
+	if _, err := repo.PurgeItem(ctx, "u1", it.ID); !errors.Is(err, ErrNotTrashed) {
+		t.Fatalf("purge live item = %v, want ErrNotTrashed", err)
+	}
+}
+
+func TestEmptyTrashPurgesAllTombstones(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	it1, _ := repo.CreateItem(ctx, "u1", itemInputFixture())
+	it2, _ := repo.CreateItem(ctx, "u1", itemInputFixture())
+	_, _ = repo.SoftDeleteItem(ctx, "u1", it1.ID, it1.Revision)
+	_, _ = repo.SoftDeleteItem(ctx, "u1", it2.ID, it2.Revision)
+	f, _ := repo.CreateFolder(ctx, "u1", "", cipherFixture(24, 1), nonceFixture(2), CryptoVersionLegacy)
+	_ = repo.SoftDeleteFolder(ctx, "u1", f.ID, f.Revision)
+
+	if _, err := repo.EmptyTrash(ctx, "u1"); err != nil {
+		t.Fatalf("empty trash: %v", err)
+	}
+	items, _ := repo.ListTrashedItems(ctx, "u1")
+	if len(items) != 0 {
+		t.Fatalf("trashed items after empty = %d, want 0", len(items))
+	}
+	folders, _ := repo.ListTrashedFolders(ctx, "u1")
+	if len(folders) != 0 {
+		t.Fatalf("trashed folders after empty = %d, want 0", len(folders))
+	}
+}

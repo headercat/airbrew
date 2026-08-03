@@ -12,12 +12,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
 	"net/mail"
 	"net/textproto"
+	"regexp"
 	"strings"
 	"time"
 
@@ -375,6 +377,12 @@ func Parse(raw []byte) (*ParsedMessage, error) {
 	out.Text = text
 	out.HTML = html
 	out.Attachments = atts
+	// A great deal of real mail ships HTML-only; synthesise a plain-text
+	// fallback so search (which scans body_text), snippets, replies and
+	// plain-text SMTP transports have something to work with.
+	if out.Text == "" && out.HTML != "" {
+		out.Text = htmlToText(out.HTML)
+	}
 	return out, nil
 }
 
@@ -513,6 +521,29 @@ func readDecoded(body io.Reader, cte string) (string, error) {
 		return "", err
 	}
 	return decodeCTE(b, cte), nil
+}
+
+// htmlToText produces a best-effort plain-text rendering of an HTML body by
+// turning block-level closing tags into newlines, stripping the remaining
+// tags, decoding HTML entities and collapsing whitespace. It is intentionally
+// lossy: the goal is searchability and an honest list preview, not fidelity.
+var (
+	htmlBlockEndRe = regexp.MustCompile(`(?i)</(p|div|tr|li|h[1-6])>`)
+	htmlBrRe       = regexp.MustCompile(`(?i)<br\s*/?>`)
+	htmlTagRe      = regexp.MustCompile(`<[^>]*>`)
+	htmlWSRe       = regexp.MustCompile(`[ \t\r\n\f\v]+`)
+)
+
+func htmlToText(s string) string {
+	s = htmlBlockEndRe.ReplaceAllString(s, "\n")
+	s = htmlBrRe.ReplaceAllString(s, "\n")
+	s = htmlTagRe.ReplaceAllString(s, "")
+	s = html.UnescapeString(s)
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimSpace(htmlWSRe.ReplaceAllString(line, " "))
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // decodeCharset transcodes text from the named IANA charset into UTF-8.

@@ -236,8 +236,10 @@ func applySearch(q string, args []any, query string) (string, []any) {
 	// search string does not act as a pattern.
 	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
 	like := "%" + escaped + "%"
-	q += " AND (subject LIKE ? ESCAPE '\\' OR from_addr LIKE ? ESCAPE '\\' OR to_addrs LIKE ? ESCAPE '\\' OR cc_addrs LIKE ? ESCAPE '\\' OR body_text LIKE ? ESCAPE '\\')"
-	args = append(args, like, like, like, like, like)
+	// body_html is included so legacy HTML-only rows (stored before ingest
+	// began synthesising a text fallback) are still searchable.
+	q += " AND (subject LIKE ? ESCAPE '\\' OR from_addr LIKE ? ESCAPE '\\' OR to_addrs LIKE ? ESCAPE '\\' OR cc_addrs LIKE ? ESCAPE '\\' OR body_text LIKE ? ESCAPE '\\' OR body_html LIKE ? ESCAPE '\\')"
+	args = append(args, like, like, like, like, like, like)
 	return q, args
 }
 

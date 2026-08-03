@@ -50,7 +50,30 @@ func TestParseTranscodesLegacyCharset(t *testing.T) {
 	}
 }
 
-// TestBuildRFC822EncodesNonASCIIFilename checks that non-ASCII attachment
+// TestParseSynthesisesTextFromHTMLOnly ensures an HTML-only message still
+// yields a non-empty plain-text body so search and the SPA list snippet have
+// something to show.
+func TestParseSynthesisesTextFromHTMLOnly(t *testing.T) {
+	raw := strings.Join([]string{
+		"From: bob@example.com",
+		"To: alice@example.com",
+		"Subject: html only",
+		"Message-ID: <html1@example.com>",
+		"Content-Type: text/html; charset=utf-8",
+		"",
+		"<html><body><p>Hello <b>world</b></p><p>Second line</p></body></html>",
+	}, "\r\n")
+	msg, err := Parse([]byte(raw))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !strings.Contains(msg.Text, "Hello world") || !strings.Contains(msg.Text, "Second line") {
+		t.Fatalf("text = %q, want synthesised plain text containing both paragraphs", msg.Text)
+	}
+	if msg.HTML == "" {
+		t.Fatalf("html body should be preserved")
+	}
+}
 // filenames are emitted with RFC 2231 encoding (filename*=UTF-8''…) so
 // strict clients like Outlook do not rename or drop the attachment.
 func TestBuildRFC822EncodesNonASCIIFilename(t *testing.T) {

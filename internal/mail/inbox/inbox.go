@@ -90,6 +90,7 @@ type FolderCounts struct {
 	Draft   int `json:"draft"`
 	Starred int `json:"starred"`
 	Unread  int `json:"unread"`
+	Outbox  int `json:"outbox"`
 }
 
 // Thread is a conversation summary: the latest message in the group plus counts.

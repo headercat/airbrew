@@ -46,6 +46,7 @@ export type MailMessage = {
   is_read: boolean;
   is_starred: boolean;
   is_draft: boolean;
+  is_outbox: boolean;
   size_bytes: number;
   received_at?: string;
   sent_at?: string;
@@ -97,6 +98,7 @@ export type FolderCounts = {
   draft: number;
   starred: number;
   unread: number;
+  outbox: number;
 };
 
 export const mail = {
@@ -160,6 +162,9 @@ export const mail = {
     body: { is_read?: boolean; is_starred?: boolean },
   ) => api.patch<{ ok: boolean }>(`/api/mail/messages/${id}`, body),
 
+  retryMessage: (id: string) =>
+    api.post<MailMessage>(`/api/mail/messages/${id}/retry`, {}),
+
   deleteMessage: (id: string) =>
     api.del<{ ok: boolean }>(`/api/mail/messages/${id}`),
 
@@ -175,7 +180,8 @@ export const mail = {
   updateDraft: (id: string, body: DraftInput) =>
     api.patch<MailMessage>(`/api/mail/drafts/${id}`, body),
 
-  deleteDraft: (id: string) => api.del<{ ok: boolean }>(`/api/mail/drafts/${id}`),
+  deleteDraft: (id: string) =>
+    api.del<{ ok: boolean }>(`/api/mail/drafts/${id}`),
 
   send: (body: SendMailInput) => api.post<MailMessage>("/api/mail/send", body),
 };

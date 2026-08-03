@@ -192,13 +192,15 @@ func (r *Repository) ListMessages(ctx context.Context, f ListFilter) ([]*Message
 	case "inbox":
 		q += " AND direction = 'inbound'"
 	case "sent":
-		q += " AND direction = 'outbound' AND is_draft = 0"
+		q += " AND direction = 'outbound' AND is_draft = 0 AND is_outbox = 0"
 	case "draft":
 		q += " AND is_draft = 1"
 	case "starred":
 		q += " AND is_starred = 1"
 	case "unread":
 		q += " AND is_read = 0 AND direction = 'inbound'"
+	case "outbox":
+		q += " AND is_outbox = 1"
 	}
 	if f.ThreadID != "" {
 		q += " AND thread_id = ?"
@@ -249,11 +251,12 @@ func applySearch(q string, args []any, query string) (string, []any) {
 func (r *Repository) Counts(ctx context.Context, userID, mailboxID string) (FolderCounts, error) {
 	q := `
 		SELECT
-		  SUM(CASE WHEN direction='inbound'                       THEN 1 ELSE 0 END),
-		  SUM(CASE WHEN direction='outbound' AND is_draft = 0      THEN 1 ELSE 0 END),
-		  SUM(CASE WHEN is_draft = 1                               THEN 1 ELSE 0 END),
-		  SUM(CASE WHEN is_starred = 1                             THEN 1 ELSE 0 END),
-		  SUM(CASE WHEN is_read = 0 AND direction = 'inbound'      THEN 1 ELSE 0 END)
+		  SUM(CASE WHEN direction='inbound'                                  THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN direction='outbound' AND is_draft = 0 AND is_outbox = 0 THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN is_draft = 1                                          THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN is_starred = 1                                        THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN is_read = 0 AND direction = 'inbound'                 THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN is_outbox = 1                                         THEN 1 ELSE 0 END)
 		FROM mail_messages WHERE user_id = ?`
 	args := []any{userID}
 	if mailboxID != "" {
@@ -261,9 +264,9 @@ func (r *Repository) Counts(ctx context.Context, userID, mailboxID string) (Fold
 		args = append(args, mailboxID)
 	}
 	var c FolderCounts
-	var inbox, sent, draft, starred, unread sql.NullInt64
+	var inbox, sent, draft, starred, unread, outbox sql.NullInt64
 	if err := r.db.QueryRowContext(ctx, q, args...).Scan(
-		&inbox, &sent, &draft, &starred, &unread,
+		&inbox, &sent, &draft, &starred, &unread, &outbox,
 	); err != nil {
 		return FolderCounts{}, fmt.Errorf("inbox: counts: %w", err)
 	}
@@ -272,6 +275,7 @@ func (r *Repository) Counts(ctx context.Context, userID, mailboxID string) (Fold
 	c.Draft = int(draft.Int64)
 	c.Starred = int(starred.Int64)
 	c.Unread = int(unread.Int64)
+	c.Outbox = int(outbox.Int64)
 	return c, nil
 }
 

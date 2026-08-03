@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
+  AlertTriangle,
   FileEdit,
   Forward,
   Inbox,
@@ -9,6 +10,7 @@ import {
   Paperclip,
   RefreshCcw,
   Reply,
+  RotateCw,
   Send,
   Star,
   Trash2,
@@ -39,6 +41,7 @@ const folders = [
   { id: "inbox", label: "받은편지함", icon: Inbox },
   { id: "sent", label: "보낸메일", icon: Send },
   { id: "draft", label: "임시보관", icon: FileEdit },
+  { id: "outbox", label: "전송 실패", icon: AlertTriangle },
   { id: "unread", label: "읽지 않음", icon: Inbox },
   { id: "starred", label: "중요", icon: Star },
 ] as const;
@@ -176,6 +179,8 @@ export default function MailPage() {
         return counts.sent;
       case "draft":
         return counts.draft;
+      case "outbox":
+        return counts.outbox;
       case "unread":
         return counts.unread;
       case "starred":
@@ -403,6 +408,23 @@ export default function MailPage() {
     }
   };
 
+  const retryMessage = async (m: MailMessage) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const sent = await mail.retryMessage(m.id);
+      setMessages((prev) =>
+        prev.map((item) => (item.id === m.id ? sent : item)),
+      );
+      if (selected?.id === m.id) setSelected(sent);
+      void refreshCounts();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const createMailbox = async () => {
     setBusy(true);
     setError(null);
@@ -508,9 +530,18 @@ export default function MailPage() {
                 >
                   <Icon className="h-4 w-4" />
                   <span className="min-w-0 flex-1 truncate">{f.label}</span>
-                  {badge > 0 && (f.id === "unread" || f.id === "draft") && (
-                    <Badge variant="secondary">{badge}</Badge>
-                  )}
+                  {badge > 0 &&
+                    (f.id === "unread" ||
+                      f.id === "draft" ||
+                      f.id === "outbox") && (
+                      <Badge
+                        variant={
+                          f.id === "outbox" ? "destructive" : "secondary"
+                        }
+                      >
+                        {badge}
+                      </Badge>
+                    )}
                 </button>
               );
             })}
@@ -599,6 +630,9 @@ export default function MailPage() {
                         : formatAddress(m.from)}
                     </span>
                     {m.is_draft && <Badge variant="outline">임시</Badge>}
+                    {m.is_outbox && (
+                      <Badge variant="destructive">전송 실패</Badge>
+                    )}
                     {m.is_starred && (
                       <Star className="h-3.5 w-3.5 fill-current text-primary" />
                     )}
@@ -627,6 +661,7 @@ export default function MailPage() {
               onEditDraft={editDraft}
               onToggleStar={toggleStar}
               onDelete={removeMessage}
+              onRetry={retryMessage}
             />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -776,6 +811,7 @@ function MessageView({
   onEditDraft,
   onToggleStar,
   onDelete,
+  onRetry,
 }: {
   message: MailMessage;
   onReply: (m: MailMessage) => void;
@@ -783,6 +819,7 @@ function MessageView({
   onEditDraft: (m: MailMessage) => void;
   onToggleStar: (m: MailMessage) => void;
   onDelete: (m: MailMessage) => void;
+  onRetry: (m: MailMessage) => void;
 }) {
   const sanitizedHTML = useMemo(
     () => (message.body_html ? sanitizeMailHtml(message.body_html) : ""),
@@ -808,7 +845,16 @@ function MessageView({
             </p>
           </div>
           <div className="flex shrink-0 gap-1">
-            {message.is_draft ? (
+            {message.is_outbox ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void onRetry(message)}
+                title="다시 전송"
+              >
+                <RotateCw className="h-4 w-4" />
+              </Button>
+            ) : message.is_draft ? (
               <Button
                 variant="ghost"
                 size="sm"
@@ -896,7 +942,8 @@ function MessageView({
 }
 
 function normalizeFolder(box: string | null) {
-  if (box === "sent" || box === "starred" || box === "unread") return box;
+  if (box === "sent" || box === "starred" || box === "unread" || box === "outbox")
+    return box;
   if (box === "drafts" || box === "draft") return "draft";
   return "inbox";
 }

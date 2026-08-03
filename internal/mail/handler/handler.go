@@ -43,6 +43,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mail/messages/{id}", h.getMessage)
 	mux.HandleFunc("PATCH /api/mail/messages/{id}", h.patchMessage)
 	mux.HandleFunc("DELETE /api/mail/messages/{id}", h.deleteMessage)
+	mux.HandleFunc("POST /api/mail/messages/{id}/retry", h.retryMessage)
 	mux.HandleFunc("GET /api/mail/messages/{id}/raw", h.getRaw)
 	mux.HandleFunc("GET /api/mail/messages/{id}/attachments", h.listMessageAttachments)
 
@@ -152,6 +153,7 @@ type messageResp struct {
 	IsRead      bool             `json:"is_read"`
 	IsStarred   bool             `json:"is_starred"`
 	IsDraft     bool             `json:"is_draft"`
+	IsOutbox    bool             `json:"is_outbox"`
 	SizeBytes   int64            `json:"size_bytes"`
 	ReceivedAt  string           `json:"received_at,omitempty"`
 	SentAt      string           `json:"sent_at,omitempty"`
@@ -167,6 +169,7 @@ func toMessageResp(m *inbox.Message) messageResp {
 		From:    m.From, To: m.To, Cc: m.Cc, Bcc: m.Bcc, ReplyTo: m.ReplyTo,
 		Direction: string(m.Direction), BodyText: m.BodyText, BodyHTML: m.BodyHTML,
 		IsRead: m.IsRead, IsStarred: m.IsStarred, IsDraft: m.IsDraft,
+		IsOutbox:  m.IsOutbox,
 		SizeBytes: m.SizeBytes,
 		CreatedAt: m.CreatedAt.UTC().Format(timeRFC3339),
 	}
@@ -335,6 +338,24 @@ func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (h *Handler) retryMessage(w http.ResponseWriter, r *http.Request) {
+	sess, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	sender, err := outbound.Resolve(r.Context(), h.repo)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	msg, err := h.inbox.RetrySend(r.Context(), sess.UserID, r.PathValue("id"), sender)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, toMessageResp(msg))
 }
 
 func (h *Handler) getRaw(w http.ResponseWriter, r *http.Request) {

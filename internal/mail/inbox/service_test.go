@@ -406,6 +406,36 @@ func TestDraftReplyJoinsParentThread(t *testing.T) {
 	}
 }
 
+// TestRetrySendRecoversOutbox verifies a failed send leaves an outbox row and
+// RetrySend re-attempts delivery, flipping is_outbox off on success.
+func TestRetrySendRecoversOutbox(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mb := mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+
+	// Initial send fails; row is left with is_outbox=1.
+	stuck, err := s.Send(ctx, uid, inbox.SendInput{
+		MailboxID: mb.ID,
+		To:        []letter.Address{{Address: "bob@ext.com"}},
+		Subject:   "try",
+		Text:      "body",
+	}, failingSender{name: "fail"})
+	if err == nil {
+		t.Fatal("expected send error")
+	}
+	if !stuck.IsOutbox {
+		t.Fatal("expected outbox row after failure")
+	}
+	// Retry with a working sender.
+	recovered, err := s.RetrySend(ctx, uid, stuck.ID, &captureSender{})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if recovered.IsOutbox || recovered.SentAt == nil {
+		t.Fatalf("recovered = %+v, want sent", recovered)
+	}
+}
+
 func mustIngest(t *testing.T, s *inbox.Service, ctx context.Context, recipient string, raw []byte) {
 	t.Helper()
 	if _, err := s.Ingest(ctx, recipient, raw, time.Now()); err != nil {

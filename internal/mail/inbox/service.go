@@ -566,11 +566,59 @@ func (s *Service) PatchFlags(ctx context.Context, userID, id string, patch FlagP
 	return s.repo.PatchFlags(ctx, userID, id, patch)
 }
 
+// RetrySend re-attempts delivery of an outbox message (one left at
+// is_outbox=1 by a previous Send that failed at the driver). The stored row
+// already carries the parsed fields and a saved raw blob; we rebuild the
+// outgoing envelope, hand it to sender, and on success flip is_outbox off
+// and stamp sent_at.
+func (s *Service) RetrySend(ctx context.Context, userID, id string, sender OutboundSender) (*Message, error) {
+	if sender == nil {
+		return nil, ErrNoOutbound
+	}
+	msg, err := s.repo.GetMessage(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if !msg.IsOutbox {
+		return nil, fmt.Errorf("%w: message is not in the outbox", ErrInvalidInput)
+	}
+	out := letter.Outgoing{
+		From: msg.From, To: msg.To, Cc: msg.Cc, Bcc: msg.Bcc,
+		ReplyTo: msg.ReplyTo, Subject: msg.Subject,
+		Text: msg.BodyText, HTML: msg.BodyHTML,
+		InReplyTo: msg.InReplyTo, References: msg.References,
+		MessageID: msg.MessageID,
+	}
+	atts, err := s.repo.ListAttachmentsByMessage(ctx, userID, msg.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range atts {
+		data, err := s.readAttachmentData(ctx, a)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		out.Attachments = append(out.Attachments, letter.Attachment{
+			Filename: a.Filename, ContentType: a.ContentType,
+			ContentID: a.ContentID, Inline: a.Inline, Data: data,
+		})
+	}
+	if err := sender.Send(ctx, out); err != nil {
+		return msg, fmt.Errorf("inbox: retry send via %s: %w", sender.Name(), err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	msg.SentAt = &now
+	msg.IsOutbox = false
+	if err := s.repo.MarkSent(ctx, userID, msg.ID, now); err != nil {
+		return nil, err
+	}
+	return msg, nil
+}
+
 // DeleteMessage removes a message, its raw RFC822 blob and every attachment
 // blob. Per-attachment rows cascade on the row delete but the blob store has
 // no such trigger, so we sweep here.
-func (s *Service) DeleteMessage(ctx context.Context, userID, id string) error {
-	m, err := s.repo.GetMessage(ctx, userID, id)
+func (s *Service) DeleteMessage(ctx context.Context, userID, id string) error {	m, err := s.repo.GetMessage(ctx, userID, id)
 	if err != nil {
 		return err
 	}

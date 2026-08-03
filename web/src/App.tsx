@@ -32,6 +32,7 @@ import PasswordView from "@/pages/passwords/view";
 import ProfilePage from "@/pages/profile";
 import RegisterPage from "@/pages/register";
 import AIPage from "@/pages/ai";
+import WorkflowPage from "@/pages/workflow";
 import { VaultProvider } from "@/lib/vault/store";
 
 export default function App() {
@@ -114,6 +115,9 @@ export default function App() {
         {/* Chat — real-time direct and group messaging. */}
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/chat/:roomId" element={<ChatPage />} />
+
+        {/* Workflow — automation graph editor and run history. */}
+        <Route path="/workflow" element={<WorkflowPage />} />
 
         <Route path="/:module" element={<ModuleStubPage />} />
       </Route>

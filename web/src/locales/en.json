@@ -128,6 +128,39 @@
       }
     }
   },
+  "workflow": {
+    "title": "Workflows",
+    "description": "Wire triggers to actions and build automation flows.",
+    "tabs": {
+      "flows": "Flows",
+      "runs": "Runs"
+    },
+    "create": "New workflow",
+    "noFlows": "No workflows yet.",
+    "noRuns": "No runs yet.",
+    "noSteps": "This run has no steps.",
+    "selectFlow": "Select a workflow on the left, or create a new one.",
+    "active": "Active",
+    "draft": "Draft",
+    "untitled": "Untitled workflow",
+    "namePlaceholder": "Workflow name",
+    "descriptionPlaceholder": "Describe what this workflow does",
+    "definition": "Definition (JSON)",
+    "save": "Save",
+    "run": "Run",
+    "activate": "Activate",
+    "deactivate": "Deactivate",
+    "confirmDelete": "Delete this workflow?",
+    "runStarted": "Run status",
+    "webhookUrl": "Webhook URL",
+    "cron": "Cron",
+    "workflow": "Workflow",
+    "backToRuns": "Back to runs",
+    "io": "Input / output",
+    "input": "Input",
+    "output": "Output",
+    "nodeHint": "Supported nodes: trigger.manual/webhook/schedule, logic.if/delay/setvar, action.http/mail/log."
+  },
   "moduleStub": {
     "underConstruction": "Under construction",
     "description": "This module is reserved but not implemented yet. The backend exposes a status endpoint so the SPA can confirm the module is wired.",

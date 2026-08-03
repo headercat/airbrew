@@ -164,8 +164,17 @@ function cleanAddresses(values: FormAddress[]): ContactAddress[] {
 }
 
 function cloneBlank(): ContactFormState {
-  // Deep-clone blankForm so each editor gets its own value row ids.
-  return contactToForm({ ...emptyContact() });
+  // Return a fresh copy of blankForm with newly-generated value row ids so
+  // each editor gets its own keys. Do NOT recurse through contactToForm
+  // (emptyContact().id is "" which would re-trigger the blank path forever).
+  return {
+    ...blankForm,
+    emails: [newFormValue("", "work")],
+    phones: [newFormValue("", "mobile")],
+    addresses: [],
+    ims: [],
+    urls: [],
+  };
 }
 
 export function emptyContact(): ContactRecord {

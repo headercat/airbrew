@@ -84,8 +84,10 @@ export default function ContactsPage() {
   const [items, setItems] = useState<ContactRecord[] | null>(null);
   const [groups, setGroups] = useState<ContactGroup[]>([]);
   const [total, setTotal] = useState(0);
+  const [allTotal, setAllTotal] = useState(0);
   const [selectedID, setSelectedID] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -119,6 +121,7 @@ export default function ContactsPage() {
   const fetchPage = useCallback(
     async (offset: number, replace: boolean) => {
       if (offset === 0) setLoading(true);
+      else setLoadingMore(true);
       setError(null);
       try {
         const list = await contacts.list({
@@ -130,6 +133,11 @@ export default function ContactsPage() {
           offset,
         });
         setTotal(list.total ?? 0);
+        // Track the unfiltered total so the "All contacts" badge is stable
+        // while a search/favorite/group filter is active.
+        if (!query && !activeGroup && !favoritesOnly) {
+          setAllTotal(list.total ?? 0);
+        }
         setItems((prev) =>
           replace
             ? (list.contacts ?? [])
@@ -147,6 +155,7 @@ export default function ContactsPage() {
         setError(errorMessage(e));
       } finally {
         setLoading(false);
+        setLoadingMore(false);
       }
     },
     [activeGroup, favoritesOnly, query],
@@ -375,7 +384,7 @@ export default function ContactsPage() {
               active={!activeGroup && !favoritesOnly}
               icon={<Users className="h-4 w-4" />}
               label={t("contacts.allContacts")}
-              count={total}
+              count={allTotal}
               onClick={() => {
                 setParam("group", null);
                 setParam("favorite", null);
@@ -487,8 +496,11 @@ export default function ContactsPage() {
                     variant="ghost"
                     className="w-full"
                     onClick={() => void fetchPage(items.length, false)}
-                    disabled={busy}
+                    disabled={busy || loadingMore}
                   >
+                    {loadingMore && (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    )}
                     {t("contacts.loadMore")} (
                     {t("contacts.showing", { count: items.length, total })})
                   </Button>

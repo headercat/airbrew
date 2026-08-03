@@ -67,13 +67,13 @@ func TestCreateAttachmentSizeLimit(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 	_, err := svc.CreateAttachment(ctx, "u", "item", "path",
-		MaxAttachmentBytes+1, cipherFixture(48, 50), nonceFixture(60), cipherFixture(24, 70), nonceFixture(80))
+		MaxAttachmentBytes+1, cipherFixture(48, 50), nonceFixture(60), cipherFixture(24, 70), nonceFixture(80), "")
 	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("oversized attachment = %v, want ErrInvalidInput/too large", err)
 	}
 	// Negative size is still rejected.
 	_, err = svc.CreateAttachment(ctx, "u", "item", "path",
-		-1, cipherFixture(48, 50), nonceFixture(60), cipherFixture(24, 70), nonceFixture(80))
+		-1, cipherFixture(48, 50), nonceFixture(60), cipherFixture(24, 70), nonceFixture(80), "")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("negative size = %v, want ErrInvalidInput", err)
 	}

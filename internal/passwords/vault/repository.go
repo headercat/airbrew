@@ -140,8 +140,11 @@ func (r *Repository) currentRev(ctx context.Context, userID string) (int64, erro
 }
 
 // CreateFolder inserts a folder and returns the stored row with its revision.
-func (r *Repository) CreateFolder(ctx context.Context, userID, nameCipher, nameNonce string, cryptoVersion int) (Folder, error) {
-	folder := Folder{ID: id.New(), UserID: userID, NameCipher: nameCipher, NameNonce: nameNonce, CryptoVersion: cryptoVersion}
+func (r *Repository) CreateFolder(ctx context.Context, userID, folderID, nameCipher, nameNonce string, cryptoVersion int) (Folder, error) {
+	if folderID == "" {
+		folderID = id.New()
+	}
+	folder := Folder{ID: folderID, UserID: userID, NameCipher: nameCipher, NameNonce: nameNonce, CryptoVersion: cryptoVersion}
 	now := time.Now().UTC().Truncate(time.Second)
 	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
 		rev, err := bumpRev(ctx, tx, userID)
@@ -265,12 +268,15 @@ func (r *Repository) CreateItem(ctx context.Context, userID string, in ItemInput
 		return Item{}, ErrInvalidInput
 	}
 	item := Item{
-		ID: id.New(), UserID: userID, Type: in.Type, FolderID: in.FolderID,
+		ID: in.ID, UserID: userID, Type: in.Type, FolderID: in.FolderID,
 		NameCipher: in.NameCipher, NameNonce: in.NameNonce,
 		DataCipher: in.DataCipher, DataNonce: in.DataNonce,
 		NotesCipher: in.NotesCipher, NotesNonce: in.NotesNonce,
 		CryptoVersion: in.CryptoVersion,
 		Favorite:      in.Favorite, Reprompt: in.Reprompt,
+	}
+	if item.ID == "" {
+		item.ID = id.New()
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	err := inTx(ctx, r.db, func(tx *sql.Tx) error {
@@ -793,7 +799,9 @@ func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []
 			if err != nil {
 				return err
 			}
-			f.ID = id.New()
+			if f.CryptoVersion < CryptoVersionRecord || f.ID == "" {
+				f.ID = id.New()
+			}
 			f.UserID = userID
 			f.Revision = rev
 			f.CreatedAt = now
@@ -820,7 +828,9 @@ func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []
 			if err != nil {
 				return err
 			}
-			it.ID = id.New()
+			if it.CryptoVersion < CryptoVersionRecord || it.ID == "" {
+				it.ID = id.New()
+			}
 			it.UserID = userID
 			if it.FolderID != "" {
 				if mapped, ok := folderIDs[it.FolderID]; ok {
@@ -861,7 +871,7 @@ func (r *Repository) ImportBundle(ctx context.Context, userID string, folders []
 				  (id, item_id, blob_path, size_bytes,
 				   file_key_cipher, file_key_nonce, name_cipher, name_nonce, crypto_version, created_at)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				id.New(), itemID, a.BlobPath, a.SizeBytes,
+				importAttachmentID(a), itemID, a.BlobPath, a.SizeBytes,
 				a.FileKeyCipher, a.FileKeyNonce, a.NameCipher, a.NameNonce, a.CryptoVersion, now); err != nil {
 				return fmt.Errorf("vault: import attachment: %w", err)
 			}
@@ -888,9 +898,12 @@ const attachmentSelect = `
 
 // CreateAttachment records a new attachment row pointing at blobPath.
 func (r *Repository) CreateAttachment(ctx context.Context, userID, itemID, blobPath string,
-	sizeBytes int64, fkCipher, fkNonce, nameCipher, nameNonce string, cryptoVersion int,
+	sizeBytes int64, fkCipher, fkNonce, nameCipher, nameNonce string, cryptoVersion int, attachmentID string,
 ) (Attachment, error) {
-	a := Attachment{ID: id.New(), ItemID: itemID, BlobPath: blobPath, SizeBytes: sizeBytes,
+	if attachmentID == "" {
+		attachmentID = id.New()
+	}
+	a := Attachment{ID: attachmentID, ItemID: itemID, BlobPath: blobPath, SizeBytes: sizeBytes,
 		FileKeyCipher: fkCipher, FileKeyNonce: fkNonce, NameCipher: nameCipher, NameNonce: nameNonce, CryptoVersion: cryptoVersion}
 	now := time.Now().UTC().Truncate(time.Second)
 	a.CreatedAt = now
@@ -1181,6 +1194,13 @@ func nullable(s string) any {
 		return nil
 	}
 	return s
+}
+
+func importAttachmentID(a Attachment) string {
+	if a.CryptoVersion >= CryptoVersionRecord && a.ID != "" {
+		return a.ID
+	}
+	return id.New()
 }
 
 // nullableTime returns the SQL representation of a *time.Time (NULL when nil).

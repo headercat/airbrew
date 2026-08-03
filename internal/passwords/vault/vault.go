@@ -112,6 +112,7 @@ type Item struct {
 // ItemInput carries the encrypted, user-controlled fields of an item. It is
 // used for both create and update.
 type ItemInput struct {
+	ID            string
 	Type          ItemType
 	FolderID      string
 	NameCipher    string

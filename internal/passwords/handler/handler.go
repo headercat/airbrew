@@ -198,6 +198,7 @@ func (h *Handler) rotateKeys(w http.ResponseWriter, r *http.Request) {
 // --- folders ---------------------------------------------------------------
 
 type folderReq struct {
+	ID            string `json:"id"`
 	NameCipher    string `json:"name_cipher"`
 	NameNonce     string `json:"name_nonce"`
 	CryptoVersion int    `json:"crypto_version"`
@@ -240,7 +241,7 @@ func (h *Handler) createFolder(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	f, err := h.svc.CreateFolder(r.Context(), sess.UserID, req.NameCipher, req.NameNonce)
+	f, err := h.svc.CreateFolder(r.Context(), sess.UserID, req.ID, req.NameCipher, req.NameNonce)
 	if err != nil {
 		writeVaultError(w, err)
 		return
@@ -287,6 +288,7 @@ func (h *Handler) deleteFolder(w http.ResponseWriter, r *http.Request) {
 // --- items -----------------------------------------------------------------
 
 type itemReq struct {
+	ID            string         `json:"id"`
 	Type          vault.ItemType `json:"type"`
 	FolderID      string         `json:"folder_id"`
 	NameCipher    string         `json:"name_cipher"`
@@ -340,6 +342,7 @@ func toItemResp(it vault.Item) itemResp {
 
 func itemInput(req itemReq) vault.ItemInput {
 	return vault.ItemInput{
+		ID:   req.ID,
 		Type: req.Type, FolderID: req.FolderID,
 		NameCipher: req.NameCipher, NameNonce: req.NameNonce,
 		DataCipher: req.DataCipher, DataNonce: req.DataNonce,
@@ -913,6 +916,7 @@ func (h *Handler) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 	fkNonce := r.FormValue("file_key_nonce")
 	nameCipher := r.FormValue("name_cipher")
 	nameNonce := r.FormValue("name_nonce")
+	attachmentID := r.FormValue("id")
 	sizeBytes, _ := strconv.ParseInt(r.FormValue("size_bytes"), 10, 64)
 	sealed, err := io.ReadAll(io.LimitReader(file, maxAttachmentBytes+1))
 	if err != nil {
@@ -935,7 +939,7 @@ func (h *Handler) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	att, err := h.svc.CreateAttachment(r.Context(), sess.UserID, itemID, blobPath, sizeBytes,
-		fkCipher, fkNonce, nameCipher, nameNonce)
+		fkCipher, fkNonce, nameCipher, nameNonce, attachmentID)
 	if err != nil {
 		// Best-effort: clean up the orphaned blob on DB failure.
 		_ = h.blobs.Delete(r.Context(), blobPath)

@@ -70,6 +70,7 @@ export type EnvelopeInput = {
 };
 
 export type ItemInput = {
+  id?: string;
   type: VaultItemType;
   folder_id: string;
   name_cipher: string;
@@ -132,11 +133,13 @@ export function deleteItem(
 }
 
 export function createFolder(
+  id: string,
   nameCipher: string,
   nameNonce: string,
   cryptoVersion?: number,
 ): Promise<VaultFolder> {
   return api.post<VaultFolder>("/api/vault/folders", {
+    id,
     name_cipher: nameCipher,
     name_nonce: nameNonce,
     crypto_version: cryptoVersion,
@@ -216,6 +219,7 @@ export async function uploadAttachment(
   itemId: string,
   sealed: Uint8Array,
   meta: {
+    id?: string;
     fileKeyCipher: string;
     fileKeyNonce: string;
     nameCipher: string;
@@ -225,6 +229,7 @@ export async function uploadAttachment(
 ): Promise<AttachmentMeta> {
   const fd = new FormData();
   fd.append("file", new Blob([sealed as unknown as BlobPart]));
+  if (meta.id) fd.append("id", meta.id);
   fd.append("file_key_cipher", meta.fileKeyCipher);
   fd.append("file_key_nonce", meta.fileKeyNonce);
   fd.append("name_cipher", meta.nameCipher);

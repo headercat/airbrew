@@ -17,6 +17,7 @@ type Service struct {
 const (
 	CryptoVersionLegacy = 1
 	CryptoVersionAAD    = 2
+	CryptoVersionRecord = 3
 )
 
 // NewService returns a Service backed by repo.
@@ -58,14 +59,17 @@ func (s *Service) RotateEnvelope(ctx context.Context, env KeyEnvelope, ifVersion
 }
 
 // CreateFolder creates an encrypted folder.
-func (s *Service) CreateFolder(ctx context.Context, userID, nameCipher, nameNonce string) (Folder, error) {
+func (s *Service) CreateFolder(ctx context.Context, userID, folderID, nameCipher, nameNonce string) (Folder, error) {
+	if err := validateOptionalID(folderID); err != nil {
+		return Folder{}, err
+	}
 	if nameCipher == "" || nameNonce == "" {
 		return Folder{}, fmt.Errorf("%w: name ciphertext and nonce required", ErrInvalidInput)
 	}
 	if err := validateCipherPair(nameCipher, nameNonce, "name"); err != nil {
 		return Folder{}, err
 	}
-	return s.repo.CreateFolder(ctx, userID, nameCipher, nameNonce, CryptoVersionAAD)
+	return s.repo.CreateFolder(ctx, userID, folderID, nameCipher, nameNonce, CryptoVersionRecord)
 }
 
 // UpdateFolder renames a folder, guarding on the client's last-seen revision.
@@ -93,6 +97,9 @@ func (s *Service) DeleteFolder(ctx context.Context, userID, id string, ifRevisio
 // CreateItem stores a new encrypted item.
 func (s *Service) CreateItem(ctx context.Context, userID string, in ItemInput) (Item, error) {
 	normalizeItemCryptoVersion(&in)
+	if err := validateOptionalID(in.ID); err != nil {
+		return Item{}, err
+	}
 	if err := validateItem(in); err != nil {
 		return Item{}, err
 	}
@@ -240,11 +247,26 @@ func normalizeCryptoVersion(version int) int {
 
 func validateCryptoVersion(version int) error {
 	switch version {
-	case CryptoVersionLegacy, CryptoVersionAAD:
+	case CryptoVersionLegacy, CryptoVersionAAD, CryptoVersionRecord:
 		return nil
 	default:
 		return fmt.Errorf("%w: invalid crypto_version", ErrInvalidInput)
 	}
+}
+
+func validateOptionalID(s string) error {
+	if s == "" {
+		return nil
+	}
+	if len(s) != 21 {
+		return fmt.Errorf("%w: invalid id", ErrInvalidInput)
+	}
+	for _, r := range s {
+		if !(r == '_' || r == '-' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+			return fmt.Errorf("%w: invalid id", ErrInvalidInput)
+		}
+	}
+	return nil
 }
 
 const maxCiphertextBytes = 64 << 10
@@ -314,8 +336,11 @@ const MaxAttachmentBytes = 10 << 20 // 10 MiB
 // CreateAttachment records an attachment row. The handler has already written
 // the encrypted blob to the blob store; it passes the resulting path here.
 func (s *Service) CreateAttachment(ctx context.Context, userID, itemID, blobPath string,
-	sizeBytes int64, fkCipher, fkNonce, nameCipher, nameNonce string,
+	sizeBytes int64, fkCipher, fkNonce, nameCipher, nameNonce string, attachmentID string,
 ) (Attachment, error) {
+	if err := validateOptionalID(attachmentID); err != nil {
+		return Attachment{}, err
+	}
 	if blobPath == "" || fkCipher == "" || fkNonce == "" || nameCipher == "" || nameNonce == "" {
 		return Attachment{}, fmt.Errorf("%w: attachment ciphertext required", ErrInvalidInput)
 	}
@@ -331,7 +356,7 @@ func (s *Service) CreateAttachment(ctx context.Context, userID, itemID, blobPath
 	if sizeBytes > MaxAttachmentBytes {
 		return Attachment{}, fmt.Errorf("%w: attachment too large", ErrInvalidInput)
 	}
-	return s.repo.CreateAttachment(ctx, userID, itemID, blobPath, sizeBytes, fkCipher, fkNonce, nameCipher, nameNonce, CryptoVersionAAD)
+	return s.repo.CreateAttachment(ctx, userID, itemID, blobPath, sizeBytes, fkCipher, fkNonce, nameCipher, nameNonce, CryptoVersionRecord, attachmentID)
 }
 
 // ListAttachments returns all attachments for an item.
@@ -374,6 +399,9 @@ func (s *Service) ExportBundle(ctx context.Context, userID string) (KeyEnvelope,
 func (s *Service) ImportBundle(ctx context.Context, userID string, folders []Folder, items []Item, attachments []Attachment) (int64, int64, int64, error) {
 	for i := range folders {
 		folders[i].CryptoVersion = normalizeCryptoVersion(folders[i].CryptoVersion)
+		if err := validateOptionalID(folders[i].ID); err != nil {
+			return 0, 0, 0, err
+		}
 		if folders[i].NameCipher == "" || folders[i].NameNonce == "" {
 			return 0, 0, 0, fmt.Errorf("%w: folder name ciphertext required", ErrInvalidInput)
 		}
@@ -387,7 +415,11 @@ func (s *Service) ImportBundle(ctx context.Context, userID string, folders []Fol
 	for i := range items {
 		items[i].CryptoVersion = normalizeCryptoVersion(items[i].CryptoVersion)
 		it := items[i]
+		if err := validateOptionalID(it.ID); err != nil {
+			return 0, 0, 0, err
+		}
 		if err := validateItem(ItemInput{
+			ID:   it.ID,
 			Type: it.Type, FolderID: it.FolderID,
 			NameCipher: it.NameCipher, NameNonce: it.NameNonce,
 			DataCipher: it.DataCipher, DataNonce: it.DataNonce,
@@ -400,6 +432,9 @@ func (s *Service) ImportBundle(ctx context.Context, userID string, folders []Fol
 	}
 	for i := range attachments {
 		attachments[i].CryptoVersion = normalizeCryptoVersion(attachments[i].CryptoVersion)
+		if err := validateOptionalID(attachments[i].ID); err != nil {
+			return 0, 0, 0, err
+		}
 		if err := validateCryptoVersion(attachments[i].CryptoVersion); err != nil {
 			return 0, 0, 0, err
 		}

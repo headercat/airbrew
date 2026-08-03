@@ -195,7 +195,7 @@ func TestSyncReturnsDeltaAndTombstones(t *testing.T) {
 func TestSoftDeleteFolderClearsItemFolderIDs(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
-	f, err := repo.CreateFolder(ctx, "u1", cipherFixture(24, 90), nonceFixture(91), CryptoVersionLegacy)
+	f, err := repo.CreateFolder(ctx, "u1", "", cipherFixture(24, 90), nonceFixture(91), CryptoVersionLegacy)
 	if err != nil {
 		t.Fatalf("create folder: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestItemFolderIDMustBelongToUser(t *testing.T) {
 	if _, err := repo.db.Exec(`INSERT INTO users (id, public_subject, email) VALUES ('u2', 'sub2', 'u2@example.com')`); err != nil {
 		t.Fatal(err)
 	}
-	otherFolder, err := repo.CreateFolder(ctx, "u2", cipherFixture(24, 96), nonceFixture(97), CryptoVersionLegacy)
+	otherFolder, err := repo.CreateFolder(ctx, "u2", "", cipherFixture(24, 96), nonceFixture(97), CryptoVersionLegacy)
 	if err != nil {
 		t.Fatalf("create other folder: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestItemFolderIDMustBelongToUser(t *testing.T) {
 		t.Fatalf("create with foreign folder = %v, want ErrNotFound", err)
 	}
 
-	ownFolder, err := repo.CreateFolder(ctx, "u1", cipherFixture(24, 102), nonceFixture(103), CryptoVersionLegacy)
+	ownFolder, err := repo.CreateFolder(ctx, "u1", "", cipherFixture(24, 102), nonceFixture(103), CryptoVersionLegacy)
 	if err != nil {
 		t.Fatalf("create own folder: %v", err)
 	}
@@ -294,8 +294,8 @@ func TestSyncPagination(t *testing.T) {
 func TestSyncPaginationDoesNotSkipAcrossTables(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
-	f1, _ := repo.CreateFolder(ctx, "u1", cipherFixture(24, 100), nonceFixture(101), CryptoVersionLegacy)
-	f2, _ := repo.CreateFolder(ctx, "u1", cipherFixture(24, 102), nonceFixture(103), CryptoVersionLegacy)
+	f1, _ := repo.CreateFolder(ctx, "u1", "", cipherFixture(24, 100), nonceFixture(101), CryptoVersionLegacy)
+	f2, _ := repo.CreateFolder(ctx, "u1", "", cipherFixture(24, 102), nonceFixture(103), CryptoVersionLegacy)
 	it, _ := repo.CreateItem(ctx, "u1", ItemInput{
 		Type:       ItemLogin,
 		NameCipher: cipherFixture(24, 104), NameNonce: nonceFixture(105),
@@ -337,7 +337,7 @@ func TestSyncPaginationDoesNotSkipAcrossTables(t *testing.T) {
 func TestSyncPaginationKeepsSameRevisionTogether(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
-	f, _ := repo.CreateFolder(ctx, "u1", cipherFixture(24, 110), nonceFixture(111), CryptoVersionLegacy)
+	f, _ := repo.CreateFolder(ctx, "u1", "", cipherFixture(24, 110), nonceFixture(111), CryptoVersionLegacy)
 	var itemIDs []string
 	for i := 0; i < 3; i++ {
 		it, _ := repo.CreateItem(ctx, "u1", ItemInput{
@@ -369,7 +369,7 @@ func TestSoftDeleteItemDropsAttachmentRows(t *testing.T) {
 	ctx := context.Background()
 	it, _ := repo.CreateItem(ctx, "u1", itemInputFixture())
 	if _, err := repo.CreateAttachment(ctx, "u1", it.ID, "vault-attachments/blob1",
-		10, cipherFixture(48, 50), nonceFixture(60), cipherFixture(24, 70), nonceFixture(80), CryptoVersionLegacy); err != nil {
+		10, cipherFixture(48, 50), nonceFixture(60), cipherFixture(24, 70), nonceFixture(80), CryptoVersionLegacy, ""); err != nil {
 		t.Fatalf("create attachment: %v", err)
 	}
 	paths, err := repo.SoftDeleteItem(ctx, "u1", it.ID, it.Revision)
@@ -531,8 +531,8 @@ func TestImportBundleRejectsOrphanAttachments(t *testing.T) {
 func TestRestoreItemRevision(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
-	f1, _ := repo.CreateFolder(ctx, "u1", cipherFixture(24, 150), nonceFixture(151), CryptoVersionLegacy)
-	f2, _ := repo.CreateFolder(ctx, "u1", cipherFixture(24, 152), nonceFixture(153), CryptoVersionLegacy)
+	f1, _ := repo.CreateFolder(ctx, "u1", "", cipherFixture(24, 150), nonceFixture(151), CryptoVersionLegacy)
+	f2, _ := repo.CreateFolder(ctx, "u1", "", cipherFixture(24, 152), nonceFixture(153), CryptoVersionLegacy)
 	it, _ := repo.CreateItem(ctx, "u1", ItemInput{
 		Type: ItemLogin, FolderID: f1.ID,
 		NameCipher: cipherFixture(24, 14), NameNonce: nonceFixture(24),

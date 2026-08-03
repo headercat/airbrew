@@ -330,6 +330,41 @@ func TestDraftSaveUpdateSend(t *testing.T) {
 	}
 }
 
+// TestDraftReplyJoinsParentThread verifies a reply draft is grouped under the
+// parent thread both before send (when it has no Message-ID) and after send.
+func TestDraftReplyJoinsParentThread(t *testing.T) {
+	s, ctx := newService(t)
+	const uid = "u1"
+	mb := mustCreateMailbox(t, s, ctx, uid, "alice@airbrew.local")
+	mustIngest(t, s, ctx, "alice@airbrew.local", rawMsg("parent-1", "", "alice@airbrew.local"))
+
+	draft, err := s.SaveDraft(ctx, uid, "", inbox.SendInput{
+		MailboxID:  mb.ID,
+		To:         []letter.Address{{Address: "bob@ext.com"}},
+		Subject:    "Re: test",
+		Text:       "draft reply",
+		InReplyTo:  "parent-1",
+		References: []string{"parent-1"},
+	})
+	if err != nil {
+		t.Fatalf("save draft: %v", err)
+	}
+	if draft.ThreadID != "parent-1" {
+		t.Fatalf("draft thread_id = %q, want parent-1", draft.ThreadID)
+	}
+	sent, err := s.SendDraft(ctx, uid, draft.ID, &captureSender{})
+	if err != nil {
+		t.Fatalf("send draft: %v", err)
+	}
+	if sent.ThreadID != "parent-1" {
+		t.Fatalf("sent thread_id = %q, want parent-1", sent.ThreadID)
+	}
+	threads, _ := s.ListThreads(ctx, uid, "", 10, 0)
+	if len(threads) != 1 {
+		t.Fatalf("expected single thread after draft+send, got %d", len(threads))
+	}
+}
+
 func mustIngest(t *testing.T, s *inbox.Service, ctx context.Context, recipient string, raw []byte) {
 	t.Helper()
 	if _, err := s.Ingest(ctx, recipient, raw, time.Now()); err != nil {

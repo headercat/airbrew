@@ -282,6 +282,8 @@ export default function MailPage() {
       ...emptyCompose,
       draftId: m.id,
       to: m.to.map(formatAddress).join(", "),
+      cc: (m.cc ?? []).map(formatAddress).join(", "),
+      bcc: (m.bcc ?? []).map(formatAddress).join(", "),
       subject: m.subject,
       text: m.body_text,
       inReplyTo: m.in_reply_to,
@@ -345,7 +347,10 @@ export default function MailPage() {
     setError(null);
     try {
       if (compose.draftId) {
-        await mail.updateDraft(compose.draftId, { ...composeInput(), send: true });
+        await mail.updateDraft(compose.draftId, {
+          ...composeInput(),
+          send: true,
+        });
       } else {
         await mail.send(composeInput());
       }
@@ -503,10 +508,9 @@ export default function MailPage() {
                 >
                   <Icon className="h-4 w-4" />
                   <span className="min-w-0 flex-1 truncate">{f.label}</span>
-                  {badge > 0 &&
-                    (f.id === "unread" || f.id === "draft") && (
-                      <Badge variant="secondary">{badge}</Badge>
-                    )}
+                  {badge > 0 && (f.id === "unread" || f.id === "draft") && (
+                    <Badge variant="secondary">{badge}</Badge>
+                  )}
                 </button>
               );
             })}
@@ -594,9 +598,7 @@ export default function MailPage() {
                         ? m.to.map(formatAddress).join(", ")
                         : formatAddress(m.from)}
                     </span>
-                    {m.is_draft && (
-                      <Badge variant="outline">임시</Badge>
-                    )}
+                    {m.is_draft && <Badge variant="outline">임시</Badge>}
                     {m.is_starred && (
                       <Star className="h-3.5 w-3.5 fill-current text-primary" />
                     )}

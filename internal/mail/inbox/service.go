@@ -425,7 +425,11 @@ func (s *Service) SaveDraft(ctx context.Context, userID string, draftID string, 
 		RawPath:   rawPath, BodyText: in.Text, BodyHTML: in.HTML,
 		IsDraft: true,
 	}
-	if draft.ThreadID == "" {
+	// A reply draft should join its parent thread even before it has a
+	// Message-ID; fall back to the draft's own id only for standalone drafts.
+	if tid := letter.ThreadKey("", in.InReplyTo, in.References); tid != "" && tid != "no-id" {
+		draft.ThreadID = tid
+	} else {
 		draft.ThreadID = draft.ID
 	}
 	if err := s.repo.CreateMessage(ctx, draft); err != nil {
@@ -496,6 +500,12 @@ func (s *Service) SendDraft(ctx context.Context, userID, draftID string, sender 
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	draft.MessageID = out.MessageID
+	// Recompute thread id now that we have a Message-ID; reply drafts were
+	// pre-grouped under their parent in SaveDraft, this keeps that group and
+	// makes standalone drafts join their own (new) conversation.
+	if tid := letter.ThreadKey(out.MessageID, draft.InReplyTo, draft.References); tid != "" && tid != "no-id" {
+		draft.ThreadID = tid
+	}
 	draft.RawPath = rawPath
 	draft.SizeBytes = int64(len(raw))
 	draft.IsDraft = false

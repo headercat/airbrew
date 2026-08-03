@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { useConfirm } from "@/components/ui/confirm";
 import { PageWrapper } from "@/components/page";
 import {
   type AIAgent,
@@ -44,6 +45,7 @@ export type { ChatMessage, ToolNotice };
 
 export default function AIPage() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const { id: activeId } = useParams<{ id: string }>();
 
@@ -119,7 +121,15 @@ export default function AIPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm(t("ai.confirmDelete"))) return;
+    if (
+      !(await confirm({
+        title: t("ai.confirmDelete"),
+        destructive: true,
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
+      return;
     try {
       await deleteConversation(id);
       setConversations((prev) => prev.filter((c) => c.id !== id));

@@ -16,6 +16,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { useConfirm } from "@/components/ui/confirm";
+import { useToast } from "@/components/ui/toast";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader, PageWrapper } from "@/components/page";
 import { isApiError } from "@/lib/api";
@@ -182,6 +184,8 @@ function FlowEditor({
   onChanged: () => void;
 }) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
+  const toast = useToast();
   const [name, setName] = useState(flow.name);
   const [description, setDescription] = useState(flow.description);
   const [defText, setDefText] = useState(
@@ -206,8 +210,10 @@ function FlowEditor({
       const parsed = JSON.parse(defText) as WorkflowDefinition;
       await workflow.update(flow.id, { name, description, definition: parsed });
       onChanged();
+      toast.success({ title: t("workflow.saved") });
     } catch (e) {
       setErr(errMsg(e));
+      toast.error({ title: errMsg(e) });
     } finally {
       setBusy(false);
     }
@@ -228,7 +234,15 @@ function FlowEditor({
   };
 
   const remove = async () => {
-    if (!confirm(t("workflow.confirmDelete"))) return;
+    if (
+      !(await confirm({
+        title: t("workflow.confirmDelete"),
+        destructive: true,
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
+      return;
     setBusy(true);
     setErr(null);
     try {

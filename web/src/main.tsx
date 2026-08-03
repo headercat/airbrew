@@ -6,6 +6,8 @@ import App from "./App";
 import { AuthProvider } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ToastProvider } from "@/components/ui/toast";
+import { ConfirmProvider } from "@/components/ui/confirm";
 import { themeInitScript } from "@/lib/theme-init";
 import "@/lib/i18n";
 import "./index.css";
@@ -23,9 +25,13 @@ ReactDOM.createRoot(root).render(
     <ThemeProvider>
       <BrowserRouter>
         <TooltipProvider delayDuration={300}>
-          <AuthProvider>
-            <App />
-          </AuthProvider>
+          <ToastProvider>
+            <ConfirmProvider>
+              <AuthProvider>
+                <App />
+              </AuthProvider>
+            </ConfirmProvider>
+          </ToastProvider>
         </TooltipProvider>
       </BrowserRouter>
     </ThemeProvider>

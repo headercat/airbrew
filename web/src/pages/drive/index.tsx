@@ -28,6 +28,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { useConfirm } from "@/components/ui/confirm";
+import { useToast } from "@/components/ui/toast";
 import { PageHeader, PageWrapper } from "@/components/page";
 import { isApiError, type ApiError } from "@/lib/api";
 import { drive, type DriveNode, type DriveShare } from "@/lib/drive";
@@ -37,6 +39,8 @@ type Crumb = { id: string; name: string };
 
 export default function DrivePage() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
+  const toast = useToast();
   const [params, setParams] = useSearchParams();
 
   const view = params.get("view") ?? "files";
@@ -216,12 +220,22 @@ export default function DrivePage() {
 
   const remove = async (n: DriveNode, permanent = false) => {
     const verb = permanent ? t("drive.confirmDelete") : t("drive.confirmTrash");
-    if (!confirm(`${verb}\n${n.name}`)) return;
+    if (
+      !(await confirm({
+        title: verb,
+        description: n.name,
+        destructive: true,
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
+      return;
     try {
       await drive.remove(n.id, permanent);
       await Promise.all([refresh(), refreshUsage()]);
+      toast.success({ title: permanent ? t("drive.deleted") : t("drive.trashed") });
     } catch (e) {
-      setError(errMsg(e));
+      toast.error({ title: errMsg(e) });
     }
   };
 
@@ -235,7 +249,15 @@ export default function DrivePage() {
   };
 
   const emptyTrash = async () => {
-    if (!confirm(t("drive.confirmEmptyTrash"))) return;
+    if (
+      !(await confirm({
+        title: t("drive.confirmEmptyTrash"),
+        destructive: true,
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
+      return;
     try {
       await drive.emptyTrash();
       await refreshUsage();
@@ -751,6 +773,7 @@ function IconBtn({
 
 function SharedView() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const [shares, setShares] = useState<DriveShare[]>([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -847,7 +870,15 @@ function SharedView() {
               variant="ghost"
               size="sm"
               onClick={async () => {
-                if (!confirm(t("drive.confirmRevoke"))) return;
+                if (
+                  !(await confirm({
+                    title: t("drive.confirmRevoke"),
+                    destructive: true,
+                    confirmLabel: t("common.delete"),
+                    cancelLabel: t("common.cancel"),
+                  }))
+                )
+                  return;
                 await drive.deleteShare(s.id);
                 drive.listShares().then((r) => setShares(r.shares ?? []));
               }}

@@ -18,6 +18,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { useConfirm } from "@/components/ui/confirm";
+import { useToast } from "@/components/ui/toast";
 import { Textarea } from "@/components/ui/textarea";
 import { PageWrapper } from "@/components/page";
 import { isApiError } from "@/lib/api";
@@ -37,6 +39,8 @@ type DraftMessage = ChatMessage & { pending?: boolean; failed?: boolean };
 export default function ChatPage() {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const confirm = useConfirm();
+  const toast = useToast();
   const [rooms, setRooms] = useState<ChatRoom[]>([]);
   const [activeID, setActiveID] = useState("");
   const [messages, setMessages] = useState<DraftMessage[]>([]);
@@ -378,7 +382,15 @@ export default function ChatPage() {
 
   async function deleteMessage(msg: DraftMessage) {
     if (!activeRoom || msg.pending) return;
-    if (!confirm(t("chat.confirmDelete"))) return;
+    if (
+      !(await confirm({
+        title: t("chat.confirmDelete"),
+        destructive: true,
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
+      return;
     const roomID = activeRoom.id;
     // Optimistic removal; restore on failure.
     setMessages((prev) => prev.filter((m) => m.id !== msg.id));
@@ -518,11 +530,19 @@ export default function ChatPage() {
                       variant="ghost"
                       size="icon"
                       onClick={async () => {
-                        if (!confirm(t("chat.confirmLeave"))) return;
+                        if (
+                          !(await confirm({
+                            title: t("chat.confirmLeave"),
+                            destructive: true,
+                            confirmLabel: t("chat.leave"),
+                            cancelLabel: t("common.cancel"),
+                          }))
+                        )
+                          return;
                         try {
                           await chat.leaveRoom(activeRoom.id);
                         } catch (e) {
-                          setError(errMsg(e));
+                          toast.error({ title: errMsg(e) });
                           return;
                         }
                         setRooms((prev) =>

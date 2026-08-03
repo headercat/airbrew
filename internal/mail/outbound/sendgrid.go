@@ -44,19 +44,26 @@ func buildSendgrid(raw json.RawMessage) (Outbounder, error) {
 func (d *sendgridDriver) Name() string { return "sendgrid" }
 
 func (d *sendgridDriver) Send(ctx context.Context, o letter.Outgoing) error {
+	personalization := map[string]any{
+		"to":      toSG(o.To),
+		"subject": o.Subject,
+	}
+	if len(o.Cc) > 0 {
+		personalization["cc"] = toSG(o.Cc)
+	}
+	if len(o.Bcc) > 0 {
+		personalization["bcc"] = toSG(o.Bcc)
+	}
 	body := map[string]any{
-		"personalizations": []map[string]any{{
-			"to":            toSG(o.To),
-			"cc":            toSG(o.Cc),
-			"bcc":           toSG(o.Bcc),
-			"subject":       o.Subject,
-			"substitutions": map[string]string{},
-		}},
-		"from":          sgAddr(o.From),
-		"reply_to":      sgAddr(firstOr(o.ReplyTo)),
-		"content":       sgContent(o),
-		"headers":       sgHeaders(o),
-		"mail_settings": map[string]any{"sandbox_mode": map[string]bool{"enable": false}},
+		"personalizations": []map[string]any{personalization},
+		"from":             sgAddr(o.From),
+		"content":          sgContent(o),
+	}
+	if rt := firstOr(o.ReplyTo); rt.Address != "" {
+		body["reply_to"] = sgAddr(rt)
+	}
+	if h := sgHeaders(o); len(h) > 0 {
+		body["headers"] = h
 	}
 	if atts := sgAttachments(o.Attachments); len(atts) > 0 {
 		body["attachments"] = atts

@@ -593,10 +593,24 @@ func decodeQP(b []byte) string {
 	return string(out)
 }
 
+// wordDecoder is the mime.WordDecoder used to unfold RFC2047 encoded-words.
+// It carries a CharsetReader that wires the same ianaindex-based transcoding
+// the body decoder uses, so encoded subjects/senders in legacy charsets
+// (=?EUC-KR?B?…?=, =?ISO-2022-JP?B?…?=, =?Windows-1252?Q?…?=) decode
+// correctly instead of being returned raw.
+var wordDecoder = &mime.WordDecoder{
+	CharsetReader: func(charset string, r io.Reader) (io.Reader, error) {
+		enc, err := ianaindex.IANA.Encoding(charset)
+		if err != nil || enc == nil {
+			return nil, fmt.Errorf("letter: unknown charset %q", charset)
+		}
+		return transform.NewReader(r, enc.NewDecoder()), nil
+	},
+}
+
 // decodeHeader decodes an RFC2047-encoded header value.
 func decodeHeader(s string) string {
-	dec := mime.WordDecoder{}
-	out, err := dec.DecodeHeader(s)
+	out, err := wordDecoder.DecodeHeader(s)
 	if err != nil {
 		return s
 	}

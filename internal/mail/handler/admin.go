@@ -291,15 +291,17 @@ func (a *AdminHandler) test(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// discardIngester accepts messages but pretends they are duplicates, so
-// admin connectivity probes via Poll exercise the login/fetch path without
-// storing junk mail AND without triggering the POP3 poller's
-// delete_after_fetch branch (which would delete real upstream mail when the
-// ingester reports success).
+// discardIngester accepts messages but always returns ErrProbe, so admin
+// connectivity probes via Poll exercise the login/fetch path without:
+//   - storing junk mail,
+//   - recording the UID as seen in the poller's in-memory map (which would
+//     mask it from a later real ingest),
+//   - honouring POP3 delete_after_fetch (which would delete real upstream
+//     mail the moment the probe touches it).
 type discardIngester struct{}
 
 func (*discardIngester) Ingest(ctx context.Context, recipient string, raw []byte, receivedAt time.Time) error {
-	return inbox.ErrDuplicate
+	return inbox.ErrProbe
 }
 
 // testRecipientFromConfig pulls a fallback recipient out of known driver

@@ -66,17 +66,27 @@ func (s *Service) GetMailbox(ctx context.Context, userID, id string) (*Mailbox, 
 
 // DeleteMailbox removes a mailbox and its messages. Per-message raw RFC822
 // and attachment blobs are cleaned up before the cascading row delete so the
-// blob store does not leak orphaned bytes.
+// blob store does not leak orphaned bytes. The sweep is paged because
+// ListMessages clamps its own Limit to 200.
 func (s *Service) DeleteMailbox(ctx context.Context, userID, id string) error {
-	msgs, err := s.repo.ListMessages(ctx, ListFilter{UserID: userID, MailboxID: id, Limit: 1000})
-	if err != nil {
-		return err
-	}
-	for _, m := range msgs {
-		// DeleteMessage already cleans the raw blob + every attachment blob.
-		// ErrMessageNotFound is fine: a concurrent delete may have raced.
-		if err := s.DeleteMessage(ctx, userID, m.ID); err != nil && !errors.Is(err, ErrMessageNotFound) {
+	const pageSize = 200
+	for offset := 0; ; offset += pageSize {
+		msgs, err := s.repo.ListMessages(ctx, ListFilter{
+			UserID: userID, MailboxID: id, Limit: pageSize, Offset: offset,
+		})
+		if err != nil {
 			return err
+		}
+		for _, m := range msgs {
+			// DeleteMessage already cleans the raw blob + every attachment
+			// blob. ErrMessageNotFound is fine: a concurrent delete may have
+			// raced.
+			if err := s.DeleteMessage(ctx, userID, m.ID); err != nil && !errors.Is(err, ErrMessageNotFound) {
+				return err
+			}
+		}
+		if len(msgs) < pageSize {
+			break
 		}
 	}
 	return s.repo.DeleteMailbox(ctx, userID, id)

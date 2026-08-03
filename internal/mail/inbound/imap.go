@@ -155,6 +155,12 @@ func (p *imapPoller) Poll(ctx context.Context, ingest Ingester) error {
 			date = time.Now().UTC()
 		}
 		if err := ingest.Ingest(ctx, p.cfg.Address, raw, date); err != nil {
+			// ErrProbe is the admin connectivity-test sentinel: stop the
+			// sweep without marking the UID seen (IMAP uses BODY.PEEK and
+			// never deletes upstream, so a probe is otherwise harmless).
+			if errors.Is(err, inbox.ErrProbe) {
+				return nil
+			}
 			// ErrDuplicate means we already stored the message in a previous
 			// cycle. Treat it as success so the UID is marked seen and we do
 			// not re-fetch it on every tick after a coordinator restart.

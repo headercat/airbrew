@@ -24,6 +24,12 @@ var (
 	// ErrDuplicate is returned by Ingest when the Message-ID is already stored
 	// in the target mailbox. Callers should treat it as success (idempotent).
 	ErrDuplicate = errors.New("inbox: duplicate message")
+	// ErrProbe is returned by a discard ingester used for admin connectivity
+	// probes. Poll drivers treat it as a signal to abort the sweep
+	// immediately, WITHOUT recording the message as seen and WITHOUT
+	// honouring delete_after_fetch — both of which would otherwise mutate or
+	// destroy real upstream mail.
+	ErrProbe = errors.New("inbox: probe stop")
 )
 
 // Mailbox is one email address owned by a user.

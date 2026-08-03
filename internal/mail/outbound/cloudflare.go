@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/headercat/airbrew/internal/mail/letter"
@@ -19,6 +21,10 @@ func init() { Register("cloudflare", buildCloudflare) }
 type CloudflareConfig struct {
 	WorkerURL string `json:"worker_url"` // e.g. https://send.example.workers.dev
 	Secret    string `json:"secret"`     // bearer token the Worker checks
+	// AllowInsecure permits an http:// Worker URL for local-only deployments.
+	// Production setups should leave this false so the secret and mail body
+	// never leave over a plaintext transport.
+	AllowInsecure bool `json:"allow_insecure"`
 }
 
 type cloudflareDriver struct {
@@ -33,6 +39,20 @@ func buildCloudflare(raw json.RawMessage) (Outbounder, error) {
 	}
 	if cfg.WorkerURL == "" {
 		return nil, fmt.Errorf("cloudflare: worker_url required")
+	}
+	u, err := url.Parse(strings.TrimSpace(cfg.WorkerURL))
+	if err != nil || u.Host == "" {
+		return nil, fmt.Errorf("cloudflare: worker_url must be a valid URL")
+	}
+	switch u.Scheme {
+	case "https":
+		// Always OK.
+	case "http":
+		if !cfg.AllowInsecure {
+			return nil, fmt.Errorf("cloudflare: worker_url must be https (set allow_insecure=true to permit http)")
+		}
+	default:
+		return nil, fmt.Errorf("cloudflare: worker_url scheme %q not supported", u.Scheme)
 	}
 	return &cloudflareDriver{cfg: cfg, client: &http.Client{Timeout: 30 * time.Second}}, nil
 }

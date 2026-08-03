@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/headercat/airbrew/internal/mail/letter"
@@ -48,5 +49,34 @@ func TestSendgridIncludesAttachments(t *testing.T) {
 	}
 	if first["filename"] != "notes.txt" || first["content"] != "c2hpcCBpdA==" {
 		t.Fatalf("attachment = %#v", first)
+	}
+}
+
+// TestCloudflareRejectsPlaintextURL verifies the driver refuses to ship the
+// bearer secret and mail body over a non-https transport unless the operator
+// explicitly opts in via allow_insecure.
+func TestCloudflareRejectsPlaintextURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		cfg     string
+		wantErr string
+	}{
+		{"plain http rejected", `{"worker_url":"http://send.example/","secret":"x"}`, "https"},
+		{"ftp rejected", `{"worker_url":"ftp://send.example/"}`, "scheme"},
+		{"https ok", `{"worker_url":"https://send.example/"}`, ""},
+		{"http allowed with flag", `{"worker_url":"http://localhost/","allow_insecure":true}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := buildCloudflare([]byte(tc.cfg))
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("expected ok, got %v", err)
+			case tc.wantErr != "" && err == nil:
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			case tc.wantErr != "" && err != nil && !strings.Contains(err.Error(), tc.wantErr):
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
+			}
+		})
 	}
 }

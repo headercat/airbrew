@@ -50,8 +50,21 @@ func TestParseTranscodesLegacyCharset(t *testing.T) {
 	}
 }
 
-// TestParseSynthesisesTextFromHTMLOnly ensures an HTML-only message still
-// yields a non-empty plain-text body so search and the SPA list snippet have
+// TestDecodeHeaderTranscodesLegacyCharset verifies RFC2047 encoded-words
+// carrying a legacy charset (EUC-KR here) decode into UTF-8 rather than being
+// returned raw. This is the dominant case for Korean inbound subject lines.
+func TestDecodeHeaderTranscodesLegacyCharset(t *testing.T) {
+	got := decodeHeader("=?EUC-KR?B?vsiz5w==?=")
+	if got != "안녕" {
+		t.Fatalf("got %q, want 안녕", got)
+	}
+	// Subject with a leading "Re: " keeps the ASCII prefix untouched.
+	if got := decodeHeader("Re: =?EUC-KR?B?vsiz5w==?="); got != "Re: 안녕" {
+		t.Fatalf("got %q, want \"Re: 안녕\"", got)
+	}
+}
+
+// TestParseSynthesisesTextFromHTMLOnly ensures an HTML-only message still// yields a non-empty plain-text body so search and the SPA list snippet have
 // something to show.
 func TestParseSynthesisesTextFromHTMLOnly(t *testing.T) {
 	raw := strings.Join([]string{

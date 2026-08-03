@@ -100,6 +100,13 @@ func (p *pop3Poller) Poll(ctx context.Context, ingest Ingester) error {
 			continue
 		}
 		if err := ingest.Ingest(ctx, p.cfg.Address, raw, time.Now().UTC()); err != nil {
+			// ErrProbe is the admin connectivity-test sentinel. Stop the
+			// sweep immediately WITHOUT marking seen and WITHOUT issuing
+			// DELE — otherwise the probe would delete real upstream mail
+			// when delete_after_fetch is configured.
+			if errors.Is(err, inbox.ErrProbe) {
+				return nil
+			}
 			// ErrDuplicate is success for poll purposes: the message was
 			// stored in a previous cycle. Mark it seen and honour
 			// delete_after_fetch without re-ingesting.

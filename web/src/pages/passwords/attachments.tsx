@@ -1,3 +1,4 @@
+import { useConfirm } from "@/components/ui/confirm";
 // Attachments card shared by the item view (read-only) and editor (manageable).
 // Attachments are large, so uploads and deletes take effect immediately rather
 // than waiting for the editor's Save button.
@@ -31,6 +32,7 @@ export function AttachmentsCard({
   editable: boolean;
 }) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const {
     listAttachments,
     uploadAttachment,
@@ -101,7 +103,15 @@ export function AttachmentsCard({
   }
 
   async function onRemove(att: Attachment) {
-    if (!confirm(t("passwords.attachments.confirmDelete"))) return;
+    if (
+      !(await confirm({
+        title: t("passwords.attachments.confirmDelete"),
+        destructive: true,
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
+      return;
     setBusy(true);
     setError(null);
     try {

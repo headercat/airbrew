@@ -1,3 +1,4 @@
+import { useConfirm } from "@/components/ui/confirm";
 // Password item view (read-only detail). Reached from the list by clicking an
 // item. Sensitive fields reveal on demand, TOTP fields show the live rotating
 // code, and the only way to change anything is the Edit button.
@@ -37,6 +38,7 @@ import { itemIcon, extractDomain, Favicon } from "./icons";
 
 export default function PasswordView() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { status, items, deleteItem } = useVault();
@@ -96,7 +98,15 @@ export default function PasswordView() {
 
   async function onDelete() {
     if (!item) return;
-    if (!confirm(t("passwords.editor.confirmDelete"))) return;
+    if (
+      !(await confirm({
+        title: t("passwords.editor.confirmDelete"),
+        destructive: true,
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
+      return;
     setBusy(true);
     setError(null);
     try {
@@ -487,6 +497,7 @@ type RevSummary = {
 
 function HistoryCard({ itemId }: { itemId: string }) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const { listItemRevisions, restoreItemRevision } = useVault();
   const [revs, setRevs] = useState<RevSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -513,7 +524,14 @@ function HistoryCard({ itemId }: { itemId: string }) {
   }, [open, revs, load]);
 
   async function onRestore(revId: string) {
-    if (!confirm(t("passwords.view.confirmRestore"))) return;
+    if (
+      !(await confirm({
+        title: t("passwords.view.confirmRestore"),
+        confirmLabel: t("common.confirm"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
+      return;
     setBusy(true);
     setError(null);
     try {

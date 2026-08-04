@@ -1,3 +1,4 @@
+import { useConfirm } from "@/components/ui/confirm";
 // Trash (recycle bin) dialog. Lists soft-deleted items and folders, lets the
 // user restore them or permanently delete them, and offers an "empty all"
 // shortcut. Soft-deleted rows are purged automatically after 30 days, so the
@@ -39,6 +40,7 @@ function TrashDialog({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const {
     listTrash,
     restoreTrashItem,
@@ -93,7 +95,15 @@ function TrashDialog({
   }
 
   async function onPurge(e: TrashEntry) {
-    if (!confirm(t("passwords.trash.confirmPurge"))) return;
+    if (
+      !(await confirm({
+        title: t("passwords.trash.confirmPurge"),
+        destructive: true,
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
+      return;
     setBusy(true);
     setError(null);
     try {
@@ -108,7 +118,15 @@ function TrashDialog({
   }
 
   async function onEmptyAll() {
-    if (!confirm(t("passwords.trash.confirmEmpty"))) return;
+    if (
+      !(await confirm({
+        title: t("passwords.trash.confirmEmpty"),
+        destructive: true,
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
+      return;
     setBusy(true);
     setError(null);
     try {

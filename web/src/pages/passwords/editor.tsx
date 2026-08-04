@@ -30,6 +30,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { useConfirm } from "@/components/ui/confirm";
 import { PageHeader, PageWrapper } from "@/components/page";
 import { isApiError } from "@/lib/api";
 import { isConflict } from "@/lib/vault/api";
@@ -59,6 +60,7 @@ function clonePreset(type: VaultItemType): Field[] {
 
 export default function PasswordEditor() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
   const navigate = useNavigate();
@@ -163,10 +165,17 @@ export default function PasswordEditor() {
   // Changing the type swaps in that preset's fields (the type only seeds
   // fields + picks the icon). If the user already typed something, confirm
   // before discarding it.
-  function applyType(next: VaultItemType) {
+  async function applyType(next: VaultItemType) {
     if (next === type) return;
     const hasContent = fields.some((f) => f.name.trim() || f.value.trim());
-    if (hasContent && !confirm(t("passwords.editor.confirmReplacePreset"))) {
+    if (
+      hasContent &&
+      !(await confirm({
+        title: t("passwords.editor.confirmReplacePreset"),
+        cancelLabel: t("common.cancel"),
+        confirmLabel: t("common.confirm"),
+      }))
+    ) {
       return;
     }
     setType(next);
@@ -218,7 +227,15 @@ export default function PasswordEditor() {
 
   async function onDelete() {
     if (!editableItem) return;
-    if (!confirm(t("passwords.editor.confirmDelete"))) return;
+    if (
+      !(await confirm({
+        title: t("passwords.editor.confirmDelete"),
+        destructive: true,
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
+      return;
     setBusy(true);
     setError(null);
     try {

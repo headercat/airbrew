@@ -56,13 +56,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         description={opts?.description}
       >
         <div className="mt-2 flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => close(false)}>
+          <Button variant="ghost" onClick={() => close(false)} autoFocus>
             {opts?.cancelLabel ?? "Cancel"}
           </Button>
           <Button
             variant={opts?.destructive ? "destructive" : "default"}
             onClick={() => close(true)}
-            autoFocus
           >
             {opts?.confirmLabel ?? "Confirm"}
           </Button>

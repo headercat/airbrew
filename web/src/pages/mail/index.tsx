@@ -729,7 +729,7 @@ export default function MailPage() {
           )}
         </section>
 
-        <main className="min-w-0">
+        <section aria-label={t("mail.selectMessage")} className="min-w-0">
           {selected ? (
             <MessageView
               message={selected}
@@ -745,7 +745,7 @@ export default function MailPage() {
               메일을 선택하세요.
             </div>
           )}
-        </main>
+        </section>
       </div>
 
       <Modal

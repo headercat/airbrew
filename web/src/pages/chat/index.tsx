@@ -494,7 +494,7 @@ export default function ChatPage() {
           </div>
         </aside>
 
-        <main className="flex min-w-0 flex-1 flex-col">
+        <section aria-label={t("chat.title")} className="flex min-w-0 flex-1 flex-col">
           {activeRoom ? (
             <>
               <div className="flex items-center justify-between gap-3 border-b p-3">
@@ -638,7 +638,7 @@ export default function ChatPage() {
               {t("chat.selectRoom")}
             </div>
           )}
-        </main>
+        </section>
 
         <aside className="hidden w-72 border-l lg:block">
           <div className="border-b p-3">

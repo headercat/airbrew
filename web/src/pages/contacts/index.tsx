@@ -39,6 +39,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
+import { useConfirm } from "@/components/ui/confirm";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader, PageWrapper } from "@/components/page";
 import {
@@ -68,6 +69,7 @@ const PAGE_SIZE = 100;
 
 export default function ContactsPage() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
   const query = searchParams.get("q") ?? "";
   const activeGroup = searchParams.get("group") ?? "";
@@ -216,7 +218,14 @@ export default function ContactsPage() {
   }
 
   async function removeContact(item: ContactRecord) {
-    if (!confirm(t("contacts.confirmDelete", { name: displayName(item) })))
+    if (
+      !(await confirm({
+        title: t("contacts.confirmDelete", { name: displayName(item) }),
+        destructive: true,
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
       return;
     setBusy(true);
     try {
@@ -1139,6 +1148,7 @@ function GroupEditor({
   onSaved: () => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const [name, setName] = useState("");
   const [color, setColor] = useState("#2563eb");
   const [error, setError] = useState<string | null>(null);
@@ -1170,7 +1180,14 @@ function GroupEditor({
   async function remove() {
     if (!value || value === "new") return;
     if (saving) return;
-    if (!confirm(t("contacts.confirmDeleteGroup", { name: value.name })))
+    if (
+      !(await confirm({
+        title: t("contacts.confirmDeleteGroup", { name: value.name }),
+        destructive: true,
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
+      }))
+    )
       return;
     setSaving(true);
     try {
